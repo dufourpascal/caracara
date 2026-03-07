@@ -20,6 +20,12 @@ Use this stack unless a spec explicitly changes it:
 - `packages/ui`: shared shadcn-based UI primitives
 - additional shared packages should be added only when justified by the specs
 
+## Dev commands
+pnpm dev: run the dev servers (next.js app plus convex)
+pnpm lint: run linting
+pnpm typecheck: run typecheck
+pnpm build
+
 ## Product References
 
 Treat the files in [`specs/`](/home/pascal/src/caracarascore/specs) as the source of truth for product and architecture decisions, especially:

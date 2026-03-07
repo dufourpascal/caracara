@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Build output
+.next/
+out/
+build/
+dist/
+coverage/
+storybook-static/
+*.tsbuildinfo
+
+# Tooling caches
+.turbo/
+.vercel/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editors and OS files
+.DS_Store
+._*
+Thumbs.db
+.idea/
+.vscode/
+
+# Misc local files
+*.pem
+*.pid

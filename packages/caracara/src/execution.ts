@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { spawn } from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 
 import type { OrderedScenario, RunnerType } from "@workspace/contracts"
 
@@ -9,21 +9,34 @@ export type RunnerExecution = {
   executionSummary: string
   score: number
   rationale: string | null
+  improvementInstruction: string | null
+}
+
+export type RunnerScenarioInput = {
+  cwd: string
+  projectPrompt: string
+  scenario: OrderedScenario
 }
 
 export interface RunnerAdapter {
   type: RunnerType
-  executeScenario(input: {
-    cwd: string
-    projectPrompt: string
-    scenario: OrderedScenario
-  }): Promise<RunnerExecution>
+  startRun(input: { cwd: string }): Promise<RunnerSession>
+}
+
+export interface RunnerSession {
+  executeScenario(input: RunnerScenarioInput): Promise<RunnerExecution>
+  close(): Promise<void>
 }
 
 const executionResultSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["executionSummary", "score", "rationale"],
+  required: [
+    "executionSummary",
+    "score",
+    "rationale",
+    "improvementInstruction",
+  ],
   properties: {
     executionSummary: {
       type: "string",
@@ -45,10 +58,23 @@ const executionResultSchema = {
         },
       ],
     },
+    improvementInstruction: {
+      anyOf: [
+        {
+          type: "string",
+          minLength: 1,
+        },
+        {
+          type: "null",
+        },
+      ],
+    },
   },
 } as const
 
 const defaultCodexSandbox = "read-only"
+const defaultChromeExecutablePath = "/usr/bin/chromium"
+const defaultChromiumStartupTimeoutMs = 15_000
 
 export function buildRunnerPrompt(input: {
   projectPrompt: string
@@ -72,6 +98,8 @@ export function buildRunnerPrompt(input: {
     '- "executionSummary": a concise factual summary of what you did and observed, including the evidence needed for review and scoring',
     '- "score": a number from 0 to 1',
     '- "rationale": null when the score is exactly 1, otherwise a short explanation of the quality issues that prevented a perfect score',
+    '- "improvementInstruction": null when the score is exactly 1, otherwise a direct instruction for the application team that includes the full problem context: where in the app the issue happened, what you did, what you expected, what happened instead, and the concrete implementation changes needed next',
+    '  Format it like: "In the application [view/page/flow], when I [action], I expected [expected outcome], but instead [actual outcome]. Fix this by [specific implementation instruction]."',
   ].join("\n")
 }
 
@@ -79,17 +107,70 @@ function getCodexSandboxMode() {
   return process.env.CARACARA_CODEX_SANDBOX ?? defaultCodexSandbox
 }
 
+function getChromeExecutablePath() {
+  return (
+    process.env.CARACARA_CODEX_CHROME_EXECUTABLE_PATH ??
+    process.env.CHROME_EXECUTABLE_PATH ??
+    defaultChromeExecutablePath
+  )
+}
+
+function encodeTomlValue(value: boolean | string | string[]) {
+  return JSON.stringify(value)
+}
+
+export function buildCodexChromeMcpArgs(input: {
+  browserUrl: string
+  logFilePath: string
+}) {
+  return [
+    "chrome-devtools-mcp@latest",
+    "--browserUrl",
+    input.browserUrl,
+    "--logFile",
+    input.logFilePath,
+  ]
+}
+
+function buildCodexConfigOverrides(input?: {
+  browserUrl: string
+  logFilePath: string
+}) {
+  if (!input) {
+    return []
+  }
+
+  return [
+    "-c",
+    `mcp_servers.chrome-devtools.command=${encodeTomlValue("npx")}`,
+    "-c",
+    `mcp_servers.chrome-devtools.args=${encodeTomlValue(
+      buildCodexChromeMcpArgs(input)
+    )}`,
+  ]
+}
+
 export function buildCodexExecArgs(input: {
   cwd: string
   prompt: string
   outputPath: string
   outputSchemaPath?: string
+  browserUrl?: string
+  chromeDevtoolsLogPath?: string
 }) {
   return [
     "-a",
     "never",
     "exec",
     "--skip-git-repo-check",
+    ...buildCodexConfigOverrides(
+      input.browserUrl && input.chromeDevtoolsLogPath
+        ? {
+            browserUrl: input.browserUrl,
+            logFilePath: input.chromeDevtoolsLogPath,
+          }
+        : undefined
+    ),
     "--sandbox",
     getCodexSandboxMode(),
     "--cd",
@@ -151,79 +232,243 @@ async function withTempFiles<T>(work: (dir: string) => Promise<T>) {
   }
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function buildChromiumArgs(input: {
+  userDataDir: string
+  initialUrl?: string
+}) {
+  return [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--ignore-certificate-errors",
+    "--remote-debugging-port=0",
+    `--user-data-dir=${input.userDataDir}`,
+    input.initialUrl ?? "about:blank",
+  ]
+}
+
+async function waitForDevToolsActivePort(input: {
+  userDataDir: string
+  browser: ChildProcess
+  timeoutMs?: number
+}) {
+  const devToolsActivePortPath = join(input.userDataDir, "DevToolsActivePort")
+  const timeoutMs = input.timeoutMs ?? defaultChromiumStartupTimeoutMs
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (input.browser.exitCode !== null) {
+      throw new Error(
+        `Chromium exited before DevTools became available (exit code ${input.browser.exitCode}).`
+      )
+    }
+
+    try {
+      const raw = await readFile(devToolsActivePortPath, "utf8")
+      const [port] = raw.trim().split(/\r?\n/)
+
+      if (port) {
+        return port
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error
+      }
+    }
+
+    await delay(100)
+  }
+
+  throw new Error(
+    `Timed out waiting ${timeoutMs}ms for Chromium DevTools at ${devToolsActivePortPath}.`
+  )
+}
+
+async function terminateBrowserProcess(browser: ChildProcess) {
+  if (browser.exitCode !== null || !browser.pid) {
+    return
+  }
+
+  const waitForExit = new Promise<void>((resolve) => {
+    browser.once("exit", () => {
+      resolve()
+    })
+  })
+
+  if (process.platform === "win32") {
+    browser.kill("SIGTERM")
+  } else {
+    process.kill(-browser.pid, "SIGTERM")
+  }
+
+  const terminated = await Promise.race([
+    waitForExit.then(() => true),
+    delay(1_000).then(() => false),
+  ])
+
+  if (terminated) {
+    return
+  }
+
+  if (process.platform === "win32") {
+    browser.kill("SIGKILL")
+  } else {
+    process.kill(-browser.pid, "SIGKILL")
+  }
+
+  await waitForExit
+}
+
+async function launchSharedChromium(input: { cwd: string }) {
+  const runDir = await mkdtemp(join(tmpdir(), "caracara-codex-run-"))
+  const userDataDir = join(runDir, "chrome-profile")
+  const chromeDevtoolsLogPath = join(runDir, "chrome-devtools-mcp.log")
+  await mkdir(userDataDir, { recursive: true })
+
+  const browser = spawn(
+    getChromeExecutablePath(),
+    buildChromiumArgs({
+      userDataDir,
+    }),
+    {
+      cwd: input.cwd,
+      detached: process.platform !== "win32",
+      stdio: "ignore",
+    }
+  )
+
+  const browserStartupError = new Promise<never>((_, reject) => {
+    browser.once("error", reject)
+  })
+
+  try {
+    const port = await Promise.race([
+      waitForDevToolsActivePort({
+        userDataDir,
+        browser,
+      }),
+      browserStartupError,
+    ])
+
+    return {
+      browserUrl: `http://127.0.0.1:${port}`,
+      chromeDevtoolsLogPath,
+      async close() {
+        await terminateBrowserProcess(browser)
+        await rm(runDir, { recursive: true, force: true })
+      },
+    }
+  } catch (error) {
+    await terminateBrowserProcess(browser).catch(() => undefined)
+    await rm(runDir, { recursive: true, force: true })
+    throw error
+  }
+}
+
 class CodexRunner implements RunnerAdapter {
   readonly type = "codex" as const
 
-  async executeScenario(input: {
-    cwd: string
-    projectPrompt: string
-    scenario: OrderedScenario
-  }) {
-    return withTempFiles(async (dir) => {
-      const executionOutputPath = join(dir, "execution.txt")
-      const resultSchemaPath = join(dir, "result-schema.json")
+  async startRun(input: { cwd: string }) {
+    const sharedBrowser = await launchSharedChromium({ cwd: input.cwd })
 
-      await writeFile(resultSchemaPath, JSON.stringify(executionResultSchema), "utf8")
+    return {
+      async executeScenario(scenarioInput: RunnerScenarioInput) {
+        return withTempFiles(async (dir) => {
+          const executionOutputPath = join(dir, "execution.txt")
+          const resultSchemaPath = join(dir, "result-schema.json")
 
-      await runCommand({
-        command: "codex",
-        cwd: input.cwd,
-        commandArgs: buildCodexExecArgs({
-          cwd: input.cwd,
-          outputPath: executionOutputPath,
-          outputSchemaPath: resultSchemaPath,
-          prompt: buildRunnerPrompt(input),
-        }),
-      })
+          await writeFile(
+            resultSchemaPath,
+            JSON.stringify(executionResultSchema),
+            "utf8"
+          )
 
-      const execution = JSON.parse(await readFile(executionOutputPath, "utf8")) as {
-        executionSummary: string
-        score: number
-        rationale: string | null
-      }
+          await runCommand({
+            command: "codex",
+            cwd: scenarioInput.cwd,
+            commandArgs: buildCodexExecArgs({
+              cwd: scenarioInput.cwd,
+              outputPath: executionOutputPath,
+              outputSchemaPath: resultSchemaPath,
+              prompt: buildRunnerPrompt(scenarioInput),
+              browserUrl: sharedBrowser.browserUrl,
+              chromeDevtoolsLogPath: sharedBrowser.chromeDevtoolsLogPath,
+            }),
+          })
 
-      return {
-        executionSummary: execution.executionSummary.trim(),
-        score: execution.score,
-        rationale:
-          execution.score === 1 ? null : execution.rationale?.trim() ?? null,
-      }
-    })
+          const execution = JSON.parse(
+            await readFile(executionOutputPath, "utf8")
+          ) as {
+            executionSummary: string
+            score: number
+            rationale: string | null
+            improvementInstruction: string | null
+          }
+
+          return {
+            executionSummary: execution.executionSummary.trim(),
+            score: execution.score,
+            rationale:
+              execution.score === 1 ? null : execution.rationale?.trim() ?? null,
+            improvementInstruction:
+              execution.score === 1
+                ? null
+                : execution.improvementInstruction?.trim() ?? null,
+          }
+        })
+      },
+      async close() {
+        await sharedBrowser.close()
+      },
+    }
   }
 }
 
 class ClaudeRunner implements RunnerAdapter {
   readonly type = "claude-code" as const
 
-  async executeScenario(input: {
-    cwd: string
-    projectPrompt: string
-    scenario: OrderedScenario
-  }) {
-    const execution = await runCommand({
-      command: "claude",
-      cwd: input.cwd,
-      commandArgs: [
-        "-p",
-        "--permission-mode",
-        process.env.CARACARA_CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
-        "--output-format",
-        "json",
-        "--json-schema",
-        JSON.stringify(executionResultSchema),
-        buildRunnerPrompt(input),
-      ],
-    })
-    const parsed = JSON.parse(execution.stdout) as {
-      executionSummary: string
-      score: number
-      rationale: string | null
-    }
-
+  async startRun() {
     return {
-      executionSummary: parsed.executionSummary.trim(),
-      score: parsed.score,
-      rationale: parsed.score === 1 ? null : parsed.rationale?.trim() ?? null,
+      async executeScenario(input: RunnerScenarioInput) {
+        const execution = await runCommand({
+          command: "claude",
+          cwd: input.cwd,
+          commandArgs: [
+            "-p",
+            "--permission-mode",
+            process.env.CARACARA_CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
+            "--output-format",
+            "json",
+            "--json-schema",
+            JSON.stringify(executionResultSchema),
+            buildRunnerPrompt(input),
+          ],
+        })
+        const parsed = JSON.parse(execution.stdout) as {
+          executionSummary: string
+          score: number
+          rationale: string | null
+          improvementInstruction: string | null
+        }
+
+        return {
+          executionSummary: parsed.executionSummary.trim(),
+          score: parsed.score,
+          rationale: parsed.score === 1 ? null : parsed.rationale?.trim() ?? null,
+          improvementInstruction:
+            parsed.score === 1
+              ? null
+              : parsed.improvementInstruction?.trim() ?? null,
+        }
+      },
+      async close() {},
     }
   }
 }

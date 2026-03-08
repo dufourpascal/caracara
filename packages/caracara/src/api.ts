@@ -3,6 +3,8 @@ import {
   API_VERSION_HEADER,
   createRunRequestSchema,
   createRunResponseSchema,
+  finalizeRunRequestSchema,
+  finalizeRunResponseSchema,
   orderedActiveScenariosResponseSchema,
   parseApiError,
   projectListResponseSchema,
@@ -139,5 +141,25 @@ export async function submitScenarioResult(args: {
       body: JSON.stringify(submitScenarioResultRequestSchema.parse(args.payload)),
     },
     schema: submitScenarioResultResponseSchema,
+  })
+}
+
+export async function finalizeRun(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  runId: string
+  payload: Parameters<typeof finalizeRunRequestSchema.parse>[0]
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
+    version: args.version,
+    accessToken: args.accessToken,
+    init: {
+      method: "POST",
+      body: JSON.stringify(finalizeRunRequestSchema.parse(args.payload)),
+    },
+    schema: finalizeRunResponseSchema,
   })
 }

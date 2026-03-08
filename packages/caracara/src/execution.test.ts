@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { OrderedScenario } from "@workspace/contracts"
 
-import { buildCodexExecArgs, buildRunnerPrompt } from "./execution.js"
+import {
+  buildCodexChromeMcpArgs,
+  buildCodexExecArgs,
+  buildRunnerPrompt,
+} from "./execution.js"
 
 const scenario: OrderedScenario = {
   id: "scenario_1",
@@ -70,6 +74,52 @@ describe("Codex runner args", () => {
     ])
   })
 
+  it("overrides Chrome DevTools MCP to connect to a run-scoped browser", () => {
+    const args = buildCodexExecArgs({
+      cwd: "/tmp/project",
+      outputPath: "/tmp/output.txt",
+      outputSchemaPath: "/tmp/schema.json",
+      prompt: "Score the scenario",
+      browserUrl: "http://127.0.0.1:9222",
+      chromeDevtoolsLogPath: "/tmp/chrome-devtools-mcp.log",
+    })
+
+    expect(args).toEqual([
+      "-a",
+      "never",
+      "exec",
+      "--skip-git-repo-check",
+      "-c",
+      'mcp_servers.chrome-devtools.command="npx"',
+      "-c",
+      'mcp_servers.chrome-devtools.args=["chrome-devtools-mcp@latest","--browserUrl","http://127.0.0.1:9222","--logFile","/tmp/chrome-devtools-mcp.log"]',
+      "--sandbox",
+      "read-only",
+      "--cd",
+      "/tmp/project",
+      "--output-schema",
+      "/tmp/schema.json",
+      "--output-last-message",
+      "/tmp/output.txt",
+      "Score the scenario",
+    ])
+  })
+
+  it("builds chrome devtools args that attach to the shared browser", () => {
+    expect(
+      buildCodexChromeMcpArgs({
+        browserUrl: "http://127.0.0.1:9222",
+        logFilePath: "/tmp/chrome-devtools.log",
+      })
+    ).toEqual([
+      "chrome-devtools-mcp@latest",
+      "--browserUrl",
+      "http://127.0.0.1:9222",
+      "--logFile",
+      "/tmp/chrome-devtools.log",
+    ])
+  })
+
   it("builds a single runner prompt with execution and scoring guidance", () => {
     expect(
       buildRunnerPrompt({
@@ -107,5 +157,30 @@ describe("Codex runner args", () => {
         scenario,
       })
     ).toContain('"rationale": null when the score is exactly 1')
+
+    expect(
+      buildRunnerPrompt({
+        projectPrompt: "Use the seeded demo account.",
+        scenario,
+      })
+    ).toContain(
+      '"improvementInstruction": null when the score is exactly 1'
+    )
+
+    expect(
+      buildRunnerPrompt({
+        projectPrompt: "Use the seeded demo account.",
+        scenario,
+      })
+    ).toContain("where in the app the issue happened")
+
+    expect(
+      buildRunnerPrompt({
+        projectPrompt: "Use the seeded demo account.",
+        scenario,
+      })
+    ).toContain(
+      'Format it like: "In the application [view/page/flow], when I [action], I expected [expected outcome], but instead [actual outcome]. Fix this by [specific implementation instruction]."'
+    )
   })
 })

@@ -15,6 +15,11 @@ Normal execution resolves and runs scenario dependencies first.
 
 When a user runs a scenario in normal mode, all declared dependencies must be resolved and executed in valid order before the requested scenario is executed.
 
+### EXEC_03A
+Scenarios in the same local run share browser session state when the runner supports browser automation.
+
+For browser-driven execution backends, the CLI should keep a single run-scoped browser session so later scenarios can continue from authenticated or otherwise stateful steps completed by earlier scenarios in the same run.
+
 ### EXEC_04
 The CLI also supports direct single-scenario execution.
 
@@ -38,7 +43,7 @@ The scoring prompt is still authored and stored separately from scenario instruc
 ### EXEC_08
 Each executed scenario produces a structured result.
 
-A scenario execution result should capture status, timestamps, runner used, an execution summary, score, and any available scoring rationale or evaluation details. The enclosing run record should also include a generated human-readable run name built with `unique-names-generator` using one adjective and one animal, plus a timestamp suffix at the end.
+A scenario execution result should capture status, timestamps, runner used, an execution summary, score, and any available scoring rationale or evaluation details. The enclosing run record should also include a generated human-readable run name built with `unique-names-generator` using one adjective and one bird, plus a timestamp suffix at the end.
 
 ### EXEC_09
 Execution failures must be represented explicitly.

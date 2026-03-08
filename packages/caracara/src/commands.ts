@@ -5,6 +5,7 @@ import { CONVEX_TOKEN_TEMPLATE, formatRunName } from "@workspace/contracts"
 
 import {
   createRun,
+  finalizeRun,
   fetchOrderedScenarios,
   fetchProjects,
   fetchSingleScenario,
@@ -142,6 +143,7 @@ export async function initCommand(options: InitCommandOptions) {
 }
 
 export async function runCommand(options: RunCommandOptions) {
+  const cwd = process.cwd()
   const config = await readResolvedConfig(
     {
       apiBaseUrl: options.apiBaseUrl,
@@ -195,121 +197,155 @@ export async function runCommand(options: RunCommandOptions) {
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
 
   let runFailed = false
+  let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
+  let finalFinishedAt: number | null = null
+  let closeError: unknown = null
+  let runError: unknown = null
+  let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
 
-  for (const [sequenceIndex, scenario] of ordered.scenarios.entries()) {
-    const startedAt = Date.now()
-    process.stdout.write(`Executing ${scenario.slug} with ${runnerType}\n`)
+  try {
+    for (const [sequenceIndex, scenario] of ordered.scenarios.entries()) {
+      const startedAt = Date.now()
+      process.stdout.write(`Executing ${scenario.slug} with ${runnerType}\n`)
 
-    if (runFailed) {
-      await submitScenarioResult({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: {
+      if (runFailed) {
+        await submitScenarioResult({
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
           runId: createRunResponse.run.id,
-          result: {
-            scenarioId: scenario.id,
-            scenarioSlug: scenario.slug,
-            scenarioName: scenario.name,
-            executionInstructions: scenario.instructions,
-            scoringPrompt: scenario.scoringPrompt,
-            sequenceIndex,
-            status: "dependency_failed",
-            runnerType,
-            score: null,
-            rationale: "Skipped because an earlier scenario failed.",
-            executionSummary: null,
-            failureDetail: "Dependency chain stopped after an earlier failure.",
-            startedAt,
-            finishedAt: Date.now(),
+          payload: {
+            runId: createRunResponse.run.id,
+            result: {
+              scenarioId: scenario.id,
+              scenarioSlug: scenario.slug,
+              scenarioName: scenario.name,
+              executionInstructions: scenario.instructions,
+              scoringPrompt: scenario.scoringPrompt,
+              sequenceIndex,
+              status: "dependency_failed",
+              runnerType,
+              score: null,
+              rationale: "Skipped because an earlier scenario failed.",
+              improvementInstruction: null,
+              executionSummary: null,
+              failureDetail: "Dependency chain stopped after an earlier failure.",
+              startedAt,
+              finishedAt: Date.now(),
+            },
           },
-          runStatus:
-            sequenceIndex === ordered.scenarios.length - 1
-              ? "failed"
-              : "running",
-        },
-      })
-      continue
-    }
+        })
+        continue
+      }
 
+      try {
+        runSession ??= await runner.startRun({ cwd })
+
+        const execution = await runSession.executeScenario({
+          cwd,
+          projectPrompt: ordered.project.projectPrompt,
+          scenario,
+        })
+        const finishedAt = Date.now()
+
+        await submitScenarioResult({
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
+          runId: createRunResponse.run.id,
+          payload: {
+            runId: createRunResponse.run.id,
+            result: {
+              scenarioId: scenario.id,
+              scenarioSlug: scenario.slug,
+              scenarioName: scenario.name,
+              executionInstructions: scenario.instructions,
+              scoringPrompt: scenario.scoringPrompt,
+              sequenceIndex,
+              status: "success",
+              runnerType,
+              score: execution.score,
+              rationale: execution.rationale,
+              improvementInstruction: execution.improvementInstruction,
+              executionSummary: execution.executionSummary,
+              failureDetail: null,
+              startedAt,
+              finishedAt,
+            },
+          },
+        })
+        process.stdout.write(`  score ${execution.score.toFixed(2)}\n`)
+      } catch (error) {
+        runFailed = true
+        await submitScenarioResult({
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
+          runId: createRunResponse.run.id,
+          payload: {
+            runId: createRunResponse.run.id,
+            result: {
+              scenarioId: scenario.id,
+              scenarioSlug: scenario.slug,
+              scenarioName: scenario.name,
+              executionInstructions: scenario.instructions,
+              scoringPrompt: scenario.scoringPrompt,
+              sequenceIndex,
+              status: "runner_failed",
+              runnerType,
+              score: null,
+              rationale: null,
+              improvementInstruction: null,
+              executionSummary: null,
+              failureDetail:
+                error instanceof Error ? error.message : "Runner failed",
+              startedAt,
+              finishedAt: Date.now(),
+            },
+          },
+        })
+        process.stdout.write(
+          `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
+        )
+      }
+    }
+    finalRunStatus = runFailed ? "failed" : "completed"
+    finalFinishedAt = Date.now()
+  } catch (error) {
+    runError = error
+    finalRunStatus = "interrupted"
+    finalFinishedAt = Date.now()
+  } finally {
     try {
-      const execution = await runner.executeScenario({
-        cwd: process.cwd(),
-        projectPrompt: ordered.project.projectPrompt,
-        scenario,
-      })
-      const finishedAt = Date.now()
-
-      await submitScenarioResult({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: {
-          runId: createRunResponse.run.id,
-          result: {
-            scenarioId: scenario.id,
-            scenarioSlug: scenario.slug,
-            scenarioName: scenario.name,
-            executionInstructions: scenario.instructions,
-            scoringPrompt: scenario.scoringPrompt,
-            sequenceIndex,
-            status: "success",
-            runnerType,
-            score: execution.score,
-            rationale: execution.rationale,
-            executionSummary: execution.executionSummary,
-            failureDetail: null,
-            startedAt,
-            finishedAt,
-          },
-          runStatus:
-            sequenceIndex === ordered.scenarios.length - 1
-              ? "completed"
-              : "running",
-        },
-      })
-      process.stdout.write(`  score ${execution.score.toFixed(2)}\n`)
+      await runSession?.close()
     } catch (error) {
-      runFailed = true
-      await submitScenarioResult({
+      closeError = error
+    }
+
+    if (finalRunStatus && finalFinishedAt !== null) {
+      await finalizeRun({
         apiBaseUrl: config.apiBaseUrl,
         accessToken,
         version: CLI_VERSION,
         projectSlug,
         runId: createRunResponse.run.id,
         payload: {
-          runId: createRunResponse.run.id,
-          result: {
-            scenarioId: scenario.id,
-            scenarioSlug: scenario.slug,
-            scenarioName: scenario.name,
-            executionInstructions: scenario.instructions,
-            scoringPrompt: scenario.scoringPrompt,
-            sequenceIndex,
-            status: "runner_failed",
-            runnerType,
-            score: null,
-            rationale: null,
-            executionSummary: null,
-            failureDetail:
-              error instanceof Error ? error.message : "Runner failed",
-            startedAt,
-            finishedAt: Date.now(),
-          },
-          runStatus:
-            sequenceIndex === ordered.scenarios.length - 1
-              ? "failed"
-              : "running",
+          status: finalRunStatus,
+          finishedAt: finalFinishedAt,
         },
       })
-      process.stdout.write(
-        `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
-      )
     }
+  }
+
+  if (runError) {
+    throw runError
+  }
+
+  if (closeError) {
+    throw closeError
   }
 }
 

@@ -9,7 +9,7 @@ import {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ projectSlug: string }> },
+  { params }: { params: Promise<{ projectSlug: string }> }
 ) {
   try {
     requireCliVersion(request)

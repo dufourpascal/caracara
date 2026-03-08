@@ -68,11 +68,18 @@ export function consumeAuthorizationCode(input: {
     throw new Error("Authorization code has already been used")
   }
 
-  if (record.clientId !== input.clientId || record.redirectUri !== input.redirectUri) {
-    throw new Error("Authorization code does not match the client or redirect URI")
+  if (
+    record.clientId !== input.clientId ||
+    record.redirectUri !== input.redirectUri
+  ) {
+    throw new Error(
+      "Authorization code does not match the client or redirect URI"
+    )
   }
 
-  const challenge = toBase64Url(createHash("sha256").update(input.codeVerifier).digest())
+  const challenge = toBase64Url(
+    createHash("sha256").update(input.codeVerifier).digest()
+  )
   if (challenge !== record.codeChallenge) {
     throw new Error("Invalid PKCE code verifier")
   }

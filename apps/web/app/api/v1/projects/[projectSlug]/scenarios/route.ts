@@ -13,7 +13,7 @@ import {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ projectSlug: string }> },
+  { params }: { params: Promise<{ projectSlug: string }> }
 ) {
   try {
     requireCliVersion(request)
@@ -21,7 +21,11 @@ export async function GET(
     const { projectSlug } = await params
     const [projectResponse, scenariosResponse] = await Promise.all([
       getProjectBySlug(token, projectSlug),
-      fetchQuery(api.scenarios.orderedActiveForProject, { projectSlug }, { token }),
+      fetchQuery(
+        api.scenarios.orderedActiveForProject,
+        { projectSlug },
+        { token }
+      ),
     ])
 
     return NextResponse.json(
@@ -33,7 +37,7 @@ export async function GET(
           projectPrompt: projectResponse.project.projectPrompt,
         },
         scenarios: scenariosResponse.scenarios,
-      }),
+      })
     )
   } catch (error) {
     return handleApiError(error)

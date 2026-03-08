@@ -18,7 +18,7 @@ export async function GET(
     params,
   }: {
     params: Promise<{ projectSlug: string; scenarioSlug: string }>
-  },
+  }
 ) {
   try {
     requireCliVersion(request)
@@ -31,7 +31,7 @@ export async function GET(
         projectSlug,
         scenarioSlug,
       },
-      { token },
+      { token }
     )
 
     if (!scenario) {
@@ -47,7 +47,7 @@ export async function GET(
           projectPrompt: projectResponse.project.projectPrompt,
         },
         scenario,
-      }),
+      })
     )
   } catch (error) {
     return handleApiError(error)

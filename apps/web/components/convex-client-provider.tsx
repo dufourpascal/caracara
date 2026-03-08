@@ -29,7 +29,7 @@ export function ConvexClientProvider({
         return null
       }
     },
-    [getToken],
+    [getToken]
   )
   const useAuthState = useMemo(
     () =>
@@ -40,7 +40,7 @@ export function ConvexClientProvider({
           fetchAccessToken,
         }
       },
-    [fetchAccessToken, isLoaded, isSignedIn],
+    [fetchAccessToken, isLoaded, isSignedIn]
   )
 
   return (

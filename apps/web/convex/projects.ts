@@ -15,7 +15,9 @@ export const list = query({
     const identity = await requireIdentity(ctx)
     const projects = await ctx.db
       .query("projects")
-      .withIndex("by_owner", (query) => query.eq("ownerUserId", identity.subject))
+      .withIndex("by_owner", (query) =>
+        query.eq("ownerUserId", identity.subject)
+      )
       .collect()
 
     return projects
@@ -47,7 +49,7 @@ export const create = mutation({
     const slug = await ensureUniqueProjectSlug(
       ctx,
       identity.subject,
-      args.slug ?? args.name,
+      args.slug ?? args.name
     )
     const projectId = await ctx.db.insert("projects", {
       ownerUserId: identity.subject,
@@ -82,7 +84,7 @@ export const update = mutation({
       ctx,
       project.ownerUserId,
       args.slug,
-      project._id,
+      project._id
     )
 
     await ctx.db.patch(project._id, {

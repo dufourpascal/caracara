@@ -15,7 +15,9 @@ const clerk = createClerkClient({
 
 export async function POST(request: Request) {
   try {
-    const payload = routeSchemas.oauthTokenRequestSchema.parse(await request.json())
+    const payload = routeSchemas.oauthTokenRequestSchema.parse(
+      await request.json()
+    )
     const authorizationCode = consumeAuthorizationCode({
       code: payload.code,
       clientId: payload.clientId,
@@ -25,7 +27,7 @@ export async function POST(request: Request) {
     const token = await clerk.sessions.getToken(
       authorizationCode.sessionId,
       undefined,
-      OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+      OAUTH_ACCESS_TOKEN_TTL_SECONDS
     )
 
     return NextResponse.json(
@@ -33,12 +35,12 @@ export async function POST(request: Request) {
         accessToken: token.jwt,
         tokenType: "Bearer",
         expiresAt: Date.now() + OAUTH_ACCESS_TOKEN_TTL_SECONDS * 1000,
-      }),
+      })
     )
   } catch (error) {
     if (error instanceof Error) {
       return handleApiError(
-        new ApiRouteError(400, "validation_error", error.message),
+        new ApiRouteError(400, "validation_error", error.message)
       )
     }
 

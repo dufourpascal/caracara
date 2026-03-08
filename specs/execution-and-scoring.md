@@ -31,14 +31,14 @@ Project-level prompt context is included in each scenario execution.
 Each scenario run should include both project-level shared context and scenario-level instructions so execution remains consistent across scenarios within the same project.
 
 ### EXEC_07
-Scoring is executed separately from task instructions.
+Scoring prompt context is executed in the same runner invocation as task instructions.
 
-The scoring prompt is treated as a distinct evaluation step or evaluation input so the system can distinguish between performing the task and judging the outcome.
+The scoring prompt is still authored and stored separately from scenario instructions, but the local runner receives both in a single invocation so it can gather the evidence needed for evaluation while executing the scenario.
 
 ### EXEC_08
 Each executed scenario produces a structured result.
 
-A scenario execution result should capture status, timestamps, runner used, raw outputs, score, and any available scoring rationale or evaluation details. The enclosing run record should also include a generated human-readable run name built with `unique-names-generator` using one adjective and one animal, plus a timestamp suffix at the end.
+A scenario execution result should capture status, timestamps, runner used, an execution summary, score, and any available scoring rationale or evaluation details. The enclosing run record should also include a generated human-readable run name built with `unique-names-generator` using one adjective and one animal, plus a timestamp suffix at the end.
 
 ### EXEC_09
 Execution failures must be represented explicitly.

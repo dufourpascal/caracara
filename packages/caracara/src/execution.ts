@@ -6,9 +6,9 @@ import { spawn } from "node:child_process"
 import type { OrderedScenario, RunnerType } from "@workspace/contracts"
 
 export type RunnerExecution = {
-  output: string
+  executionSummary: string
   score: number
-  rationale: string
+  rationale: string | null
 }
 
 export interface RunnerAdapter {
@@ -20,31 +20,42 @@ export interface RunnerAdapter {
   }): Promise<RunnerExecution>
 }
 
-const scoreSchema = {
+const executionResultSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["score", "rationale"],
+  required: ["executionSummary", "score", "rationale"],
   properties: {
+    executionSummary: {
+      type: "string",
+      minLength: 1,
+    },
     score: {
       type: "number",
       minimum: 0,
       maximum: 1,
     },
     rationale: {
-      type: "string",
-      minLength: 1,
+      anyOf: [
+        {
+          type: "string",
+          minLength: 1,
+        },
+        {
+          type: "null",
+        },
+      ],
     },
   },
 } as const
 
 const defaultCodexSandbox = "read-only"
 
-function buildExecutionPrompt(input: {
+export function buildRunnerPrompt(input: {
   projectPrompt: string
   scenario: OrderedScenario
 }) {
   return [
-    "You are executing a Caracara Score evaluation scenario against a local application.",
+    "You are executing and scoring a Caracara Score evaluation scenario against a local application.",
     "",
     "Project context:",
     input.projectPrompt.trim(),
@@ -54,33 +65,13 @@ function buildExecutionPrompt(input: {
     "Task instructions:",
     input.scenario.instructions.trim(),
     "",
-    "Return only the execution output and observations needed to judge the scenario.",
-  ].join("\n")
-}
-
-function buildScoringPrompt(input: {
-  projectPrompt: string
-  scenario: OrderedScenario
-  executionOutput: string
-}) {
-  return [
-    "You are scoring the result of an executed Caracara Score scenario.",
-    "",
-    "Project context:",
-    input.projectPrompt.trim(),
-    "",
-    `Scenario: ${input.scenario.name} (${input.scenario.slug})`,
-    "",
-    "Scenario instructions:",
-    input.scenario.instructions.trim(),
-    "",
     "Scoring prompt:",
     input.scenario.scoringPrompt.trim(),
     "",
-    "Execution output:",
-    input.executionOutput.trim(),
-    "",
-    "Return JSON with a numeric score from 0 to 1 and a short rationale.",
+    "Execute the task, collect the evidence needed for scoring, then return JSON with:",
+    '- "executionSummary": a concise factual summary of what you did and observed, including the evidence needed for review and scoring',
+    '- "score": a number from 0 to 1',
+    '- "rationale": null when the score is exactly 1, otherwise a short explanation of the quality issues that prevented a perfect score',
   ].join("\n")
 }
 
@@ -170,10 +161,9 @@ class CodexRunner implements RunnerAdapter {
   }) {
     return withTempFiles(async (dir) => {
       const executionOutputPath = join(dir, "execution.txt")
-      const scoringSchemaPath = join(dir, "score-schema.json")
-      const scoringOutputPath = join(dir, "score.json")
+      const resultSchemaPath = join(dir, "result-schema.json")
 
-      await writeFile(scoringSchemaPath, JSON.stringify(scoreSchema), "utf8")
+      await writeFile(resultSchemaPath, JSON.stringify(executionResultSchema), "utf8")
 
       await runCommand({
         command: "codex",
@@ -181,38 +171,22 @@ class CodexRunner implements RunnerAdapter {
         commandArgs: buildCodexExecArgs({
           cwd: input.cwd,
           outputPath: executionOutputPath,
-          prompt: buildExecutionPrompt(input),
+          outputSchemaPath: resultSchemaPath,
+          prompt: buildRunnerPrompt(input),
         }),
       })
 
-      const executionOutput = (
-        await readFile(executionOutputPath, "utf8")
-      ).trim()
-
-      await runCommand({
-        command: "codex",
-        cwd: input.cwd,
-        commandArgs: buildCodexExecArgs({
-          cwd: input.cwd,
-          outputPath: scoringOutputPath,
-          outputSchemaPath: scoringSchemaPath,
-          prompt: buildScoringPrompt({
-            projectPrompt: input.projectPrompt,
-            scenario: input.scenario,
-            executionOutput,
-          }),
-        }),
-      })
-
-      const scoring = JSON.parse(await readFile(scoringOutputPath, "utf8")) as {
+      const execution = JSON.parse(await readFile(executionOutputPath, "utf8")) as {
+        executionSummary: string
         score: number
-        rationale: string
+        rationale: string | null
       }
 
       return {
-        output: executionOutput,
-        score: scoring.score,
-        rationale: scoring.rationale,
+        executionSummary: execution.executionSummary.trim(),
+        score: execution.score,
+        rationale:
+          execution.score === 1 ? null : execution.rationale?.trim() ?? null,
       }
     })
   }
@@ -233,36 +207,23 @@ class ClaudeRunner implements RunnerAdapter {
         "-p",
         "--permission-mode",
         process.env.CARACARA_CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
-        buildExecutionPrompt(input),
-      ],
-    })
-    const scoring = await runCommand({
-      command: "claude",
-      cwd: input.cwd,
-      commandArgs: [
-        "-p",
-        "--permission-mode",
-        "bypassPermissions",
         "--output-format",
         "json",
         "--json-schema",
-        JSON.stringify(scoreSchema),
-        buildScoringPrompt({
-          projectPrompt: input.projectPrompt,
-          scenario: input.scenario,
-          executionOutput: execution.stdout.trim(),
-        }),
+        JSON.stringify(executionResultSchema),
+        buildRunnerPrompt(input),
       ],
     })
-    const parsed = JSON.parse(scoring.stdout) as {
+    const parsed = JSON.parse(execution.stdout) as {
+      executionSummary: string
       score: number
-      rationale: string
+      rationale: string | null
     }
 
     return {
-      output: execution.stdout.trim(),
+      executionSummary: parsed.executionSummary.trim(),
       score: parsed.score,
-      rationale: parsed.rationale,
+      rationale: parsed.score === 1 ? null : parsed.rationale?.trim() ?? null,
     }
   }
 }

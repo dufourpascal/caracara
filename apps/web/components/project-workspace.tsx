@@ -541,7 +541,7 @@ function AuthenticatedProjectWorkspace({
                             >
                               {result.status}
                             </Badge>
-                            {result.rawOutput ? (
+                            {result.executionSummary ? (
                               <Badge variant="outline">response</Badge>
                             ) : null}
                           </div>
@@ -969,7 +969,7 @@ function RunResultDetail({
     status: string
     score: number | null
     rationale: string | null
-    rawOutput: string | null
+    executionSummary: string | null
     failureDetail: string | null
     executionInstructions: string
     scoringPrompt: string
@@ -1008,9 +1008,9 @@ function RunResultDetail({
           {result.scoringPrompt}
         </pre>
       </Field>
-      <Field label="Runner output">
+      <Field label="Execution summary">
         <pre className="overflow-auto border border-border bg-muted/20 p-4 text-sm whitespace-pre-wrap text-foreground">
-          {result.rawOutput ?? "No runner output stored."}
+          {result.executionSummary ?? "No execution summary stored."}
         </pre>
       </Field>
       <Field label="Rationale">

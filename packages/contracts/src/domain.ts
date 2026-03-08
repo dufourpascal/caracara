@@ -84,7 +84,7 @@ export const scenarioResultSchema = z.object({
   runnerType: runnerTypeSchema,
   score: z.number().min(0).max(1).nullable(),
   rationale: nullableStringSchema,
-  rawOutput: nullableStringSchema,
+  executionSummary: nullableStringSchema,
   failureDetail: nullableStringSchema,
   startedAt: timestampSchema,
   finishedAt: timestampSchema,

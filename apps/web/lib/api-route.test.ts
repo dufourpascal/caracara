@@ -74,7 +74,7 @@ describe("api-route helpers", () => {
             runnerType: "codex",
             score: 1,
             rationale: "Worked",
-            rawOutput: "Output",
+            executionSummary: "Output",
             failureDetail: null,
             startedAt: 1,
             finishedAt: 2,

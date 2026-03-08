@@ -38,7 +38,7 @@ Caracara Score is designed to execute scenarios through supported local coding-a
 ### SCOPE_08
 Scoring is defined separately from execution instructions.
 
-Each scenario contains instructions that tell the runner what to do, and a separate prompt that tells the runner or scoring layer how to evaluate the outcome, so task execution and judgment remain distinct concerns.
+Each scenario contains instructions that tell the runner what to do, and a separate scoring prompt that tells the runner how to evaluate the outcome. These remain distinct authored inputs even though the local runner receives them together in a single invocation.
 
 ### SCOPE_09
 The initial product is intended for technical users.

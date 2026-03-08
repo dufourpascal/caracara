@@ -19,10 +19,7 @@
     "module": "ESNext",
     "isolatedModules": true,
     "noEmit": true,
-    "baseUrl": "..",
-    "paths": {
-      "@workspace/contracts": ["../../packages/contracts/src/index.ts"]
-    }
+    "baseUrl": ".."
   },
   "include": ["./**/*"],
   "exclude": ["./_generated"]

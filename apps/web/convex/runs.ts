@@ -127,7 +127,7 @@ export const submitScenarioResult = mutation({
       runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
       score: v.union(v.null(), v.number()),
       rationale: v.union(v.null(), v.string()),
-      rawOutput: v.union(v.null(), v.string()),
+      executionSummary: v.union(v.null(), v.string()),
       failureDetail: v.union(v.null(), v.string()),
       startedAt: v.number(),
       finishedAt: v.number(),

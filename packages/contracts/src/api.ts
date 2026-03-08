@@ -139,7 +139,7 @@ export const submitScenarioResultRequestSchema = z.object({
     runnerType: true,
     score: true,
     rationale: true,
-    rawOutput: true,
+    executionSummary: true,
     failureDetail: true,
     startedAt: true,
     finishedAt: true,

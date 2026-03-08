@@ -33,7 +33,7 @@ describe("convex response mappers", () => {
       runnerType: "codex",
       score: 1,
       rationale: "Worked",
-      rawOutput: "Output",
+      executionSummary: "Output",
       failureDetail: null,
       startedAt: 1000,
       finishedAt: 1100,
@@ -43,5 +43,29 @@ describe("convex response mappers", () => {
     expect(Number.isInteger(run.createdAt)).toBe(true)
     expect(result.submittedAt).toBe(2345)
     expect(Number.isInteger(result.submittedAt)).toBe(true)
+  })
+
+  it("falls back to legacy rawOutput for older stored results", () => {
+    const result = toScenarioResult({
+      _id: "result-id",
+      _creationTime: 2345.789,
+      runId: "run-id",
+      scenarioId: "scenario-id",
+      scenarioSlug: "demo-scenario",
+      scenarioName: "Demo scenario",
+      executionInstructions: "Do the thing",
+      scoringPrompt: "Score the thing",
+      sequenceIndex: 0,
+      status: "success",
+      runnerType: "codex",
+      score: 1,
+      rationale: null,
+      rawOutput: "Legacy output",
+      failureDetail: null,
+      startedAt: 1000,
+      finishedAt: 1100,
+    } as never)
+
+    expect(result.executionSummary).toBe("Legacy output")
   })
 })

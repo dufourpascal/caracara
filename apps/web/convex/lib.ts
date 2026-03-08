@@ -133,6 +133,10 @@ export function toRun(run: Doc<"runs">) {
 }
 
 export function toScenarioResult(result: Doc<"scenarioResults">) {
+  const legacyResult = result as Doc<"scenarioResults"> & {
+    rawOutput?: string | null
+  }
+
   return {
     id: result._id,
     runId: result.runId,
@@ -146,7 +150,7 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     runnerType: result.runnerType,
     score: result.score,
     rationale: result.rationale,
-    rawOutput: result.rawOutput,
+    executionSummary: result.executionSummary ?? legacyResult.rawOutput ?? null,
     failureDetail: result.failureDetail,
     startedAt: result.startedAt,
     finishedAt: result.finishedAt,

@@ -48,4 +48,4 @@ A run captures the execution of one scenario or a group of scenarios against the
 ### DOMAIN_10
 Execution results are separate from scenario definitions.
 
-Scenario definitions describe what should happen, while run results describe what did happen, including per-scenario outcomes, runner used, timestamps, raw outputs, scores, and any scoring rationale.
+Scenario definitions describe what should happen, while run results describe what did happen, including per-scenario outcomes, runner used, timestamps, execution summaries, scores, and any scoring rationale.

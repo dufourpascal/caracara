@@ -63,7 +63,7 @@ describe("contracts", () => {
         runnerType: "codex",
         score: 1,
         rationale: "Passed",
-        rawOutput: "done",
+        executionSummary: "done",
         failureDetail: null,
         startedAt: 3,
         finishedAt: 4,

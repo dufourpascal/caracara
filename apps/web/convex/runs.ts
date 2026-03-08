@@ -4,6 +4,8 @@ import { mutation, query } from "./_generated/server"
 import {
   computeRunAverageScore,
   createRunName,
+  deleteRunAndResults,
+  ensureRunOwnership,
   getScenarioById,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
@@ -31,12 +33,7 @@ export const listForProject = query({
         : right.startedAt - left.startedAt
     )
 
-    return await Promise.all(
-      sorted.map(async (run) => ({
-        ...toRun(run),
-        averageScore: await computeRunAverageScore(ctx, run._id),
-      }))
-    )
+    return sorted.map(toRun)
   },
 })
 
@@ -59,10 +56,7 @@ export const getDetail = query({
       .collect()
 
     return {
-      run: {
-        ...toRun(run),
-        averageScore: await computeRunAverageScore(ctx, run._id),
-      },
+      run: toRun(run),
       results: results
         .sort((left, right) => left.sequenceIndex - right.sequenceIndex)
         .map(toScenarioResult),
@@ -92,6 +86,7 @@ export const create = mutation({
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       runnerType: args.runnerType,
+      averageScore: null,
       startedAt: args.startedAt,
       finishedAt: null,
       updatedAt: timestamp,
@@ -127,23 +122,18 @@ export const submitScenarioResult = mutation({
       runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
       score: v.union(v.null(), v.number()),
       rationale: v.union(v.null(), v.string()),
+      improvementInstruction: v.union(v.null(), v.string()),
       executionSummary: v.union(v.null(), v.string()),
       failureDetail: v.union(v.null(), v.string()),
       startedAt: v.number(),
       finishedAt: v.number(),
     }),
-    runStatus: v.optional(
-      v.union(
-        v.literal("pending"),
-        v.literal("running"),
-        v.literal("completed"),
-        v.literal("failed"),
-        v.literal("interrupted")
-      )
-    ),
   },
   handler: async (ctx, args) => {
-    const { identity, project } = await requireProjectOwnerById(ctx, args.projectId)
+    const { identity, project } = await requireProjectOwnerById(
+      ctx,
+      args.projectId
+    )
     const run = await ctx.db.get(args.runId)
 
     if (!run) {
@@ -153,10 +143,7 @@ export const submitScenarioResult = mutation({
       })
     }
 
-    if (
-      run.projectId !== project._id ||
-      run.ownerUserId !== identity.subject
-    ) {
+    if (run.projectId !== project._id || run.ownerUserId !== identity.subject) {
       throw new ConvexError({
         code: "unauthorized",
         message: "You do not have access to this run.",
@@ -165,7 +152,10 @@ export const submitScenarioResult = mutation({
 
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 
-    if (scenario.projectId !== project._id || scenario.projectId !== run.projectId) {
+    if (
+      scenario.projectId !== project._id ||
+      scenario.projectId !== run.projectId
+    ) {
       throw new ConvexError({
         code: "unauthorized",
         message: "Scenario does not belong to this project.",
@@ -175,9 +165,7 @@ export const submitScenarioResult = mutation({
     const existing = await ctx.db
       .query("scenarioResults")
       .withIndex("by_run_scenario", (query) =>
-        query
-          .eq("runId", args.runId)
-          .eq("scenarioId", args.result.scenarioId)
+        query.eq("runId", args.runId).eq("scenarioId", args.result.scenarioId)
       )
       .unique()
     const values = {
@@ -195,11 +183,6 @@ export const submitScenarioResult = mutation({
     }
 
     await ctx.db.patch(run._id, {
-      status: args.runStatus ?? "running",
-      finishedAt:
-        args.runStatus && args.runStatus !== "running"
-          ? args.result.finishedAt
-          : run.finishedAt,
       updatedAt: Date.now(),
     })
 
@@ -213,6 +196,85 @@ export const submitScenarioResult = mutation({
     return {
       run: toRun(updatedRun),
       result: toScenarioResult(storedResult),
+    }
+  },
+})
+
+export const finalize = mutation({
+  args: {
+    projectId: v.id("projects"),
+    runId: v.id("runs"),
+    status: v.union(
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("interrupted")
+    ),
+    finishedAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const { identity, project } = await requireProjectOwnerById(
+      ctx,
+      args.projectId
+    )
+    const run = await ctx.db.get(args.runId)
+
+    if (!run) {
+      throw new ConvexError({
+        code: "not_found",
+        message: "Run not found.",
+      })
+    }
+
+    if (run.projectId !== project._id || run.ownerUserId !== identity.subject) {
+      throw new ConvexError({
+        code: "unauthorized",
+        message: "You do not have access to this run.",
+      })
+    }
+
+    if (run.status !== "running") {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Run has already been finalized.",
+      })
+    }
+
+    const averageScore =
+      args.status === "completed"
+        ? await computeRunAverageScore(ctx, run._id)
+        : null
+
+    await ctx.db.patch(run._id, {
+      status: args.status,
+      averageScore,
+      finishedAt: args.finishedAt,
+      updatedAt: Date.now(),
+    })
+
+    const updatedRun = await ctx.db.get(run._id)
+
+    if (!updatedRun) {
+      throw new Error("Failed to finalize run")
+    }
+
+    return {
+      run: toRun(updatedRun),
+    }
+  },
+})
+
+export const remove = mutation({
+  args: {
+    runId: v.id("runs"),
+  },
+  handler: async (ctx, args) => {
+    const { run } = await ensureRunOwnership(ctx, args.runId)
+    const { deletedResultCount } = await deleteRunAndResults(ctx, run._id)
+
+    return {
+      deletedRunId: run._id,
+      deletedRunName: run.name,
+      deletedResultCount,
     }
   },
 })

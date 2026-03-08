@@ -6,6 +6,7 @@ import {
   apiErrorSchema,
   createRunRequestSchema,
   createVersionMismatchDetails,
+  finalizeRunRequestSchema,
   isCliVersionSupported,
   oauthAuthorizeRequestSchema,
   oauthTokenRequestSchema,
@@ -30,7 +31,7 @@ export class ApiRouteError extends Error {
       | "conflict"
       | "internal_error",
     message: string,
-    readonly details?: Record<string, unknown>,
+    readonly details?: Record<string, unknown>
   ) {
     super(message)
   }
@@ -44,7 +45,7 @@ function statusForApiErrorCode(
     | "validation_error"
     | "version_mismatch"
     | "conflict"
-    | "internal_error",
+    | "internal_error"
 ) {
   switch (code) {
     case "unauthenticated":
@@ -70,15 +71,13 @@ function jsonError(error: ApiRouteError) {
       message: error.message,
       details: error.details,
     }),
-    { status: error.status },
+    { status: error.status }
   )
 }
 
 function extractStructuredApiError(error: unknown) {
   const data =
-    typeof error === "object" &&
-    error !== null &&
-    "data" in error
+    typeof error === "object" && error !== null && "data" in error
       ? (error as { data?: unknown }).data
       : undefined
   const parsedData = apiErrorSchema.safeParse(data)
@@ -88,7 +87,7 @@ function extractStructuredApiError(error: unknown) {
       statusForApiErrorCode(parsedData.data.code),
       parsedData.data.code,
       parsedData.data.message,
-      parsedData.data.details,
+      parsedData.data.details
     )
   }
 
@@ -105,7 +104,7 @@ function extractStructuredApiError(error: unknown) {
 
   try {
     const parsedMessage = apiErrorSchema.safeParse(
-      JSON.parse(error.message.slice(jsonStart, jsonEnd + 1)),
+      JSON.parse(error.message.slice(jsonStart, jsonEnd + 1))
     )
 
     if (!parsedMessage.success) {
@@ -116,7 +115,7 @@ function extractStructuredApiError(error: unknown) {
       statusForApiErrorCode(parsedMessage.data.code),
       parsedMessage.data.code,
       parsedMessage.data.message,
-      parsedMessage.data.details,
+      parsedMessage.data.details
     )
   } catch {
     return null
@@ -169,8 +168,8 @@ export function handleApiError(error: unknown) {
       500,
       "internal_error",
       "Unexpected server error.",
-      getInternalErrorDetails(error),
-    ),
+      getInternalErrorDetails(error)
+    )
   )
 }
 
@@ -203,9 +202,14 @@ export async function requireVerifiedToken(request: Request) {
       secretKey: process.env.CLERK_SECRET_KEY,
     })
   } catch (error) {
-    throw new ApiRouteError(401, "unauthenticated", "Invalid or expired token.", {
-      reason: error instanceof Error ? error.message : "unknown",
-    })
+    throw new ApiRouteError(
+      401,
+      "unauthenticated",
+      "Invalid or expired token.",
+      {
+        reason: error instanceof Error ? error.message : "unknown",
+      }
+    )
   }
 
   return token
@@ -213,14 +217,19 @@ export async function requireVerifiedToken(request: Request) {
 
 export async function parseJsonBody<T>(
   request: Request,
-  schema: { parse: (value: unknown) => T },
+  schema: { parse: (value: unknown) => T }
 ) {
   try {
     return schema.parse(await request.json())
   } catch (error) {
-    throw new ApiRouteError(400, "validation_error", "Invalid request payload.", {
-      reason: error instanceof Error ? error.message : "unknown",
-    })
+    throw new ApiRouteError(
+      400,
+      "validation_error",
+      "Invalid request payload.",
+      {
+        reason: error instanceof Error ? error.message : "unknown",
+      }
+    )
   }
 }
 
@@ -232,14 +241,22 @@ export async function getViewer(token: string) {
   })
 
   if (!parsed.success) {
-    throw new ApiRouteError(401, "unauthenticated", "Unable to resolve authenticated user.")
+    throw new ApiRouteError(
+      401,
+      "unauthenticated",
+      "Unable to resolve authenticated user."
+    )
   }
 
   return parsed.data
 }
 
 export async function getProjectBySlug(token: string, projectSlug: string) {
-  const project = await fetchQuery(api.projects.getBySlug, { slug: projectSlug }, { token })
+  const project = await fetchQuery(
+    api.projects.getBySlug,
+    { slug: projectSlug },
+    { token }
+  )
   return projectDetailResponseSchema.parse({ project })
 }
 
@@ -248,7 +265,10 @@ export async function getProjectList(token: string) {
   return projectListResponseSchema.parse({ projects })
 }
 
-export async function createRun(token: string, args: { projectSlug: string; body: unknown }) {
+export async function createRun(
+  token: string,
+  args: { projectSlug: string; body: unknown }
+) {
   const payload = createRunRequestSchema.parse(args.body)
   const { project } = await getProjectBySlug(token, args.projectSlug)
   const run = await fetchMutation(
@@ -260,7 +280,7 @@ export async function createRun(token: string, args: { projectSlug: string; body
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       startedAt: payload.startedAt,
     },
-    { token },
+    { token }
   )
 
   return { run }
@@ -277,7 +297,7 @@ export async function submitScenarioResult(args: {
     throw new ApiRouteError(
       400,
       "validation_error",
-      "Run ID in URL does not match request body.",
+      "Run ID in URL does not match request body."
     )
   }
   const { project } = await getProjectBySlug(args.token, args.projectSlug)
@@ -290,15 +310,37 @@ export async function submitScenarioResult(args: {
       result: {
         ...payload.result,
         scenarioId: payload.result.scenarioId as never,
+        improvementInstruction: payload.result.improvementInstruction,
       },
-      runStatus: payload.runStatus,
     },
-    { token: args.token },
+    { token: args.token }
+  )
+}
+
+export async function finalizeRun(args: {
+  token: string
+  projectSlug: string
+  runId: string
+  body: unknown
+}) {
+  const payload = finalizeRunRequestSchema.parse(args.body)
+  const { project } = await getProjectBySlug(args.token, args.projectSlug)
+
+  return await fetchMutation(
+    api.runs.finalize,
+    {
+      projectId: project.id as never,
+      runId: args.runId as never,
+      status: payload.status,
+      finishedAt: payload.finishedAt,
+    },
+    { token: args.token }
   )
 }
 
 export const routeSchemas = {
   createRunRequestSchema,
+  finalizeRunRequestSchema,
   oauthAuthorizeRequestSchema,
   oauthTokenRequestSchema,
   submitScenarioResultRequestSchema,

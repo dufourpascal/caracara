@@ -125,6 +125,7 @@ export function toRun(run: Doc<"runs">) {
     mode: run.mode,
     requestedScenarioSlug: run.requestedScenarioSlug,
     runnerType: run.runnerType,
+    averageScore: run.averageScore,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     createdAt: toTimestamp(run._creationTime),
@@ -150,6 +151,7 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     runnerType: result.runnerType,
     score: result.score,
     rationale: result.rationale,
+    improvementInstruction: result.improvementInstruction ?? null,
     executionSummary: result.executionSummary ?? legacyResult.rawOutput ?? null,
     failureDetail: result.failureDetail,
     startedAt: result.startedAt,
@@ -319,6 +321,19 @@ export async function getScenarioById(ctx: Ctx, scenarioId: Id<"scenarios">) {
   return scenario
 }
 
+export async function getRunById(ctx: Ctx, runId: Id<"runs">) {
+  const run = await ctx.db.get(runId)
+
+  if (!run) {
+    throw new ConvexError({
+      code: "not_found",
+      message: "Run not found.",
+    })
+  }
+
+  return run
+}
+
 export async function ensureScenarioOwnership(
   ctx: Ctx,
   scenarioId: Id<"scenarios">
@@ -327,6 +342,40 @@ export async function ensureScenarioOwnership(
   const { project } = await requireProjectOwnerById(ctx, scenario.projectId)
 
   return { project, scenario }
+}
+
+export async function ensureRunOwnership(ctx: Ctx, runId: Id<"runs">) {
+  const run = await getRunById(ctx, runId)
+  const { identity, project } = await requireProjectOwnerById(
+    ctx,
+    run.projectId
+  )
+
+  if (run.ownerUserId !== identity.subject) {
+    throw new ConvexError({
+      code: "unauthorized",
+      message: "You do not have access to this run.",
+    })
+  }
+
+  return { identity, project, run }
+}
+
+export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
+  const results = await ctx.db
+    .query("scenarioResults")
+    .withIndex("by_run", (query) => query.eq("runId", runId))
+    .collect()
+
+  for (const result of results) {
+    await ctx.db.delete(result._id)
+  }
+
+  await ctx.db.delete(runId)
+
+  return {
+    deletedResultCount: results.length,
+  }
 }
 
 export function createRunName() {

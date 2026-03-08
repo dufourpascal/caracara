@@ -10,6 +10,7 @@
 
 import type * as domain from "../domain.js";
 import type * as lib from "../lib.js";
+import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as runs from "../runs.js";
 import type * as scenarios from "../scenarios.js";
@@ -24,6 +25,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   domain: typeof domain;
   lib: typeof lib;
+  migrations: typeof migrations;
   projects: typeof projects;
   runs: typeof runs;
   scenarios: typeof scenarios;

@@ -14,6 +14,7 @@ describe("convex response mappers", () => {
       mode: "all",
       requestedScenarioSlug: null,
       runnerType: "codex",
+      averageScore: null,
       startedAt: 1000,
       finishedAt: null,
       updatedAt: 1200,
@@ -33,6 +34,7 @@ describe("convex response mappers", () => {
       runnerType: "codex",
       score: 1,
       rationale: "Worked",
+      improvementInstruction: "Fix the save flow to preserve the slug.",
       executionSummary: "Output",
       failureDetail: null,
       startedAt: 1000,
@@ -43,6 +45,9 @@ describe("convex response mappers", () => {
     expect(Number.isInteger(run.createdAt)).toBe(true)
     expect(result.submittedAt).toBe(2345)
     expect(Number.isInteger(result.submittedAt)).toBe(true)
+    expect(result.improvementInstruction).toBe(
+      "Fix the save flow to preserve the slug."
+    )
   })
 
   it("falls back to legacy rawOutput for older stored results", () => {
@@ -60,6 +65,7 @@ describe("convex response mappers", () => {
       runnerType: "codex",
       score: 1,
       rationale: null,
+      improvementInstruction: null,
       rawOutput: "Legacy output",
       failureDetail: null,
       startedAt: 1000,

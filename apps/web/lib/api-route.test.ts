@@ -29,8 +29,8 @@ describe("api-route helpers", () => {
   it("maps stringified structured errors in messages to API responses", async () => {
     const response = handleApiError(
       new Error(
-        'Uncaught ConvexError: {"code":"unauthorized","message":"You do not have access to this run."}',
-      ),
+        'Uncaught ConvexError: {"code":"unauthorized","message":"You do not have access to this run."}'
+      )
     )
 
     expect(response.status).toBe(403)
@@ -74,19 +74,20 @@ describe("api-route helpers", () => {
             runnerType: "codex",
             score: 1,
             rationale: "Worked",
+            improvementInstruction: null,
             executionSummary: "Output",
             failureDetail: null,
             startedAt: 1,
             finishedAt: 2,
           },
         },
-      }),
+      })
     ).rejects.toEqual(
       new ApiRouteError(
         400,
         "validation_error",
-        "Run ID in URL does not match request body.",
-      ),
+        "Run ID in URL does not match request body."
+      )
     )
   })
 })

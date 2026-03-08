@@ -7,5 +7,7 @@ export default async function RunsPage({
 }) {
   const { projectSlug } = await params
 
-  return <ProjectWorkspace mode="edit" projectSlug={projectSlug} workspace="runs" />
+  return (
+    <ProjectWorkspace mode="edit" projectSlug={projectSlug} workspace="runs" />
+  )
 }

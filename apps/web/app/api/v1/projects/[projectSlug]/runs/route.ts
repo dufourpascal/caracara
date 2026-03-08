@@ -13,13 +13,16 @@ import {
 
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ projectSlug: string }> },
+  { params }: { params: Promise<{ projectSlug: string }> }
 ) {
   try {
     requireCliVersion(request)
     const token = await requireVerifiedToken(request)
     const { projectSlug } = await params
-    const body = await parseJsonBody(request, routeSchemas.createRunRequestSchema)
+    const body = await parseJsonBody(
+      request,
+      routeSchemas.createRunRequestSchema
+    )
     const response = await createRun(token, { projectSlug, body })
 
     return NextResponse.json(createRunResponseSchema.parse(response))

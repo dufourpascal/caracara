@@ -16,6 +16,8 @@ import {
 } from "@xyflow/react"
 import {
   ArrowUpDown,
+  Check,
+  Copy,
   GitBranch,
   Plus,
   RotateCcw,
@@ -24,7 +26,7 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react"
-import { useState } from "react"
+import { type CSSProperties, useEffect, useRef, useState } from "react"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -100,6 +102,196 @@ function createScenarioFormState(scenario: {
   }
 }
 
+function formatRunDisplayName(name: string) {
+  return name.replace(/-\d{8}-\d{6}$/, "").replaceAll("-", " ")
+}
+
+function formatTimestamp(value: number | null) {
+  if (value === null) {
+    return "n/a"
+  }
+
+  return new Date(value).toLocaleString()
+}
+
+function formatScore(value: number | null) {
+  return value === null ? "n/a" : value.toFixed(2)
+}
+
+function getRunStatusBadgeVariant(
+  status: string
+): "default" | "outline" | "success" | "warning" {
+  switch (status) {
+    case "completed":
+      return "success"
+    case "failed":
+    case "interrupted":
+      return "warning"
+    case "pending":
+      return "outline"
+    case "running":
+    default:
+      return "default"
+  }
+}
+
+type ScoreStyle = CSSProperties & {
+  "--score-color"?: string
+}
+
+function getScoreColor(value: number) {
+  const clampedValue = Math.max(0, Math.min(1, value))
+
+  if (clampedValue >= 0.5) {
+    const highPercent = Math.round(((clampedValue - 0.5) / 0.5) * 100)
+    const midPercent = 100 - highPercent
+
+    return `color-mix(in oklch, var(--score-mid) ${midPercent}%, var(--score-high) ${highPercent}%)`
+  }
+
+  const midPercent = Math.round((clampedValue / 0.5) * 100)
+  const lowPercent = 100 - midPercent
+
+  return `color-mix(in oklch, var(--score-low) ${lowPercent}%, var(--score-mid) ${midPercent}%)`
+}
+
+function getScoreTextStyle(value: number | null): CSSProperties | undefined {
+  if (value === null) {
+    return undefined
+  }
+
+  return {
+    color: getScoreColor(value),
+  }
+}
+
+function getScoreBadgeStyle(value: number | null): ScoreStyle | undefined {
+  if (value === null) {
+    return undefined
+  }
+
+  return {
+    "--score-color": getScoreColor(value),
+    backgroundColor:
+      "color-mix(in oklch, var(--score-color) 12%, var(--background))",
+    borderColor: "color-mix(in oklch, var(--score-color) 28%, var(--border))",
+    color: "var(--score-color)",
+  }
+}
+
+function ScoreText({
+  className,
+  value,
+}: {
+  className?: string
+  value: number | null
+}) {
+  return (
+    <span className={cn(className)} style={getScoreTextStyle(value)}>
+      {formatScore(value)}
+    </span>
+  )
+}
+
+function ScoreBadge({
+  className,
+  value,
+}: {
+  className?: string
+  value: number | null
+}) {
+  return (
+    <Badge
+      className={cn("font-mono", className)}
+      style={getScoreBadgeStyle(value)}
+      variant="outline"
+    >
+      {formatScore(value)}
+    </Badge>
+  )
+}
+
+type PanelLayout = Record<string, number>
+
+function getPanelLayoutToken({
+  projectSlug,
+  workspace,
+  scope,
+}: {
+  projectSlug: string
+  workspace: WorkspaceKind
+  scope: string
+}) {
+  return `project-workspace:${projectSlug}:${workspace}:${scope}`
+}
+
+function readStoredPanelLayout(
+  storageKey: string,
+  fallbackLayout: PanelLayout
+): PanelLayout {
+  if (typeof window === "undefined") {
+    return fallbackLayout
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(storageKey)
+
+    if (!storedValue) {
+      return fallbackLayout
+    }
+
+    const parsedValue = JSON.parse(storedValue)
+
+    if (
+      !parsedValue ||
+      typeof parsedValue !== "object" ||
+      Array.isArray(parsedValue)
+    ) {
+      return fallbackLayout
+    }
+
+    const nextLayout = Object.keys(fallbackLayout).reduce<PanelLayout>(
+      (layout, panelId) => {
+        const fallbackSize = fallbackLayout[panelId]!
+        const storedSize = parsedValue[panelId]
+
+        layout[panelId] =
+          typeof storedSize === "number" ? storedSize : fallbackSize
+
+        return layout
+      },
+      {}
+    )
+
+    return nextLayout
+  } catch {
+    return fallbackLayout
+  }
+}
+
+function persistPanelLayout(storageKey: string, layout: PanelLayout) {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(layout))
+  } catch {
+    // Ignore storage failures and fall back to default sizes.
+  }
+}
+
+function usePersistedPanelLayout(
+  storageKey: string,
+  fallbackLayout: PanelLayout
+) {
+  const [defaultLayout] = useState<PanelLayout>(() =>
+    readStoredPanelLayout(storageKey, fallbackLayout)
+  )
+
+  return {
+    defaultLayout,
+    onLayoutChanged: (layout: PanelLayout) =>
+      persistPanelLayout(storageKey, layout),
+  }
+}
+
 export function ProjectWorkspace({
   projectSlug,
   workspace,
@@ -158,6 +350,7 @@ function AuthenticatedProjectWorkspace({
   const createScenario = useMutation(api.scenarios.create)
   const updateScenario = useMutation(api.scenarios.update)
   const removeScenario = useMutation(api.scenarios.remove)
+  const removeRun = useMutation(api.runs.remove)
   const scenarios = useQuery(api.scenarios.listForProject, {
     projectSlug,
     ascending: workspace === "scenarios" ? mode !== "graph" : true,
@@ -181,6 +374,70 @@ function AuthenticatedProjectWorkspace({
   const [scenarioSearch, setScenarioSearch] = useState("")
   const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
   const [runSortAscending, setRunSortAscending] = useState(false)
+  const [isDeletingRun, setIsDeletingRun] = useState(false)
+  const scenarioListPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "scenarios",
+    scope: "list",
+  })
+  const scenarioDetailPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "scenarios",
+    scope: "detail",
+  })
+  const runListPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "runs",
+    scope: "list",
+  })
+  const runDetailPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "runs",
+    scope: "detail",
+  })
+  const runSummaryPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "runs",
+    scope: "summary",
+  })
+  const runResultPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "runs",
+    scope: "result",
+  })
+  const scenarioPanelLayout = usePersistedPanelLayout(
+    getPanelLayoutToken({
+      projectSlug,
+      workspace: "scenarios",
+      scope: "layout",
+    }),
+    {
+      [scenarioListPanelId]: 28,
+      [scenarioDetailPanelId]: 72,
+    }
+  )
+  const runPanelLayout = usePersistedPanelLayout(
+    getPanelLayoutToken({
+      projectSlug,
+      workspace: "runs",
+      scope: "layout",
+    }),
+    {
+      [runListPanelId]: 28,
+      [runDetailPanelId]: 72,
+    }
+  )
+  const runDetailPanelLayout = usePersistedPanelLayout(
+    getPanelLayoutToken({
+      projectSlug,
+      workspace: "runs",
+      scope: "detail-layout",
+    }),
+    {
+      [runSummaryPanelId]: 32,
+      [runResultPanelId]: 68,
+    }
+  )
 
   if (!project) {
     return (
@@ -256,8 +513,8 @@ function AuthenticatedProjectWorkspace({
             {workspace === "runs" && selectedRunId && runDetail ? (
               <>
                 <span className="text-muted-foreground">/</span>
-                <span className="font-mono text-xs text-foreground">
-                  {runDetail.run.name}
+                <span className="text-xs text-foreground capitalize">
+                  {formatRunDisplayName(runDetail.run.name)}
                 </span>
               </>
             ) : null}
@@ -322,8 +579,18 @@ function AuthenticatedProjectWorkspace({
       </div>
 
       {workspace === "scenarios" ? (
-        <ResizablePanelGroup orientation="horizontal" className="flex-1">
-          <ResizablePanel defaultSize="28%" minSize="20%" maxSize="38%">
+        <ResizablePanelGroup
+          className="flex-1"
+          defaultLayout={scenarioPanelLayout.defaultLayout}
+          onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
+          orientation="horizontal"
+        >
+          <ResizablePanel
+            defaultSize="28%"
+            id={scenarioListPanelId}
+            maxSize="38%"
+            minSize="20%"
+          >
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border px-4 py-4">
                 <div className="flex items-center justify-between gap-2">
@@ -413,7 +680,10 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%">
+          <ResizablePanel
+            defaultSize="72%"
+            id={scenarioDetailPanelId}
+          >
             {mode === "graph" ? (
               <ReactFlowProvider>
                 <ScenarioGraph scenarios={orderedScenarios} />
@@ -439,8 +709,18 @@ function AuthenticatedProjectWorkspace({
           updateProject={updateProject}
         />
       ) : (
-        <ResizablePanelGroup orientation="horizontal" className="flex-1">
-          <ResizablePanel defaultSize="28%" minSize="20%" maxSize="38%">
+        <ResizablePanelGroup
+          className="flex-1"
+          defaultLayout={runPanelLayout.defaultLayout}
+          onLayoutChanged={runPanelLayout.onLayoutChanged}
+          orientation="horizontal"
+        >
+          <ResizablePanel
+            defaultSize="28%"
+            id={runListPanelId}
+            maxSize="38%"
+            minSize="20%"
+          >
             <div className="flex h-full flex-col border-r border-border">
               <div className="flex items-center justify-between border-b border-border px-4 py-4">
                 <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
@@ -459,7 +739,7 @@ function AuthenticatedProjectWorkspace({
                   <button
                     key={run.id}
                     className={cn(
-                      "grid w-full gap-1 border-b border-border px-4 py-3 text-left transition-colors",
+                      "grid w-full gap-2 border-b border-border px-4 py-3 text-left transition-colors",
                       run.id === selectedRunId
                         ? "bg-muted/40"
                         : "hover:bg-muted/20"
@@ -469,12 +749,20 @@ function AuthenticatedProjectWorkspace({
                     }
                     type="button"
                   >
-                    <span className="font-mono text-xs text-foreground">
-                      {run.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(run.startedAt).toLocaleString()}
-                    </span>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-sm font-medium text-foreground capitalize">
+                        {formatRunDisplayName(run.name)}
+                      </span>
+                      <Badge variant={getRunStatusBadgeVariant(run.status)}>
+                        {run.status}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {formatTimestamp(run.startedAt)}
+                      </span>
+                      <ScoreBadge value={run.averageScore} />
+                    </div>
                   </button>
                 ))}
               </div>
@@ -483,25 +771,84 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%">
+          <ResizablePanel
+            defaultSize="72%"
+            id={runDetailPanelId}
+          >
             {runDetail ? (
-              <ResizablePanelGroup orientation="horizontal" className="h-full">
-                <ResizablePanel defaultSize="32%" minSize="22%" maxSize="40%">
+              <ResizablePanelGroup
+                className="h-full"
+                defaultLayout={runDetailPanelLayout.defaultLayout}
+                onLayoutChanged={runDetailPanelLayout.onLayoutChanged}
+                orientation="horizontal"
+              >
+                <ResizablePanel
+                  defaultSize="32%"
+                  id={runSummaryPanelId}
+                  maxSize="40%"
+                  minSize="22%"
+                >
                   <div className="flex h-full flex-col border-r border-border">
-                    <div className="border-b border-border px-4 py-4">
-                      <p className="font-mono text-xs text-foreground">
-                        {runDetail.run.name}
-                      </p>
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {new Date(runDetail.run.startedAt).toLocaleString()}
-                      </p>
-                      <div className="mt-3 flex items-center gap-2">
-                        <Badge variant="outline">{runDetail.run.status}</Badge>
-                        <Badge variant="success">
-                          {runDetail.run.averageScore === null
-                            ? "n/a"
-                            : runDetail.run.averageScore.toFixed(2)}
-                        </Badge>
+                    <div className="border-b border-border bg-muted/10 px-4 py-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                            Run summary
+                          </p>
+                          <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground capitalize">
+                            {formatRunDisplayName(runDetail.run.name)}
+                          </h2>
+                          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                            {formatTimestamp(runDetail.run.startedAt)}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={isDeletingRun}
+                          onClick={async () => {
+                            if (
+                              !window.confirm(
+                                `Delete run "${formatRunDisplayName(runDetail.run.name)}"? This will permanently delete the run and all associated scenario results.`
+                              )
+                            ) {
+                              return
+                            }
+
+                            setIsDeletingRun(true)
+
+                            try {
+                              await removeRun({
+                                runId: runDetail.run.id as never,
+                              })
+                              router.push(`/projects/${projectSlug}/runs`)
+                            } finally {
+                              setIsDeletingRun(false)
+                            }
+                          }}
+                        >
+                          <Trash2 />
+                          Delete
+                        </Button>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-px border border-border bg-border">
+                        <div className="bg-background px-3 py-2">
+                          <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                            Status
+                          </p>
+                          <p className="mt-1 text-sm text-foreground">
+                            {runDetail.run.status}
+                          </p>
+                        </div>
+                        <div className="bg-background px-3 py-2">
+                          <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                            Score
+                          </p>
+                          <ScoreText
+                            className="mt-1 font-mono text-sm"
+                            value={runDetail.run.averageScore}
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="flex-1 overflow-auto">
@@ -525,11 +872,10 @@ function AuthenticatedProjectWorkspace({
                             <span className="text-sm text-foreground">
                               {result.scenarioName}
                             </span>
-                            <span className="font-mono text-xs text-muted-foreground">
-                              {result.score === null
-                                ? "n/a"
-                                : result.score.toFixed(2)}
-                            </span>
+                            <ScoreText
+                              className="font-mono text-xs"
+                              value={result.score}
+                            />
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge
@@ -553,7 +899,10 @@ function AuthenticatedProjectWorkspace({
 
                 <ResizableHandle withHandle />
 
-                <ResizablePanel defaultSize="68%">
+                <ResizablePanel
+                  defaultSize="68%"
+                  id={runResultPanelId}
+                >
                   {selectedRunScenarioSlug ? (
                     <RunResultDetail
                       result={
@@ -969,8 +1318,13 @@ function RunResultDetail({
     status: string
     score: number | null
     rationale: string | null
+    improvementInstruction: string | null
     executionSummary: string | null
     failureDetail: string | null
+    runnerType: string
+    startedAt: number
+    finishedAt: number
+    submittedAt: number
     executionInstructions: string
     scoringPrompt: string
   } | null
@@ -980,7 +1334,7 @@ function RunResultDetail({
   }
 
   return (
-    <div className="grid h-full content-start gap-5 px-6 py-6">
+    <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
       <div>
         <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
           Run result
@@ -988,36 +1342,173 @@ function RunResultDetail({
         <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
           {result.scenarioName}
         </h2>
+        <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+          {result.scenarioSlug}
+        </p>
         <div className="mt-3 flex items-center gap-2">
           <Badge variant={result.status === "success" ? "success" : "warning"}>
             {result.status}
           </Badge>
-          <Badge variant="outline">
-            {result.score === null ? "n/a" : result.score.toFixed(2)}
-          </Badge>
+          <ScoreBadge value={result.score} />
         </div>
       </div>
 
-      <Field label="Instructions">
-        <pre className="overflow-auto border border-border bg-muted/20 p-4 text-sm whitespace-pre-wrap text-foreground">
-          {result.executionInstructions}
-        </pre>
+      <div className="border border-primary/40 bg-primary/5">
+        <div className="flex items-center justify-between gap-3 border-b border-primary/30 px-4 py-3">
+          <div>
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+              Rationale
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Primary explanation for the scenario score.
+            </p>
+          </div>
+          <Badge variant="outline">Primary output</Badge>
+        </div>
+        <CopyableTextBlock
+          className="border-0 bg-transparent"
+          emptyText="No rationale stored."
+          value={result.rationale ?? result.failureDetail}
+        />
+      </div>
+
+      <Field label="Improvement instruction">
+        <CopyableTextBlock
+          emptyText="No improvement instruction stored."
+          value={result.improvementInstruction}
+        />
       </Field>
-      <Field label="Scoring prompt">
-        <pre className="overflow-auto border border-border bg-muted/20 p-4 text-sm whitespace-pre-wrap text-foreground">
-          {result.scoringPrompt}
-        </pre>
-      </Field>
+
       <Field label="Execution summary">
-        <pre className="overflow-auto border border-border bg-muted/20 p-4 text-sm whitespace-pre-wrap text-foreground">
-          {result.executionSummary ?? "No execution summary stored."}
-        </pre>
+        <CopyableTextBlock
+          emptyText="No execution summary stored."
+          value={result.executionSummary}
+        />
       </Field>
-      <Field label="Rationale">
-        <pre className="overflow-auto border border-border bg-muted/20 p-4 text-sm whitespace-pre-wrap text-foreground">
-          {result.rationale ?? result.failureDetail ?? "No rationale stored."}
-        </pre>
-      </Field>
+
+      <div className="grid gap-4 border-t border-border pt-5">
+        <div>
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            Run data
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Metadata and stored execution details for this result.
+          </p>
+        </div>
+        <div className="grid gap-px border border-border bg-border sm:grid-cols-2">
+          <DetailMeta label="Runner" value={result.runnerType} />
+          <DetailMeta
+            label="Started"
+            value={formatTimestamp(result.startedAt)}
+          />
+          <DetailMeta
+            label="Finished"
+            value={formatTimestamp(result.finishedAt)}
+          />
+          <DetailMeta
+            label="Submitted"
+            value={formatTimestamp(result.submittedAt)}
+          />
+        </div>
+        {result.failureDetail ? (
+          <Field label="Failure detail">
+            <CopyableTextBlock value={result.failureDetail} />
+          </Field>
+        ) : null}
+      </div>
+
+      <div className="grid gap-5 border-t border-border pt-5">
+        <div>
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            Scenario definition
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The inputs captured from the scenario at execution time.
+          </p>
+        </div>
+        <Field label="Instructions">
+          <CopyableTextBlock value={result.executionInstructions} />
+        </Field>
+        <Field label="Scoring prompt">
+          <CopyableTextBlock value={result.scoringPrompt} />
+        </Field>
+      </div>
+    </div>
+  )
+}
+
+function CopyableTextBlock({
+  value,
+  emptyText = "Nothing to copy.",
+  className,
+}: {
+  value: string | null
+  emptyText?: string
+  className?: string
+}) {
+  const [copied, setCopied] = useState(false)
+  const resetTimeoutRef = useRef<number | null>(null)
+  const text = value ?? emptyText
+  const canCopy = value !== null
+
+  useEffect(() => {
+    return () => {
+      if (resetTimeoutRef.current !== null) {
+        window.clearTimeout(resetTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  async function handleCopy() {
+    if (!canCopy) {
+      return
+    }
+
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+
+    if (resetTimeoutRef.current !== null) {
+      window.clearTimeout(resetTimeoutRef.current)
+    }
+
+    resetTimeoutRef.current = window.setTimeout(() => {
+      setCopied(false)
+      resetTimeoutRef.current = null
+    }, 1500)
+  }
+
+  return (
+    <div
+      className={cn(
+        "relative border border-border bg-muted/20 text-foreground",
+        className
+      )}
+    >
+      <Button
+        aria-label={canCopy ? "Copy text" : "Nothing to copy"}
+        className="absolute top-2 right-2 z-10"
+        disabled={!canCopy}
+        onClick={handleCopy}
+        size="icon-xs"
+        title={canCopy ? "Copy text" : "Nothing to copy"}
+        variant="ghost"
+      >
+        {copied ? <Check /> : <Copy />}
+      </Button>
+      <pre className="overflow-auto px-4 py-4 pr-14 text-sm whitespace-pre-wrap text-foreground">
+        {text}
+      </pre>
+    </div>
+  )
+}
+
+function DetailMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-background px-3 py-2">
+      <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+        {label}
+      </p>
+      <p className="mt-1 text-sm text-foreground">{value}</p>
     </div>
   )
 }

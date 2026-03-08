@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server"
 
-import { submitScenarioResultResponseSchema } from "@workspace/contracts"
+import { finalizeRunResponseSchema } from "@workspace/contracts"
 
 import {
+  finalizeRun,
   handleApiError,
   parseJsonBody,
   requireCliVersion,
   requireVerifiedToken,
   routeSchemas,
-  submitScenarioResult,
 } from "@/lib/api-route"
 
 export async function POST(
@@ -23,18 +23,15 @@ export async function POST(
     requireCliVersion(request)
     const token = await requireVerifiedToken(request)
     const { projectSlug, runId } = await params
-    const body = await parseJsonBody(
-      request,
-      routeSchemas.submitScenarioResultRequestSchema
-    )
-    const response = await submitScenarioResult({
+    const body = await parseJsonBody(request, routeSchemas.finalizeRunRequestSchema)
+    const response = await finalizeRun({
       token,
       projectSlug,
       runId,
       body,
     })
 
-    return NextResponse.json(submitScenarioResultResponseSchema.parse(response))
+    return NextResponse.json(finalizeRunResponseSchema.parse(response))
   } catch (error) {
     return handleApiError(error)
   }

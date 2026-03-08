@@ -1,19 +1,10 @@
 "use client"
 
-import "@xyflow/react/dist/style.css"
-
 import { useRouter } from "next/navigation"
 import { UserButton } from "@clerk/nextjs"
 import { Authenticated, AuthLoading, useMutation, useQuery } from "convex/react"
 import type { Id } from "@/convex/_generated/dataModel"
 import { api } from "@/convex/_generated/api"
-import {
-  Background,
-  Controls,
-  MarkerType,
-  ReactFlow,
-  ReactFlowProvider,
-} from "@xyflow/react"
 import {
   ArrowUpDown,
   Check,
@@ -46,8 +37,13 @@ import {
   ResizablePanelGroup,
 } from "@workspace/ui/components/resizable"
 import { Textarea } from "@workspace/ui/components/textarea"
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@workspace/ui/components/toggle-group"
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
+import { ScenarioGraph } from "@/components/scenario-graph"
 
 type WorkspaceKind = "project" | "scenarios" | "runs"
 
@@ -552,28 +548,42 @@ function AuthenticatedProjectWorkspace({
 
         {workspace === "scenarios" ? (
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant={mode === "edit" ? "default" : "outline"}
-              onClick={() =>
-                router.push(
-                  selectedScenarioSlug
-                    ? `/projects/${projectSlug}/scenarios/${selectedScenarioSlug}?mode=edit`
-                    : `/projects/${projectSlug}/scenarios?mode=edit`
-                )
-              }
-            >
-              Edit
-            </Button>
-            <Button
-              size="sm"
-              variant={mode === "graph" ? "default" : "outline"}
-              onClick={() =>
+            <ToggleGroup
+              aria-label="Scenario view"
+              onValueChange={(value) => {
+                if (!value || value === mode) {
+                  return
+                }
+
+                if (value === "edit") {
+                  router.push(
+                    selectedScenarioSlug
+                      ? `/projects/${projectSlug}/scenarios/${selectedScenarioSlug}?mode=edit`
+                      : `/projects/${projectSlug}/scenarios?mode=edit`
+                  )
+                  return
+                }
+
                 router.push(`/projects/${projectSlug}/scenarios?mode=graph`)
-              }
+              }}
+              type="single"
+              value={mode}
             >
-              Graph
-            </Button>
+              <ToggleGroupItem
+                aria-label="Edit scenarios"
+                size="sm"
+                value="edit"
+              >
+                Edit
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                aria-label="View scenario graph"
+                size="sm"
+                value="graph"
+              >
+                Graph
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
         ) : null}
       </div>
@@ -680,14 +690,9 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel
-            defaultSize="72%"
-            id={scenarioDetailPanelId}
-          >
+          <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
             {mode === "graph" ? (
-              <ReactFlowProvider>
-                <ScenarioGraph scenarios={orderedScenarios} />
-              </ReactFlowProvider>
+              <ScenarioGraph scenarios={orderedScenarios} />
             ) : selectedScenario ? (
               <ScenarioEditor
                 allScenarios={scenarios ?? []}
@@ -771,10 +776,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel
-            defaultSize="72%"
-            id={runDetailPanelId}
-          >
+          <ResizablePanel defaultSize="72%" id={runDetailPanelId}>
             {runDetail ? (
               <ResizablePanelGroup
                 className="h-full"
@@ -899,10 +901,7 @@ function AuthenticatedProjectWorkspace({
 
                 <ResizableHandle withHandle />
 
-                <ResizablePanel
-                  defaultSize="68%"
-                  id={runResultPanelId}
-                >
+                <ResizablePanel defaultSize="68%" id={runResultPanelId}>
                   {selectedRunScenarioSlug ? (
                     <RunResultDetail
                       result={
@@ -1257,54 +1256,6 @@ function ScenarioEditor({
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-function ScenarioGraph({
-  scenarios,
-}: {
-  scenarios: Array<{
-    id: string
-    slug: string
-    name: string
-    dependencyIds: string[]
-  }>
-}) {
-  const nodes = scenarios.map((scenario, index) => ({
-    id: scenario.id,
-    position: {
-      x: 80 + (index % 3) * 280,
-      y: 80 + Math.floor(index / 3) * 180,
-    },
-    data: {
-      label: (
-        <div className="min-w-44 border border-border bg-background px-3 py-2 text-left">
-          <p className="text-sm font-medium text-foreground">{scenario.name}</p>
-          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-            {scenario.slug}
-          </p>
-        </div>
-      ),
-    },
-  }))
-  const edges = scenarios.flatMap((scenario) =>
-    scenario.dependencyIds.map((dependencyId) => ({
-      id: `${dependencyId}->${scenario.id}`,
-      source: dependencyId,
-      target: scenario.id,
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-      },
-    }))
-  )
-
-  return (
-    <div className="h-full">
-      <ReactFlow fitView edges={edges} nodes={nodes}>
-        <Background color="var(--color-border)" gap={24} />
-        <Controls />
-      </ReactFlow>
     </div>
   )
 }

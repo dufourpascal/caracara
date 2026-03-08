@@ -4,18 +4,27 @@
   "private": true,
   "scripts": {
     "build": "turbo build",
+    "caracara": "node scripts/run-caracara.mjs",
+    "caracara:build": "pnpm --filter @workspace/contracts build && pnpm --filter caracara build",
     "dev": "turbo run dev convex:dev --filter=web --parallel",
     "lint": "turbo lint",
+    "test": "turbo test",
     "format": "turbo format",
     "typecheck": "turbo typecheck"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
+    "jsdom": "^27.4.0",
+    "msw": "^2.12.10",
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "turbo": "^2.8.8",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
   },
   "packageManager": "pnpm@9.0.6",
   "engines": {

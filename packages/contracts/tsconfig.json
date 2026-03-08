@@ -1,0 +1,11 @@
+{
+  "extends": "@workspace/typescript-config/base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "rootDir": ".",
+    "paths": {
+      "@workspace/contracts": ["./src/index.ts"]
+    }
+  },
+  "include": ["src", "vitest.config.ts"]
+}

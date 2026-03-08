@@ -39,3 +39,4 @@ Thumbs.db
 # Misc local files
 *.pem
 *.pid
+.caracara/

@@ -2,6 +2,10 @@
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
   "globalEnv": [
+    "CARACARA_API_BASE_URL",
+    "CARACARA_CLAUDE_PERMISSION_MODE",
+    "CARACARA_CODEX_SANDBOX",
+    "CARACARA_PROJECT",
     "CLERK_FRONTEND_API_URL",
     "CLERK_SECRET_KEY",
     "CONVEX_DEPLOYMENT",
@@ -14,7 +18,7 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
@@ -24,6 +28,10 @@
     },
     "typecheck": {
       "dependsOn": ["^typecheck"]
+    },
+    "test": {
+      "dependsOn": ["^test"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"]
     },
     "dev": {
       "cache": false,

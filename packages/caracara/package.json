@@ -1,0 +1,29 @@
+{
+  "name": "caracara",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "caracara": "./dist/bin/caracara.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@workspace/contracts": "workspace:*",
+    "commander": "^14.0.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@workspace/eslint-config": "workspace:*",
+    "@workspace/typescript-config": "workspace:*",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "dist"
+  ]
+}

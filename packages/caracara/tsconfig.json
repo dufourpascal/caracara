@@ -1,0 +1,11 @@
+{
+  "extends": "@workspace/typescript-config/base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@workspace/contracts": ["../contracts/src/index.ts"],
+      "caracara/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

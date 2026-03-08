@@ -6,16 +6,22 @@ import { Authenticated, AuthLoading, useMutation, useQuery } from "convex/react"
 import type { Id } from "@/convex/_generated/dataModel"
 import { api } from "@/convex/_generated/api"
 import {
+  AlertCircle,
   ArrowUpDown,
   Check,
+  CheckCircle2,
+  CircleDashed,
   Copy,
   GitBranch,
+  LoaderCircle,
+  PauseCircle,
   Plus,
   RotateCcw,
   Save,
   Search,
   Settings2,
   Trash2,
+  Wrench,
 } from "lucide-react"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
 
@@ -114,23 +120,6 @@ function formatScore(value: number | null) {
   return value === null ? "n/a" : value.toFixed(2)
 }
 
-function getRunStatusBadgeVariant(
-  status: string
-): "default" | "outline" | "success" | "warning" {
-  switch (status) {
-    case "completed":
-      return "success"
-    case "failed":
-    case "interrupted":
-      return "warning"
-    case "pending":
-      return "outline"
-    case "running":
-    default:
-      return "default"
-  }
-}
-
 type ScoreStyle = CSSProperties & {
   "--score-color"?: string
 }
@@ -205,6 +194,110 @@ function ScoreBadge({
       {formatScore(value)}
     </Badge>
   )
+}
+
+function formatStatusLabel(status: string) {
+  return status.replaceAll("_", " ")
+}
+
+function getRunStatusIcon(status: string) {
+  switch (status) {
+    case "completed":
+      return {
+        icon: CheckCircle2,
+        iconClassName: "text-primary",
+        label: "Completed",
+      }
+    case "failed":
+      return {
+        icon: AlertCircle,
+        iconClassName: "text-destructive",
+        label: "Failed",
+      }
+    case "interrupted":
+      return {
+        icon: PauseCircle,
+        iconClassName: "text-destructive",
+        label: "Interrupted",
+      }
+    case "pending":
+      return {
+        icon: CircleDashed,
+        iconClassName: "text-muted-foreground",
+        label: "Pending",
+      }
+    case "running":
+    default:
+      return {
+        icon: LoaderCircle,
+        iconClassName: "text-foreground motion-safe:animate-spin",
+        label: "Running",
+      }
+    }
+}
+
+function getScenarioResultStatusIcon(status: string) {
+  switch (status) {
+    case "success":
+      return {
+        icon: CheckCircle2,
+        iconClassName: "text-primary",
+        label: "Success",
+      }
+    case "interrupted":
+      return {
+        icon: PauseCircle,
+        iconClassName: "text-destructive",
+        label: "Interrupted",
+      }
+    case "dependency_failed":
+      return {
+        icon: AlertCircle,
+        iconClassName: "text-destructive",
+        label: "Dependency failed",
+      }
+    case "runner_failed":
+      return {
+        icon: AlertCircle,
+        iconClassName: "text-destructive",
+        label: "Runner failed",
+      }
+    case "scoring_failed":
+    default:
+      return {
+        icon: AlertCircle,
+        iconClassName: "text-destructive",
+        label: "Scoring failed",
+      }
+    }
+}
+
+function StatusIcon({
+  icon: Icon,
+  iconClassName,
+  label,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  iconClassName?: string
+  label: string
+}) {
+  return (
+    <span
+      aria-label={label}
+      className="inline-flex size-5 shrink-0 items-center justify-center"
+      title={label}
+    >
+      <Icon aria-hidden className={cn("size-4", iconClassName)} />
+    </span>
+  )
+}
+
+function RunStatusIcon({ status }: { status: string }) {
+  return <StatusIcon {...getRunStatusIcon(status)} />
+}
+
+function ScenarioResultStatusIcon({ status }: { status: string }) {
+  return <StatusIcon {...getScenarioResultStatusIcon(status)} />
 }
 
 type PanelLayout = Record<string, number>
@@ -758,15 +851,16 @@ function AuthenticatedProjectWorkspace({
                       <span className="text-sm font-medium text-foreground capitalize">
                         {formatRunDisplayName(run.name)}
                       </span>
-                      <Badge variant={getRunStatusBadgeVariant(run.status)}>
-                        {run.status}
-                      </Badge>
+                      <RunStatusIcon status={run.status} />
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-mono text-[11px] text-muted-foreground">
                         {formatTimestamp(run.startedAt)}
                       </span>
-                      <ScoreBadge value={run.averageScore} />
+                      <ScoreText
+                        className="font-mono text-xs"
+                        value={run.averageScore}
+                      />
                     </div>
                   </button>
                 ))}
@@ -839,7 +933,7 @@ function AuthenticatedProjectWorkspace({
                             Status
                           </p>
                           <p className="mt-1 text-sm text-foreground">
-                            {runDetail.run.status}
+                            {formatStatusLabel(runDetail.run.status)}
                           </p>
                         </div>
                         <div className="bg-background px-3 py-2">
@@ -879,18 +973,16 @@ function AuthenticatedProjectWorkspace({
                               value={result.score}
                             />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Badge
-                              variant={
-                                result.status === "success"
-                                  ? "success"
-                                  : "warning"
-                              }
-                            >
-                              {result.status}
-                            </Badge>
-                            {result.executionSummary ? (
-                              <Badge variant="outline">response</Badge>
+                          <div className="flex items-center justify-end gap-2 text-muted-foreground">
+                            <ScenarioResultStatusIcon status={result.status} />
+                            {result.improvementInstruction ? (
+                              <span
+                                aria-label="Improvement instruction available"
+                                className="inline-flex size-5 shrink-0 items-center justify-center"
+                                title="Improvement instruction available"
+                              >
+                                <Wrench aria-hidden className="size-4" />
+                              </span>
                             ) : null}
                           </div>
                         </button>
@@ -1298,37 +1390,25 @@ function RunResultDetail({
         </p>
         <div className="mt-3 flex items-center gap-2">
           <Badge variant={result.status === "success" ? "success" : "warning"}>
-            {result.status}
+            {formatStatusLabel(result.status)}
           </Badge>
           <ScoreBadge value={result.score} />
         </div>
       </div>
 
-      <div className="border border-primary/40 bg-primary/5">
-        <div className="flex items-center justify-between gap-3 border-b border-primary/30 px-4 py-3">
-          <div>
-            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-              Rationale
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Primary explanation for the scenario score.
-            </p>
-          </div>
-          <Badge variant="outline">Primary output</Badge>
-        </div>
-        <CopyableTextBlock
-          className="border-0 bg-transparent"
-          emptyText="No rationale stored."
-          value={result.rationale ?? result.failureDetail}
-        />
-      </div>
+      <RunInsightPanel
+        description="Most relevant explanation for the scenario score."
+        emptyText="No rationale stored."
+        title="Rationale"
+        value={result.rationale ?? result.failureDetail}
+      />
 
-      <Field label="Improvement instruction">
-        <CopyableTextBlock
-          emptyText="No improvement instruction stored."
-          value={result.improvementInstruction}
-        />
-      </Field>
+      <RunInsightPanel
+        description="Most actionable follow-up instruction based on this result."
+        emptyText="No improvement instruction stored."
+        title="Improvement instruction"
+        value={result.improvementInstruction}
+      />
 
       <Field label="Execution summary">
         <CopyableTextBlock
@@ -1449,6 +1529,34 @@ function CopyableTextBlock({
       <pre className="overflow-auto px-4 py-4 pr-14 text-sm whitespace-pre-wrap text-foreground">
         {text}
       </pre>
+    </div>
+  )
+}
+
+function RunInsightPanel({
+  title,
+  description,
+  value,
+  emptyText,
+}: {
+  title: string
+  description: string
+  value: string | null
+  emptyText: string
+}) {
+  return (
+    <div className="border border-primary/40 bg-primary/5">
+      <div className="border-b border-primary/30 px-4 py-3">
+        <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+          {title}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </div>
+      <CopyableTextBlock
+        className="border-0 bg-transparent"
+        emptyText={emptyText}
+        value={value}
+      />
     </div>
   )
 }

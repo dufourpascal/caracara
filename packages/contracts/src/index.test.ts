@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest"
 
+import birdNames from "./birds-safe.json" with { type: "json" }
+
 import {
   API_VERSION,
   MIN_SUPPORTED_CLI_VERSION,
   authTokenResponseSchema,
   cliConfigSchema,
+  finalizeRunResponseSchema,
   createUniqueSlug,
   formatRunName,
   isCliVersionSupported,
   normalizeSlug,
   orderedActiveScenariosResponseSchema,
   projectSchema,
+  runSchema,
   scenarioResultSchema,
   versionMismatchErrorSchema,
 } from "./index.js"
@@ -63,6 +67,7 @@ describe("contracts", () => {
         runnerType: "codex",
         score: 1,
         rationale: "Passed",
+        improvementInstruction: null,
         executionSummary: "done",
         failureDetail: null,
         startedAt: 3,
@@ -70,6 +75,24 @@ describe("contracts", () => {
         submittedAt: 5,
       }).executionInstructions
     ).toBe("Create a new account in the app.")
+
+    expect(
+      runSchema.parse({
+        id: "run_1",
+        projectId: project.id,
+        ownerUserId: project.ownerUserId,
+        name: "steady-hawk-20260308-120000",
+        status: "completed",
+        mode: "all",
+        requestedScenarioSlug: null,
+        runnerType: "codex",
+        averageScore: 0.9,
+        startedAt: 1,
+        finishedAt: 2,
+        createdAt: 1,
+        updatedAt: 2,
+      }).averageScore
+    ).toBe(0.9)
   })
 
   it("rejects invalid cli config", () => {
@@ -91,10 +114,15 @@ describe("contracts", () => {
     ).toBe("hello-world-3")
   })
 
-  it("formats run names with an adjective, animal, and timestamp suffix", () => {
-    expect(formatRunName(new Date("2026-03-07T14:25:30Z"))).toMatch(
-      /^[a-z]+-[a-z]+-20260307-142530$/
-    )
+  it("formats run names with an adjective, bird, and timestamp suffix", () => {
+    const [adjective, bird, datePart, timePart] = formatRunName(
+      new Date("2026-03-07T14:25:30Z")
+    ).split("-")
+
+    expect(adjective).toMatch(/^[a-z]+$/)
+    expect(birdNames).toContain(bird)
+    expect(datePart).toBe("20260307")
+    expect(timePart).toBe("142530")
   })
 
   it("checks cli version compatibility", () => {
@@ -123,5 +151,17 @@ describe("contracts", () => {
       MIN_SUPPORTED_CLI_VERSION
     )
     expect(token.tokenType).toBe("Bearer")
+
+    expect(
+      finalizeRunResponseSchema.parse({
+        run: {
+          id: "run_1",
+          status: "completed",
+          averageScore: 0.8,
+          finishedAt: 10,
+          updatedAt: 10,
+        },
+      }).run.averageScore
+    ).toBe(0.8)
   })
 })

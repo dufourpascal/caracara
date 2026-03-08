@@ -43,7 +43,7 @@ A scenario should keep a durable identifier across edits, while the actual autho
 ### DOMAIN_09
 A run is a single execution event within a project.
 
-A run captures the execution of one scenario or a group of scenarios against the project's application under test at a specific time and in a specific local environment. Each run stores both a durable identifier and a human-readable run name. In v1, the run name is generated with `unique-names-generator` using a single adjective plus a single animal in kebab-case, followed by a timestamp suffix, for example `pleasant-platypus-20260307-142530`.
+A run captures the execution of one scenario or a group of scenarios against the project's application under test at a specific time and in a specific local environment. Each run stores both a durable identifier and a human-readable run name. In v1, the run name is generated with `unique-names-generator` using a single adjective plus a single bird in kebab-case, followed by a timestamp suffix, for example `pleasant-warbler-20260307-142530`.
 
 ### DOMAIN_10
 Execution results are separate from scenario definitions.

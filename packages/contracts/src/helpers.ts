@@ -1,4 +1,6 @@
-import { animals, adjectives, uniqueNamesGenerator } from "unique-names-generator"
+import { adjectives, uniqueNamesGenerator } from "unique-names-generator"
+
+import birds from "./birds-safe.json" with { type: "json" }
 
 export function normalizeSlug(value: string) {
   const normalized = value
@@ -43,7 +45,7 @@ export function formatRunTimestamp(date: Date) {
 
 export function formatRunName(date = new Date()) {
   const base = uniqueNamesGenerator({
-    dictionaries: [adjectives, animals],
+    dictionaries: [adjectives, birds],
     separator: "-",
     style: "lowerCase",
     length: 2,

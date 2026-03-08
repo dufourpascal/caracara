@@ -8,7 +8,7 @@ Unauthenticated users are shown a dedicated login page built with Clerk componen
 ### LAYOUT_02
 The authenticated application uses a single top navbar with fixed left and right anchors.
 
-The logo is placed on the far left of the navbar. The user avatar is placed on the far right. Between them, the navbar contains breadcrumb navigation in this exact structure when applicable: `logo / [project-slug] / [scenario | run] / [scenario-id | run-name]`. The breadcrumb length is dynamic and reflects the current route. When no scenario or run is selected, the breadcrumb stops at `... / scenarios` or `... / runs`. When the breadcrumb refers to a run, the human-readable run name should be the generated `unique-names-generator` adjective-animal label with the timestamp suffix rather than the raw run identifier.
+The logo is placed on the far left of the navbar. The user avatar is placed on the far right. Between them, the navbar contains breadcrumb navigation in this exact structure when applicable: `logo / [project-slug] / [scenario | run] / [scenario-id | run-name]`. The breadcrumb length is dynamic and reflects the current route. When no scenario or run is selected, the breadcrumb stops at `... / scenarios` or `... / runs`. When the breadcrumb refers to a run, the human-readable run name should be the generated `unique-names-generator` adjective-bird label with the timestamp suffix rather than the raw run identifier.
 
 ### LAYOUT_03
 Clicking the project breadcrumb opens the project switcher.
@@ -33,7 +33,7 @@ In scenario list mode, the left-side panel shows only scenario titles. The defau
 ### LAYOUT_07
 Runs mode uses a left-side navigation list ordered by execution date.
 
-When the `Runs` segment is active, the left-side panel shows the list of runs. The default ordering is by execution date. The panel header includes a simple sort toggle button that changes the sort direction. Each list item shows the run name, such as `placating-platypus`, and the run date. The selected run row should use the default selected styling from the shared shadcn-based list implementation.
+When the `Runs` segment is active, the left-side panel shows the list of runs. The default ordering is by execution date. The panel header includes a simple sort toggle button that changes the sort direction. Each list item shows the run name, such as `placating-warbler`, and the run date. The selected run row should use the default selected styling from the shared shadcn-based list implementation.
 
 ### LAYOUT_08
 Scenario graph mode keeps the scenario list on the left and shows the dependency graph on the right.

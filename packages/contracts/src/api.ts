@@ -5,7 +5,6 @@ import {
   projectSchema,
   runModeSchema,
   runSchema,
-  runStatusSchema,
   runnerTypeSchema,
   scenarioResultSchema,
   scenarioSchema,
@@ -139,12 +138,12 @@ export const submitScenarioResultRequestSchema = z.object({
     runnerType: true,
     score: true,
     rationale: true,
+    improvementInstruction: true,
     executionSummary: true,
     failureDetail: true,
     startedAt: true,
     finishedAt: true,
   }),
-  runStatus: runStatusSchema.optional(),
 })
 
 export const submitScenarioResultResponseSchema = z.object({
@@ -158,8 +157,18 @@ export const submitScenarioResultResponseSchema = z.object({
 })
 
 export const finalizeRunRequestSchema = z.object({
-  status: runStatusSchema,
+  status: z.enum(["completed", "failed", "interrupted"]),
   finishedAt: z.number().int().positive(),
+})
+
+export const finalizeRunResponseSchema = z.object({
+  run: runSchema.pick({
+    id: true,
+    status: true,
+    averageScore: true,
+    finishedAt: true,
+    updatedAt: true,
+  }),
 })
 
 export const versionMismatchDetailsSchema = z.object({

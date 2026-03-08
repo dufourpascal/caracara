@@ -1,6 +1,4 @@
-import { queryGeneric } from "convex/server"
-
-const query = queryGeneric
+import { query } from "./_generated/server"
 
 export const viewer = query({
   args: {},

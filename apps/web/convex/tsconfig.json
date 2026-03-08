@@ -18,7 +18,11 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": "..",
+    "paths": {
+      "@workspace/contracts": ["../../packages/contracts/src/index.ts"]
+    }
   },
   "include": ["./**/*"],
   "exclude": ["./_generated"]

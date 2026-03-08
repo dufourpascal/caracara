@@ -1,9 +1,9 @@
 "use client"
 
 import { useAuth } from "@clerk/nextjs"
-import { ConvexReactClient } from "convex/react"
-import { ConvexProviderWithClerk } from "convex/react-clerk"
+import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react"
 import type { ReactNode } from "react"
+import { useCallback, useMemo } from "react"
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
 
@@ -18,9 +18,34 @@ export function ConvexClientProvider({
 }: Readonly<{
   children: ReactNode
 }>) {
+  const { getToken, isLoaded, isSignedIn } = useAuth()
+  const fetchAccessToken = useCallback(
+    async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
+      try {
+        return await getToken({
+          skipCache: forceRefreshToken,
+        })
+      } catch {
+        return null
+      }
+    },
+    [getToken],
+  )
+  const useAuthState = useMemo(
+    () =>
+      function useAuthFromClerk() {
+        return {
+          isLoading: !isLoaded,
+          isAuthenticated: isSignedIn ?? false,
+          fetchAccessToken,
+        }
+      },
+    [fetchAccessToken, isLoaded, isSignedIn],
+  )
+
   return (
-    <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+    <ConvexProviderWithAuth client={convex} useAuth={useAuthState}>
       {children}
-    </ConvexProviderWithClerk>
+    </ConvexProviderWithAuth>
   )
 }

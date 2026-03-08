@@ -14,6 +14,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react"
+import { useTheme } from "next-themes"
 
 import {
   buildScenarioGraphLayout,
@@ -76,6 +77,7 @@ export function ScenarioGraph({
 }: {
   scenarios: ScenarioGraphScenario[]
 }) {
+  const { resolvedTheme } = useTheme()
   const layout = buildScenarioGraphLayout(scenarios)
 
   const nodes: ScenarioGraphNodeType[] = layout.nodes.map((node) => ({
@@ -110,6 +112,7 @@ export function ScenarioGraph({
   return (
     <div className="h-full bg-muted/[0.08]">
       <ReactFlow
+        colorMode={resolvedTheme === "dark" ? "dark" : "light"}
         defaultEdgeOptions={{
           markerEnd: {
             color: EDGE_STROKE,

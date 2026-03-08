@@ -10,7 +10,9 @@ import {
   ArrowUpDown,
   Check,
   CheckCircle2,
+  ChevronsUpDown,
   CircleDashed,
+  CircleHelp,
   Copy,
   GitBranch,
   LoaderCircle,
@@ -72,6 +74,30 @@ function getWorkspaceHref({
   }
 }
 
+function formatWorkspaceLabel(workspace: WorkspaceKind) {
+  return workspace.charAt(0).toUpperCase() + workspace.slice(1)
+}
+
+function getScenarioModeHref({
+  mode,
+  projectSlug,
+  selectedScenarioSlug,
+}: {
+  mode: "edit" | "graph"
+  projectSlug: string
+  selectedScenarioSlug?: string
+}) {
+  if (mode === "edit" && selectedScenarioSlug) {
+    return `/projects/${projectSlug}/scenarios/${selectedScenarioSlug}?mode=edit`
+  }
+
+  return `/projects/${projectSlug}/scenarios?mode=${mode}`
+}
+
+function formatScenarioModeLabel(mode: "edit" | "graph") {
+  return mode === "edit" ? "Edit" : "Graph"
+}
+
 function createProjectFormState(project: {
   name: string
   slug: string
@@ -106,6 +132,10 @@ function createScenarioFormState(scenario: {
 
 function formatRunDisplayName(name: string) {
   return name.replace(/-\d{8}-\d{6}$/, "").replaceAll("-", " ")
+}
+
+function isScenarioStatus(value: string): value is "draft" | "active" {
+  return value === "draft" || value === "active"
 }
 
 function formatTimestamp(value: number | null) {
@@ -233,7 +263,25 @@ function getRunStatusIcon(status: string) {
         iconClassName: "text-foreground motion-safe:animate-spin",
         label: "Running",
       }
-    }
+  }
+}
+
+function getScenarioStatusIcon(status: "draft" | "active") {
+  switch (status) {
+    case "active":
+      return {
+        icon: CheckCircle2,
+        iconClassName: "text-primary",
+        label: "Active",
+      }
+    case "draft":
+    default:
+      return {
+        icon: CircleDashed,
+        iconClassName: "text-muted-foreground",
+        label: "Draft",
+      }
+  }
 }
 
 function getScenarioResultStatusIcon(status: string) {
@@ -294,6 +342,14 @@ function StatusIcon({
 
 function RunStatusIcon({ status }: { status: string }) {
   return <StatusIcon {...getRunStatusIcon(status)} />
+}
+
+function ScenarioStatusIcon({
+  status,
+}: {
+  status: "draft" | "active"
+}) {
+  return <StatusIcon {...getScenarioStatusIcon(status)} />
 }
 
 function ScenarioResultStatusIcon({ status }: { status: string }) {
@@ -560,8 +616,16 @@ function AuthenticatedProjectWorkspace({
             <span className="text-muted-foreground">/</span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost">
-                  {project.slug}
+                <Button
+                  className="min-w-0 gap-1.5"
+                  size="sm"
+                  variant="ghost"
+                >
+                  <span className="truncate font-mono">{project.slug}</span>
+                  <ChevronsUpDown
+                    aria-hidden
+                    className="size-3.5 text-muted-foreground"
+                  />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
@@ -590,7 +654,77 @@ function AuthenticatedProjectWorkspace({
               </DropdownMenuContent>
             </DropdownMenu>
             <span className="text-muted-foreground">/</span>
-            <span className="font-medium text-foreground">{workspace}</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  className="min-w-0 gap-1.5 px-2 font-medium text-foreground"
+                  size="sm"
+                  variant="ghost"
+                >
+                  <span>{formatWorkspaceLabel(workspace)}</span>
+                  <ChevronsUpDown
+                    aria-hidden
+                    className="size-3.5 text-muted-foreground"
+                  />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {(["scenarios", "runs", "project"] as const).map((item) => (
+                  <DropdownMenuItem
+                    key={item}
+                    onSelect={() =>
+                      router.push(
+                        getWorkspaceHref({
+                          mode,
+                          projectSlug,
+                          workspace: item,
+                        })
+                      )
+                    }
+                  >
+                    {formatWorkspaceLabel(item)}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {workspace === "scenarios" ? (
+              <>
+                <span className="text-muted-foreground">/</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className="min-w-0 gap-1.5 px-2 font-medium text-foreground"
+                      size="sm"
+                      variant="ghost"
+                    >
+                      <span>{formatScenarioModeLabel(mode)}</span>
+                      <ChevronsUpDown
+                        aria-hidden
+                        className="size-3.5 text-muted-foreground"
+                      />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {(["edit", "graph"] as const).map((item) => (
+                      <DropdownMenuItem
+                        key={item}
+                        onSelect={() =>
+                          router.push(
+                            getScenarioModeHref({
+                              mode: item,
+                              projectSlug,
+                              selectedScenarioSlug,
+                            })
+                          )
+                        }
+                      >
+                        {formatScenarioModeLabel(item)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            ) : null}
             {workspace === "scenarios" && selectedScenarioSlug ? (
               <>
                 <span className="text-muted-foreground">/</span>
@@ -611,75 +745,6 @@ function AuthenticatedProjectWorkspace({
         </div>
         <UserButton />
       </header>
-
-      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3 sm:px-6">
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant={workspace === "scenarios" ? "default" : "outline"}
-            onClick={() =>
-              router.push(`/projects/${projectSlug}/scenarios?mode=${mode}`)
-            }
-          >
-            Scenarios
-          </Button>
-          <Button
-            size="sm"
-            variant={workspace === "runs" ? "default" : "outline"}
-            onClick={() => router.push(`/projects/${projectSlug}/runs`)}
-          >
-            Runs
-          </Button>
-          <Button
-            size="sm"
-            variant={workspace === "project" ? "default" : "outline"}
-            onClick={() => router.push(`/projects/${projectSlug}/project`)}
-          >
-            Project
-          </Button>
-        </div>
-
-        {workspace === "scenarios" ? (
-          <div className="flex items-center gap-2">
-            <ToggleGroup
-              aria-label="Scenario view"
-              onValueChange={(value) => {
-                if (!value || value === mode) {
-                  return
-                }
-
-                if (value === "edit") {
-                  router.push(
-                    selectedScenarioSlug
-                      ? `/projects/${projectSlug}/scenarios/${selectedScenarioSlug}?mode=edit`
-                      : `/projects/${projectSlug}/scenarios?mode=edit`
-                  )
-                  return
-                }
-
-                router.push(`/projects/${projectSlug}/scenarios?mode=graph`)
-              }}
-              type="single"
-              value={mode}
-            >
-              <ToggleGroupItem
-                aria-label="Edit scenarios"
-                size="sm"
-                value="edit"
-              >
-                Edit
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                aria-label="View scenario graph"
-                size="sm"
-                value="graph"
-              >
-                Graph
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-        ) : null}
-      </div>
 
       {workspace === "scenarios" ? (
         <ResizablePanelGroup
@@ -764,13 +829,7 @@ function AuthenticatedProjectWorkspace({
                       <span className="text-sm font-medium text-foreground">
                         {scenario.name}
                       </span>
-                      <Badge
-                        variant={
-                          scenario.status === "active" ? "success" : "outline"
-                        }
-                      >
-                        {scenario.status}
-                      </Badge>
+                      <ScenarioStatusIcon status={scenario.status} />
                     </div>
                     <p className="font-mono text-[11px] text-muted-foreground">
                       {scenario.slug}
@@ -1237,7 +1296,7 @@ function ScenarioEditor({
       </div>
 
       <div className="grid gap-5">
-        <div className="grid grid-cols-[minmax(0,1fr)_12rem] gap-5">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_16rem]">
           <Field label="Name">
             <Input
               onChange={(event) =>
@@ -1247,19 +1306,41 @@ function ScenarioEditor({
             />
           </Field>
           <Field label="Status">
-            <select
-              className="h-9 border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
-              onChange={(event) =>
+            <ToggleGroup
+              aria-label="Scenario status"
+              className="w-full"
+              onValueChange={(value) => {
+                if (!value || !isScenarioStatus(value)) {
+                  return
+                }
+
                 setForm((current) => ({
                   ...current,
-                  status: event.target.value as "draft" | "active",
+                  status: value,
                 }))
-              }
+              }}
+              type="single"
               value={form.status}
             >
-              <option value="draft">draft</option>
-              <option value="active">active</option>
-            </select>
+              <ToggleGroupItem
+                aria-label="Set scenario status to draft"
+                className="flex-1 justify-center gap-1.5 px-3 text-[11px] uppercase tracking-[0.16em]"
+                size="lg"
+                value="draft"
+              >
+                <ScenarioStatusIcon status="draft" />
+                Draft
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                aria-label="Set scenario status to active"
+                className="flex-1 justify-center gap-1.5 px-3 text-[11px] uppercase tracking-[0.16em]"
+                size="lg"
+                value="active"
+              >
+                <ScenarioStatusIcon status="active" />
+                Active
+              </ToggleGroupItem>
+            </ToggleGroup>
           </Field>
         </div>
 
@@ -1376,6 +1457,8 @@ function RunResultDetail({
     return <BlankDetailPanel title="Select an executed scenario" />
   }
 
+  const rationale = result.rationale ?? result.failureDetail
+
   return (
     <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
       <div>
@@ -1396,19 +1479,21 @@ function RunResultDetail({
         </div>
       </div>
 
-      <RunInsightPanel
-        description="Most relevant explanation for the scenario score."
-        emptyText="No rationale stored."
-        title="Rationale"
-        value={result.rationale ?? result.failureDetail}
-      />
+      {result.improvementInstruction ? (
+        <RunInsightPanel
+          description="Most actionable follow-up instruction based on this result."
+          title="Improvement instruction"
+          value={result.improvementInstruction}
+        />
+      ) : null}
 
-      <RunInsightPanel
-        description="Most actionable follow-up instruction based on this result."
-        emptyText="No improvement instruction stored."
-        title="Improvement instruction"
-        value={result.improvementInstruction}
-      />
+      {rationale ? (
+        <RunInsightPanel
+          description="Most relevant explanation for the scenario score."
+          title="Rationale"
+          value={rationale}
+        />
+      ) : null}
 
       <Field label="Execution summary">
         <CopyableTextBlock
@@ -1418,14 +1503,10 @@ function RunResultDetail({
       </Field>
 
       <div className="grid gap-4 border-t border-border pt-5">
-        <div>
-          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-            Run data
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Metadata and stored execution details for this result.
-          </p>
-        </div>
+        <RunSectionHeader
+          description="Metadata and stored execution details for this result."
+          title="Run data"
+        />
         <div className="grid gap-px border border-border bg-border sm:grid-cols-2">
           <DetailMeta label="Runner" value={result.runnerType} />
           <DetailMeta
@@ -1449,14 +1530,10 @@ function RunResultDetail({
       </div>
 
       <div className="grid gap-5 border-t border-border pt-5">
-        <div>
-          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-            Scenario definition
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            The inputs captured from the scenario at execution time.
-          </p>
-        </div>
+        <RunSectionHeader
+          description="The inputs captured from the scenario at execution time."
+          title="Scenario definition"
+        />
         <Field label="Instructions">
           <CopyableTextBlock value={result.executionInstructions} />
         </Field>
@@ -1537,26 +1614,59 @@ function RunInsightPanel({
   title,
   description,
   value,
-  emptyText,
 }: {
   title: string
   description: string
-  value: string | null
-  emptyText: string
+  value: string
 }) {
   return (
     <div className="border border-primary/40 bg-primary/5">
-      <div className="border-b border-primary/30 px-4 py-3">
-        <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-          {title}
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-      </div>
+      <RunSectionHeader
+        className="border-b border-primary/30 px-4 py-3"
+        description={description}
+        title={title}
+      />
       <CopyableTextBlock
         className="border-0 bg-transparent"
-        emptyText={emptyText}
         value={value}
       />
+    </div>
+  )
+}
+
+function RunSectionHeader({
+  title,
+  description,
+  className,
+}: {
+  title: string
+  description: string
+  className?: string
+}) {
+  return (
+    <div className={cn("flex items-start justify-between gap-3", className)}>
+      <p className="pt-1 text-xs tracking-[0.2em] text-muted-foreground uppercase">
+        {title}
+      </p>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            aria-label={`${title} help`}
+            className="-mr-2 -mt-1 text-muted-foreground"
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <CircleHelp className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="max-w-72 p-3">
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            {title}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-foreground">{description}</p>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }

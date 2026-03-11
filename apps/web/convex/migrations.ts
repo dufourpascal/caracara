@@ -1,7 +1,7 @@
 import { v } from "convex/values"
 
 import { internalMutation, internalQuery } from "./_generated/server"
-import { computeRunAverageScore } from "./lib"
+import { computeRunAverageScore, rebuildScenarioNavigationMetadata } from "./lib"
 
 export const countScenarioResultsMissingImprovementInstruction = internalQuery({
   args: {},
@@ -48,6 +48,57 @@ export const countCompletedRunsMissingAverageScore = internalQuery({
     return runs.filter(
       (run) => run.status === "completed" && run.averageScore === null
     ).length
+  },
+})
+
+export const countScenariosMissingNavigationMetadata = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const scenarios = await ctx.db.query("scenarios").collect()
+
+    return scenarios.filter(
+      (scenario) =>
+        typeof scenario.navigationOrder !== "number" ||
+        typeof scenario.phaseNavigationOrder !== "number" ||
+        typeof scenario.phaseFilterKey !== "string" ||
+        typeof scenario.dependencyCount !== "number" ||
+        typeof scenario.searchText !== "string"
+    ).length
+  },
+})
+
+export const backfillScenarioNavigationMetadata = internalMutation({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const scenarios = await ctx.db.query("scenarios").collect()
+    const projectIds = new Set<string>()
+
+    for (const scenario of scenarios) {
+      if (
+        typeof scenario.navigationOrder !== "number" ||
+        typeof scenario.phaseNavigationOrder !== "number" ||
+        typeof scenario.phaseFilterKey !== "string" ||
+        typeof scenario.dependencyCount !== "number" ||
+        typeof scenario.searchText !== "string"
+      ) {
+        projectIds.add(scenario.projectId)
+      }
+    }
+
+    const limit = Math.max(1, args.limit ?? 25)
+    const batch = [...projectIds].slice(0, limit)
+
+    for (const projectId of batch) {
+      await rebuildScenarioNavigationMetadata(ctx, projectId as never)
+    }
+
+    return {
+      scanned: scenarios.length,
+      patchedProjects: batch.length,
+      remainingProjects: Math.max(0, projectIds.size - batch.length),
+    }
   },
 })
 

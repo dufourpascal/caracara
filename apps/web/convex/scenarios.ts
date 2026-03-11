@@ -1,4 +1,6 @@
 import { v } from "convex/values"
+import { paginationOptsValidator } from "convex/server"
+import type { Id } from "./_generated/dataModel"
 
 import { mutation, query } from "./_generated/server"
 import {
@@ -8,14 +10,26 @@ import {
   getOrderedScenarios,
   getProjectDependencies,
   getProjectPhases,
+  getProjectScenarios,
   getScenarioDependencyIds,
   getScenarioBySlug,
   replaceScenarioDependencies,
+  rebuildScenarioNavigationMetadata,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
   toScenario,
+  toScenarioSummary,
+  UNASSIGNED_SCENARIO_PHASE_KEY,
   validateProjectDependencyGraph,
 } from "./lib"
+
+function normalizePhaseFilterKey(phaseFilter: string | null | undefined) {
+  return phaseFilter === null || phaseFilter === undefined
+    ? null
+    : phaseFilter === UNASSIGNED_SCENARIO_PHASE_KEY
+      ? UNASSIGNED_SCENARIO_PHASE_KEY
+      : phaseFilter
+}
 
 export const listForProject = query({
   args: {
@@ -29,6 +43,123 @@ export const listForProject = query({
     })
 
     return ordered
+  },
+})
+
+export const listSummariesForProject = query({
+  args: {
+    projectSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    const [ordered, phases] = await Promise.all([
+      getOrderedScenarios(ctx, project._id, {
+        ascending: true,
+      }),
+      getProjectPhases(ctx, project._id),
+    ])
+    const phaseById = new Map(phases.map((phase) => [phase._id, phase]))
+
+    return ordered.map((scenario) => ({
+      id: scenario.id,
+      name: scenario.name,
+      slug: scenario.slug,
+      status: scenario.status,
+      phaseId: scenario.phaseId ?? null,
+      phaseName:
+        scenario.phaseId
+          ? phaseById.get(scenario.phaseId as Id<"phases">)?.name ?? null
+          : null,
+      phaseOrder:
+        scenario.phaseId
+          ? phaseById.get(scenario.phaseId as Id<"phases">)?.order ?? null
+          : null,
+      dependencyCount: scenario.dependencyIds.length,
+    }))
+  },
+})
+
+export const getNavigationSummaryForProject = query({
+  args: {
+    projectSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    const unassignedScenarioCount = (
+      await ctx.db
+      .query("scenarios")
+      .withIndex("by_project_phase_navigation_order", (query) =>
+        query
+          .eq("projectId", project._id)
+          .eq("phaseFilterKey", UNASSIGNED_SCENARIO_PHASE_KEY)
+      )
+      .collect()
+    ).length
+
+    return {
+      unassignedScenarioCount,
+    }
+  },
+})
+
+export const listPageForProject = query({
+  args: {
+    projectSlug: v.string(),
+    phaseFilter: v.optional(v.union(v.null(), v.string())),
+    searchQuery: v.optional(v.string()),
+    sortDirection: v.union(v.literal("asc"), v.literal("desc")),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    const phases = await getProjectPhases(ctx, project._id)
+    const phaseById = new Map(phases.map((phase) => [phase._id, phase]))
+    const normalizedSearchQuery = args.searchQuery?.trim() ?? ""
+    const normalizedPhaseFilterKey = normalizePhaseFilterKey(args.phaseFilter)
+
+    const result =
+      normalizedSearchQuery.length > 0
+        ? await ctx.db
+            .query("scenarios")
+            .withSearchIndex("search_by_project_phase", (query) => {
+              let search = query
+                .search("searchText", normalizedSearchQuery)
+                .eq("projectId", project._id)
+
+              if (normalizedPhaseFilterKey !== null) {
+                search = search.eq("phaseFilterKey", normalizedPhaseFilterKey)
+              }
+
+              return search
+            })
+            .paginate(args.paginationOpts)
+        : normalizedPhaseFilterKey === null
+          ? await ctx.db
+              .query("scenarios")
+              .withIndex("by_project_navigation_order", (query) =>
+                query.eq("projectId", project._id)
+              )
+              .order(args.sortDirection)
+              .paginate(args.paginationOpts)
+          : await ctx.db
+              .query("scenarios")
+              .withIndex("by_project_phase_navigation_order", (query) =>
+                query
+                  .eq("projectId", project._id)
+                  .eq("phaseFilterKey", normalizedPhaseFilterKey)
+              )
+              .order(args.sortDirection)
+              .paginate(args.paginationOpts)
+
+    return {
+      ...result,
+      page: result.page.map((scenario) =>
+        toScenarioSummary(
+          scenario,
+          scenario.phaseId ? phaseById.get(scenario.phaseId) ?? null : null
+        )
+      ),
+    }
   },
 })
 
@@ -133,6 +264,7 @@ export const create = mutation({
       dependsOnScenarioIds: args.dependsOnScenarioIds,
     })
     await validateProjectDependencyGraph(ctx, project._id)
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
 
     const scenario = await ctx.db.get(scenarioId)
     if (!scenario) {
@@ -144,6 +276,33 @@ export const create = mutation({
       null
 
     return toScenario(scenario, phase)
+  },
+})
+
+export const ensureNavigationMetadataForProject = mutation({
+  args: {
+    projectSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    const scenarios = await getProjectScenarios(ctx, project._id)
+    const needsRebuild = scenarios.some(
+      (scenario) =>
+        typeof scenario.navigationOrder !== "number" ||
+        typeof scenario.phaseNavigationOrder !== "number" ||
+        typeof scenario.phaseFilterKey !== "string" ||
+        typeof scenario.dependencyCount !== "number" ||
+        typeof scenario.searchText !== "string"
+    )
+
+    if (needsRebuild) {
+      await rebuildScenarioNavigationMetadata(ctx, project._id)
+    }
+
+    return {
+      rebuilt: needsRebuild,
+      scenarioCount: scenarios.length,
+    }
   },
 })
 
@@ -195,6 +354,7 @@ export const update = mutation({
       dependsOnScenarioIds: args.dependsOnScenarioIds,
     })
     await validateProjectDependencyGraph(ctx, project._id)
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
 
     const updatedScenario = await ctx.db.get(scenario._id)
     if (!updatedScenario) {
@@ -232,6 +392,7 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(scenario._id)
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
 
     return {
       deletedScenarioId: scenario._id,

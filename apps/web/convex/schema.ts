@@ -21,10 +21,25 @@ export default defineSchema({
     instructions: v.string(),
     scoringPrompt: v.string(),
     phaseId: v.optional(v.union(v.null(), v.id("phases"))),
+    navigationOrder: v.optional(v.number()),
+    phaseNavigationOrder: v.optional(v.number()),
+    phaseFilterKey: v.optional(v.string()),
+    dependencyCount: v.optional(v.number()),
+    searchText: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_project", ["projectId"])
-    .index("by_project_slug", ["projectId", "slug"]),
+    .index("by_project_slug", ["projectId", "slug"])
+    .index("by_project_navigation_order", ["projectId", "navigationOrder"])
+    .index("by_project_phase_navigation_order", [
+      "projectId",
+      "phaseFilterKey",
+      "phaseNavigationOrder",
+    ])
+    .searchIndex("search_by_project_phase", {
+      searchField: "searchText",
+      filterFields: ["projectId", "phaseFilterKey"],
+    }),
   phases: defineTable({
     projectId: v.id("projects"),
     name: v.string(),

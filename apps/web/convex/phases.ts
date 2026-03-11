@@ -7,6 +7,7 @@ import {
   getProjectPhases,
   getProjectScenarios,
   normalizeProjectPhaseOrders,
+  rebuildScenarioNavigationMetadata,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
   toPhase,
@@ -114,6 +115,8 @@ export const reorder = mutation({
       })
     }
 
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
+
     const updated = await getProjectPhases(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
 
@@ -152,6 +155,7 @@ export const remove = mutation({
     )
     await ctx.db.delete(phase._id)
     await normalizeProjectPhaseOrders(ctx, project._id)
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
 
     return {
       deletedPhaseId: phase._id,

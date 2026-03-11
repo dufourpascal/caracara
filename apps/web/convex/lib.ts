@@ -18,6 +18,7 @@ import {
 } from "./domain"
 
 type Ctx = QueryCtx | MutationCtx
+export const UNASSIGNED_SCENARIO_PHASE_KEY = "__unassigned__"
 
 function toTimestamp(value: number) {
   return Math.trunc(value)
@@ -25,6 +26,10 @@ function toTimestamp(value: number) {
 
 function normalizePhaseId<T>(value: T | null | undefined) {
   return value ?? null
+}
+
+function getScenarioPhaseFilterKey(phaseId: string | null) {
+  return phaseId ?? UNASSIGNED_SCENARIO_PHASE_KEY
 }
 
 function toPhaseNode(phase: Doc<"phases">): PhaseNode {
@@ -181,6 +186,23 @@ export function toScenario(
   }
 }
 
+export function toScenarioSummary(
+  scenario: Doc<"scenarios">,
+  phase?: Doc<"phases"> | null
+) {
+  return {
+    id: scenario._id,
+    name: scenario.name,
+    slug: scenario.slug,
+    status: scenario.status,
+    phaseId: normalizePhaseId(scenario.phaseId),
+    phaseName: phase?.name ?? null,
+    phaseOrder: phase?.order ?? null,
+    dependencyCount: scenario.dependencyCount ?? 0,
+    updatedAt: scenario.updatedAt,
+  }
+}
+
 export function toRun(run: Doc<"runs">) {
   return {
     id: run._id,
@@ -235,6 +257,109 @@ export async function getProjectScenarios(ctx: Ctx, projectId: Id<"projects">) {
     .query("scenarios")
     .withIndex("by_project", (query) => query.eq("projectId", projectId))
     .collect()
+}
+
+export function deriveScenarioNavigationMetadata(args: {
+  phases: Array<Doc<"phases">>
+  scenarios: Array<Doc<"scenarios">>
+  dependencies: Array<Doc<"scenarioDependencies">>
+}) {
+  const phaseById = new Map(args.phases.map((phase) => [phase._id, phase]))
+  const scenarioNodes = args.scenarios.map((scenario) =>
+    toScenarioNode({
+      scenario,
+      phaseById,
+    })
+  )
+  const dependencyEdges = toDependencyEdges(args.dependencies)
+
+  assertValidDependencies(scenarioNodes, dependencyEdges)
+  const filteredDependencies = filterDependenciesForPhaseExecution(
+    scenarioNodes,
+    dependencyEdges
+  )
+  const executionPlan = buildPhaseExecutionPlan(
+    args.phases.map(toPhaseNode),
+    scenarioNodes,
+    filteredDependencies,
+    { ascending: true }
+  )
+  const dependencyCounts = new Map<string, number>()
+
+  for (const dependency of filteredDependencies) {
+    dependencyCounts.set(
+      dependency.scenarioId,
+      (dependencyCounts.get(dependency.scenarioId) ?? 0) + 1
+    )
+  }
+
+  const orderedAssigned = executionPlan.flatMap((phase) => phase.scenarios)
+  const assignedIds = new Set(orderedAssigned.map((scenario) => scenario.id))
+  const orderedUnassigned = scenarioNodes
+    .filter((scenario) => !assignedIds.has(scenario.id))
+    .sort((left, right) => left.slug.localeCompare(right.slug))
+  const orderedScenarios = [...orderedAssigned, ...orderedUnassigned]
+  const phaseOrders = new Map<string, number>()
+
+  return orderedScenarios.map((scenario, index) => {
+    const phaseKey = getScenarioPhaseFilterKey(scenario.phaseId ?? null)
+    const nextPhaseOrder = (phaseOrders.get(phaseKey) ?? 0) + 1
+    phaseOrders.set(phaseKey, nextPhaseOrder)
+
+    return {
+      scenarioId: scenario.id,
+      navigationOrder: index + 1,
+      phaseNavigationOrder: nextPhaseOrder,
+      phaseFilterKey: phaseKey,
+      dependencyCount: dependencyCounts.get(scenario.id) ?? 0,
+      searchText: `${scenario.name} ${scenario.slug}`.trim(),
+    }
+  })
+}
+
+export async function rebuildScenarioNavigationMetadata(
+  ctx: MutationCtx,
+  projectId: Id<"projects">
+) {
+  const [phases, scenarios, dependencies] = await Promise.all([
+    getProjectPhases(ctx, projectId),
+    getProjectScenarios(ctx, projectId),
+    getProjectDependencies(ctx, projectId),
+  ])
+  const metadata = deriveScenarioNavigationMetadata({
+    phases,
+    scenarios,
+    dependencies,
+  })
+  const metadataByScenarioId = new Map(
+    metadata.map((entry) => [entry.scenarioId, entry])
+  )
+
+  for (const scenario of scenarios) {
+    const nextMetadata = metadataByScenarioId.get(scenario._id)
+
+    if (!nextMetadata) {
+      continue
+    }
+
+    if (
+      scenario.navigationOrder === nextMetadata.navigationOrder &&
+      scenario.phaseNavigationOrder === nextMetadata.phaseNavigationOrder &&
+      scenario.phaseFilterKey === nextMetadata.phaseFilterKey &&
+      scenario.dependencyCount === nextMetadata.dependencyCount &&
+      scenario.searchText === nextMetadata.searchText
+    ) {
+      continue
+    }
+
+    await ctx.db.patch(scenario._id, {
+      navigationOrder: nextMetadata.navigationOrder,
+      phaseNavigationOrder: nextMetadata.phaseNavigationOrder,
+      phaseFilterKey: nextMetadata.phaseFilterKey,
+      dependencyCount: nextMetadata.dependencyCount,
+      searchText: nextMetadata.searchText,
+    })
+  }
 }
 
 export async function getProjectPhases(ctx: Ctx, projectId: Id<"projects">) {

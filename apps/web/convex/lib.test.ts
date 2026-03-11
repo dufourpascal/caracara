@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { toRun, toScenarioResult } from "./lib"
+import { deriveScenarioNavigationMetadata, toRun, toScenarioResult } from "./lib"
 
 describe("convex response mappers", () => {
   it("normalizes Convex creation timestamps to integers", () => {
@@ -99,5 +99,135 @@ describe("convex response mappers", () => {
 
     expect(result.status).toBe("running")
     expect(result.finishedAt).toBeNull()
+  })
+
+  it("derives stable scenario navigation order for project and phase views", () => {
+    const metadata = deriveScenarioNavigationMetadata({
+      dependencies: [
+        {
+          _id: "dep-1",
+          _creationTime: 0,
+          dependsOnScenarioId: "scenario-a",
+          projectId: "project-1",
+          scenarioId: "scenario-b",
+        },
+        {
+          _id: "dep-2",
+          _creationTime: 0,
+          dependsOnScenarioId: "scenario-c",
+          projectId: "project-1",
+          scenarioId: "scenario-d",
+        },
+      ] as never,
+      phases: [
+        {
+          _id: "phase-1",
+          _creationTime: 0,
+          createdAt: 0,
+          name: "Setup",
+          order: 1,
+          projectId: "project-1",
+          updatedAt: 0,
+        },
+        {
+          _id: "phase-2",
+          _creationTime: 0,
+          createdAt: 0,
+          name: "Flow",
+          order: 2,
+          projectId: "project-1",
+          updatedAt: 0,
+        },
+      ] as never,
+      scenarios: [
+        {
+          _id: "scenario-a",
+          _creationTime: 0,
+          dependencyCount: 0,
+          instructions: "",
+          name: "Boot",
+          phaseId: "phase-1",
+          projectId: "project-1",
+          scoringPrompt: "",
+          searchText: "",
+          slug: "boot",
+          status: "active",
+          updatedAt: 0,
+        },
+        {
+          _id: "scenario-b",
+          _creationTime: 0,
+          dependencyCount: 0,
+          instructions: "",
+          name: "Login",
+          phaseId: "phase-1",
+          projectId: "project-1",
+          scoringPrompt: "",
+          searchText: "",
+          slug: "login",
+          status: "active",
+          updatedAt: 0,
+        },
+        {
+          _id: "scenario-c",
+          _creationTime: 0,
+          dependencyCount: 0,
+          instructions: "",
+          name: "Draft",
+          phaseId: null,
+          projectId: "project-1",
+          scoringPrompt: "",
+          searchText: "",
+          slug: "draft",
+          status: "draft",
+          updatedAt: 0,
+        },
+        {
+          _id: "scenario-d",
+          _creationTime: 0,
+          dependencyCount: 0,
+          instructions: "",
+          name: "Checkout",
+          phaseId: "phase-2",
+          projectId: "project-1",
+          scoringPrompt: "",
+          searchText: "",
+          slug: "checkout",
+          status: "active",
+          updatedAt: 0,
+        },
+      ] as never,
+    })
+
+    expect(metadata).toEqual([
+      expect.objectContaining({
+        dependencyCount: 0,
+        navigationOrder: 1,
+        phaseFilterKey: "phase-1",
+        phaseNavigationOrder: 1,
+        scenarioId: "scenario-a",
+      }),
+      expect.objectContaining({
+        dependencyCount: 1,
+        navigationOrder: 2,
+        phaseFilterKey: "phase-1",
+        phaseNavigationOrder: 2,
+        scenarioId: "scenario-b",
+      }),
+      expect.objectContaining({
+        dependencyCount: 0,
+        navigationOrder: 3,
+        phaseFilterKey: "phase-2",
+        phaseNavigationOrder: 1,
+        scenarioId: "scenario-d",
+      }),
+      expect.objectContaining({
+        dependencyCount: 0,
+        navigationOrder: 4,
+        phaseFilterKey: "__unassigned__",
+        phaseNavigationOrder: 1,
+        scenarioId: "scenario-c",
+      }),
+    ])
   })
 })

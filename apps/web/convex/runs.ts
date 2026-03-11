@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values"
+import { paginationOptsValidator } from "convex/server"
 
 import { mutation, query } from "./_generated/server"
 import {
@@ -34,6 +35,29 @@ export const listForProject = query({
     )
 
     return sorted.map(toRun)
+  },
+})
+
+export const listPageForProject = query({
+  args: {
+    projectSlug: v.string(),
+    sortDirection: v.union(v.literal("asc"), v.literal("desc")),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    const result = await ctx.db
+      .query("runs")
+      .withIndex("by_project_started_at", (query) =>
+        query.eq("projectId", project._id)
+      )
+      .order(args.sortDirection)
+      .paginate(args.paginationOpts)
+
+    return {
+      ...result,
+      page: result.page.map(toRun),
+    }
   },
 })
 

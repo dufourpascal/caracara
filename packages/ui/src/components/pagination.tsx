@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
 
 import { cn } from "@workspace/ui/lib/utils"
 
-import { buttonVariants } from "./button.js"
+import { buttonVariants } from "./button"
 
 function Pagination({
   className,

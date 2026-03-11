@@ -74,4 +74,30 @@ describe("convex response mappers", () => {
 
     expect(result.executionSummary).toBe("Legacy output")
   })
+
+  it("preserves running results with no finish time", () => {
+    const result = toScenarioResult({
+      _id: "result-id",
+      _creationTime: 3456.789,
+      runId: "run-id",
+      scenarioId: "scenario-id",
+      scenarioSlug: "demo-scenario",
+      scenarioName: "Demo scenario",
+      executionInstructions: "Do the thing",
+      scoringPrompt: "Score the thing",
+      sequenceIndex: 0,
+      status: "running",
+      runnerType: "codex",
+      score: null,
+      rationale: null,
+      improvementInstruction: null,
+      executionSummary: null,
+      failureDetail: null,
+      startedAt: 1000,
+      finishedAt: null,
+    } as never)
+
+    expect(result.status).toBe("running")
+    expect(result.finishedAt).toBeNull()
+  })
 })

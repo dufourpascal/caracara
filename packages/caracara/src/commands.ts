@@ -10,6 +10,7 @@ import {
   fetchProjects,
   fetchSingleScenario,
   fetchWhoAmI,
+  startScenarioExecution,
   submitScenarioResult,
 } from "./api.js"
 import {
@@ -125,7 +126,7 @@ export async function initCommand(options: InitCommandOptions) {
       selectedProjectSlug: options.project,
       runner: options.runner,
     },
-    process.env,
+    process.env
   )
 
   const configPath = await writeLocalConfig({
@@ -137,7 +138,7 @@ export async function initCommand(options: InitCommandOptions) {
   process.stdout.write(`Saved local config to ${configPath}\n`)
   process.stdout.write(`  apiBaseUrl: ${config.apiBaseUrl}\n`)
   process.stdout.write(
-    `  project: ${config.selectedProjectSlug ?? "(not set)"}\n`,
+    `  project: ${config.selectedProjectSlug ?? "(not set)"}\n`
   )
   process.stdout.write(`  runner: ${config.runner}\n`)
 }
@@ -150,7 +151,7 @@ export async function runCommand(options: RunCommandOptions) {
       selectedProjectSlug: options.project,
       runner: options.runner,
     },
-    process.env,
+    process.env
   )
   const accessToken = ensureAccessToken(config)
   const projectSlug = config.selectedProjectSlug
@@ -196,16 +197,37 @@ export async function runCommand(options: RunCommandOptions) {
 
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
 
+  const buildScenarioSnapshot = (args: {
+    scenario: (typeof ordered.scenarios)[number]
+    sequenceIndex: number
+    startedAt: number
+  }) => ({
+    scenarioId: args.scenario.id,
+    scenarioSlug: args.scenario.slug,
+    scenarioName: args.scenario.name,
+    executionInstructions: args.scenario.instructions,
+    scoringPrompt: args.scenario.scoringPrompt,
+    sequenceIndex: args.sequenceIndex,
+    runnerType,
+    startedAt: args.startedAt,
+  })
+
   let runFailed = false
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
   let runError: unknown = null
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
+  let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
 
   try {
     for (const [sequenceIndex, scenario] of ordered.scenarios.entries()) {
       const startedAt = Date.now()
+      const scenarioSnapshot = buildScenarioSnapshot({
+        scenario,
+        sequenceIndex,
+        startedAt,
+      })
       process.stdout.write(`Executing ${scenario.slug} with ${runnerType}\n`)
 
       if (runFailed) {
@@ -218,26 +240,33 @@ export async function runCommand(options: RunCommandOptions) {
           payload: {
             runId: createRunResponse.run.id,
             result: {
-              scenarioId: scenario.id,
-              scenarioSlug: scenario.slug,
-              scenarioName: scenario.name,
-              executionInstructions: scenario.instructions,
-              scoringPrompt: scenario.scoringPrompt,
-              sequenceIndex,
+              ...scenarioSnapshot,
               status: "dependency_failed",
-              runnerType,
               score: null,
               rationale: "Skipped because an earlier scenario failed.",
               improvementInstruction: null,
               executionSummary: null,
-              failureDetail: "Dependency chain stopped after an earlier failure.",
-              startedAt,
+              failureDetail:
+                "Dependency chain stopped after an earlier failure.",
               finishedAt: Date.now(),
             },
           },
         })
         continue
       }
+
+      await startScenarioExecution({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        runId: createRunResponse.run.id,
+        payload: {
+          runId: createRunResponse.run.id,
+          result: scenarioSnapshot,
+        },
+      })
+      activeScenario = scenarioSnapshot
 
       try {
         runSession ??= await runner.startRun({ cwd })
@@ -258,24 +287,18 @@ export async function runCommand(options: RunCommandOptions) {
           payload: {
             runId: createRunResponse.run.id,
             result: {
-              scenarioId: scenario.id,
-              scenarioSlug: scenario.slug,
-              scenarioName: scenario.name,
-              executionInstructions: scenario.instructions,
-              scoringPrompt: scenario.scoringPrompt,
-              sequenceIndex,
+              ...scenarioSnapshot,
               status: "success",
-              runnerType,
               score: execution.score,
               rationale: execution.rationale,
               improvementInstruction: execution.improvementInstruction,
               executionSummary: execution.executionSummary,
               failureDetail: null,
-              startedAt,
               finishedAt,
             },
           },
         })
+        activeScenario = null
         process.stdout.write(`  score ${execution.score.toFixed(2)}\n`)
       } catch (error) {
         runFailed = true
@@ -288,25 +311,19 @@ export async function runCommand(options: RunCommandOptions) {
           payload: {
             runId: createRunResponse.run.id,
             result: {
-              scenarioId: scenario.id,
-              scenarioSlug: scenario.slug,
-              scenarioName: scenario.name,
-              executionInstructions: scenario.instructions,
-              scoringPrompt: scenario.scoringPrompt,
-              sequenceIndex,
+              ...scenarioSnapshot,
               status: "runner_failed",
-              runnerType,
               score: null,
               rationale: null,
               improvementInstruction: null,
               executionSummary: null,
               failureDetail:
                 error instanceof Error ? error.message : "Runner failed",
-              startedAt,
               finishedAt: Date.now(),
             },
           },
         })
+        activeScenario = null
         process.stdout.write(
           `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
         )
@@ -316,6 +333,36 @@ export async function runCommand(options: RunCommandOptions) {
     finalFinishedAt = Date.now()
   } catch (error) {
     runError = error
+    if (activeScenario) {
+      try {
+        await submitScenarioResult({
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
+          runId: createRunResponse.run.id,
+          payload: {
+            runId: createRunResponse.run.id,
+            result: {
+              ...activeScenario,
+              status: "interrupted",
+              score: null,
+              rationale: null,
+              improvementInstruction: null,
+              executionSummary: null,
+              failureDetail:
+                error instanceof Error
+                  ? error.message
+                  : "Execution interrupted",
+              finishedAt: Date.now(),
+            },
+          },
+        })
+      } catch {
+        // Preserve the original interruption error from the run loop.
+      }
+      activeScenario = null
+    }
     finalRunStatus = "interrupted"
     finalFinishedAt = Date.now()
   } finally {

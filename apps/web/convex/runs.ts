@@ -200,6 +200,121 @@ export const submitScenarioResult = mutation({
   },
 })
 
+export const startScenarioExecution = mutation({
+  args: {
+    projectId: v.id("projects"),
+    runId: v.id("runs"),
+    result: v.object({
+      scenarioId: v.id("scenarios"),
+      scenarioSlug: v.string(),
+      scenarioName: v.string(),
+      executionInstructions: v.string(),
+      scoringPrompt: v.string(),
+      sequenceIndex: v.number(),
+      runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
+      startedAt: v.number(),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const { identity, project } = await requireProjectOwnerById(
+      ctx,
+      args.projectId
+    )
+    const run = await ctx.db.get(args.runId)
+
+    if (!run) {
+      throw new ConvexError({
+        code: "not_found",
+        message: "Run not found.",
+      })
+    }
+
+    if (run.projectId !== project._id || run.ownerUserId !== identity.subject) {
+      throw new ConvexError({
+        code: "unauthorized",
+        message: "You do not have access to this run.",
+      })
+    }
+
+    if (run.status !== "running") {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Run is no longer accepting scenario updates.",
+      })
+    }
+
+    const scenario = await getScenarioById(ctx, args.result.scenarioId)
+
+    if (
+      scenario.projectId !== project._id ||
+      scenario.projectId !== run.projectId
+    ) {
+      throw new ConvexError({
+        code: "unauthorized",
+        message: "Scenario does not belong to this project.",
+      })
+    }
+
+    const existing = await ctx.db
+      .query("scenarioResults")
+      .withIndex("by_run_scenario", (query) =>
+        query.eq("runId", args.runId).eq("scenarioId", args.result.scenarioId)
+      )
+      .unique()
+
+    let resultId = existing?._id ?? null
+
+    if (existing && existing.status !== "running") {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Scenario execution has already completed for this run.",
+      })
+    }
+
+    const values = {
+      runId: args.runId,
+      scenarioId: args.result.scenarioId,
+      scenarioSlug: args.result.scenarioSlug,
+      scenarioName: args.result.scenarioName,
+      executionInstructions: args.result.executionInstructions,
+      scoringPrompt: args.result.scoringPrompt,
+      sequenceIndex: args.result.sequenceIndex,
+      status: "running" as const,
+      runnerType: args.result.runnerType,
+      score: null,
+      rationale: null,
+      improvementInstruction: null,
+      executionSummary: null,
+      failureDetail: null,
+      startedAt: args.result.startedAt,
+      finishedAt: null,
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, values)
+      resultId = existing._id
+    } else {
+      resultId = await ctx.db.insert("scenarioResults", values)
+    }
+
+    await ctx.db.patch(run._id, {
+      updatedAt: Date.now(),
+    })
+
+    const updatedRun = await ctx.db.get(run._id)
+    const storedResult = resultId ? await ctx.db.get(resultId) : null
+
+    if (!updatedRun || !storedResult) {
+      throw new Error("Failed to persist scenario execution state")
+    }
+
+    return {
+      run: toRun(updatedRun),
+      result: toScenarioResult(storedResult),
+    }
+  },
+})
+
 export const finalize = mutation({
   args: {
     projectId: v.id("projects"),

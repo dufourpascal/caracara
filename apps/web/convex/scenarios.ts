@@ -6,7 +6,6 @@ import {
   ensureUniqueScenarioSlug,
   getOrderedScenarios,
   getProjectDependencies,
-  getProjectScenarios,
   getScenarioBySlug,
   replaceScenarioDependencies,
   requireProjectOwnerById,

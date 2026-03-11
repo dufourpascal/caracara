@@ -61,6 +61,7 @@ export default defineSchema({
     scoringPrompt: v.string(),
     sequenceIndex: v.number(),
     status: v.union(
+      v.literal("running"),
       v.literal("success"),
       v.literal("scoring_failed"),
       v.literal("runner_failed"),
@@ -74,7 +75,7 @@ export default defineSchema({
     executionSummary: v.union(v.null(), v.string()),
     failureDetail: v.union(v.null(), v.string()),
     startedAt: v.number(),
-    finishedAt: v.number(),
+    finishedAt: v.union(v.null(), v.number()),
   })
     .index("by_run", ["runId"])
     .index("by_run_sequence", ["runId", "sequenceIndex"])

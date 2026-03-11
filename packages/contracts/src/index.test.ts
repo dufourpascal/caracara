@@ -77,6 +77,29 @@ describe("contracts", () => {
     ).toBe("Create a new account in the app.")
 
     expect(
+      scenarioResultSchema.parse({
+        id: "result_2",
+        runId: "run_1",
+        scenarioId: "scenario_setup",
+        scenarioSlug: "setup-session",
+        scenarioName: "Setup session",
+        executionInstructions: "Sign in to the app.",
+        scoringPrompt: "Confirm sign-in completed.",
+        sequenceIndex: 1,
+        status: "running",
+        runnerType: "codex",
+        score: null,
+        rationale: null,
+        improvementInstruction: null,
+        executionSummary: null,
+        failureDetail: null,
+        startedAt: 6,
+        finishedAt: null,
+        submittedAt: 7,
+      }).status
+    ).toBe("running")
+
+    expect(
       runSchema.parse({
         id: "run_1",
         projectId: project.id,

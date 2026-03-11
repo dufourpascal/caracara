@@ -9,6 +9,7 @@ export const runStatusSchema = z.enum([
   "interrupted",
 ])
 export const scenarioResultStatusSchema = z.enum([
+  "running",
   "success",
   "scoring_failed",
   "runner_failed",
@@ -89,7 +90,7 @@ export const scenarioResultSchema = z.object({
   executionSummary: nullableStringSchema,
   failureDetail: nullableStringSchema,
   startedAt: timestampSchema,
-  finishedAt: timestampSchema,
+  finishedAt: timestampSchema.nullable(),
   submittedAt: timestampSchema,
 })
 

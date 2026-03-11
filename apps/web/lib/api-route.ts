@@ -12,6 +12,7 @@ import {
   oauthTokenRequestSchema,
   projectDetailResponseSchema,
   projectListResponseSchema,
+  startScenarioExecutionRequestSchema,
   submitScenarioResultRequestSchema,
   whoAmIResponseSchema,
   API_VERSION_HEADER,
@@ -317,6 +318,36 @@ export async function submitScenarioResult(args: {
   )
 }
 
+export async function startScenarioExecution(args: {
+  token: string
+  projectSlug: string
+  runId: string
+  body: unknown
+}) {
+  const payload = startScenarioExecutionRequestSchema.parse(args.body)
+  if (payload.runId !== args.runId) {
+    throw new ApiRouteError(
+      400,
+      "validation_error",
+      "Run ID in URL does not match request body."
+    )
+  }
+  const { project } = await getProjectBySlug(args.token, args.projectSlug)
+
+  return await fetchMutation(
+    api.runs.startScenarioExecution,
+    {
+      projectId: project.id as never,
+      runId: args.runId as never,
+      result: {
+        ...payload.result,
+        scenarioId: payload.result.scenarioId as never,
+      },
+    },
+    { token: args.token }
+  )
+}
+
 export async function finalizeRun(args: {
   token: string
   projectSlug: string
@@ -343,5 +374,6 @@ export const routeSchemas = {
   finalizeRunRequestSchema,
   oauthAuthorizeRequestSchema,
   oauthTokenRequestSchema,
+  startScenarioExecutionRequestSchema,
   submitScenarioResultRequestSchema,
 }

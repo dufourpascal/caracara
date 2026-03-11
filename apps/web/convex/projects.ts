@@ -1,7 +1,8 @@
-import { v } from "convex/values"
+import { ConvexError, v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
 import {
+  deleteProjectCascade,
   ensureUniqueProjectSlug,
   requireIdentity,
   requireProjectOwnerById,
@@ -101,5 +102,29 @@ export const update = mutation({
     }
 
     return toProject(updatedProject)
+  },
+})
+
+export const remove = mutation({
+  args: {
+    projectId: v.id("projects"),
+    slugConfirmation: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerById(ctx, args.projectId)
+
+    if (args.slugConfirmation.trim() !== project.slug) {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Project slug confirmation does not match.",
+      })
+    }
+
+    const result = await deleteProjectCascade(ctx, project._id)
+
+    return {
+      ...result,
+      deletedProjectSlug: project.slug,
+    }
   },
 })

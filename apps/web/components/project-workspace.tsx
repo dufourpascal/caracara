@@ -7,7 +7,8 @@ import type { Id } from "@/convex/_generated/dataModel"
 import { api } from "@/convex/_generated/api"
 import {
   AlertCircle,
-  ArrowUpDown,
+  ArrowDown,
+  ArrowUp,
   Check,
   CheckCircle2,
   ChevronsUpDown,
@@ -15,6 +16,7 @@ import {
   CircleHelp,
   Copy,
   GitBranch,
+  History,
   LoaderCircle,
   PauseCircle,
   Plus,
@@ -22,6 +24,7 @@ import {
   Save,
   Search,
   Settings2,
+  Target,
   Trash2,
   Wrench,
 } from "lucide-react"
@@ -49,6 +52,12 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@workspace/ui/components/toggle-group"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@workspace/ui/components/tooltip"
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
@@ -138,12 +147,40 @@ function isScenarioStatus(value: string): value is "draft" | "active" {
   return value === "draft" || value === "active"
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong."
+}
+
 function formatTimestamp(value: number | null) {
   if (value === null) {
     return "n/a"
   }
 
   return new Date(value).toLocaleString()
+}
+
+function formatDateLabel(value: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value))
+}
+
+function formatTimeLabel(value: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value))
+}
+
+function getLocalDayToken(value: number) {
+  const date = new Date(value)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+
+  return `${year}-${month}-${day}`
 }
 
 function formatScore(value: number | null) {
@@ -230,14 +267,20 @@ function formatStatusLabel(status: string) {
   return status.replaceAll("_", " ")
 }
 
+function getScenarioResultBadgeVariant(status: string) {
+  if (status === "success") {
+    return "success" as const
+  }
+
+  if (status === "running") {
+    return "default" as const
+  }
+
+  return "warning" as const
+}
+
 function getRunStatusIcon(status: string) {
   switch (status) {
-    case "completed":
-      return {
-        icon: CheckCircle2,
-        iconClassName: "text-primary",
-        label: "Completed",
-      }
     case "failed":
       return {
         icon: AlertCircle,
@@ -286,6 +329,12 @@ function getScenarioStatusIcon(status: "draft" | "active") {
 
 function getScenarioResultStatusIcon(status: string) {
   switch (status) {
+    case "running":
+      return {
+        icon: LoaderCircle,
+        iconClassName: "text-foreground motion-safe:animate-spin",
+        label: "Running",
+      }
     case "success":
       return {
         icon: CheckCircle2,
@@ -317,7 +366,16 @@ function getScenarioResultStatusIcon(status: string) {
         iconClassName: "text-destructive",
         label: "Scoring failed",
       }
-    }
+  }
+}
+
+function isScenarioResultFailure(status: string) {
+  return (
+    status === "dependency_failed" ||
+    status === "runner_failed" ||
+    status === "scoring_failed" ||
+    status === "interrupted"
+  )
 }
 
 function StatusIcon({
@@ -340,20 +398,46 @@ function StatusIcon({
   )
 }
 
+function TimelineDot({ label }: { label: string }) {
+  return (
+    <span
+      aria-label={label}
+      className="inline-flex size-5 shrink-0 items-center justify-center"
+      title={label}
+    >
+      <span className="size-2 rounded-full bg-muted-foreground/65" />
+    </span>
+  )
+}
+
 function RunStatusIcon({ status }: { status: string }) {
+  if (status === "completed" || status === "pending") {
+    return <TimelineDot label={formatStatusLabel(status)} />
+  }
+
   return <StatusIcon {...getRunStatusIcon(status)} />
 }
 
-function ScenarioStatusIcon({
-  status,
-}: {
-  status: "draft" | "active"
-}) {
+function ScenarioStatusIcon({ status }: { status: "draft" | "active" }) {
   return <StatusIcon {...getScenarioStatusIcon(status)} />
 }
 
 function ScenarioResultStatusIcon({ status }: { status: string }) {
   return <StatusIcon {...getScenarioResultStatusIcon(status)} />
+}
+
+function ScenarioResultValue({
+  score,
+  status,
+}: {
+  score: number | null
+  status: string
+}) {
+  if (status === "running" || isScenarioResultFailure(status)) {
+    return <ScenarioResultStatusIcon status={status} />
+  }
+
+  return <ScoreText className="font-mono text-xs" value={score} />
 }
 
 type PanelLayout = Record<string, number>
@@ -489,30 +573,42 @@ function AuthenticatedProjectWorkspace({
   mode: "edit" | "graph"
 }) {
   const router = useRouter()
+  const [hasDeletedProject, setHasDeletedProject] = useState(false)
   const projects = useQuery(api.projects.list, {})
-  const project = useQuery(api.projects.getBySlug, { slug: projectSlug })
+  const project = useQuery(
+    api.projects.getBySlug,
+    hasDeletedProject ? "skip" : { slug: projectSlug }
+  )
   const updateProject = useMutation(api.projects.update)
+  const removeProject = useMutation(api.projects.remove)
   const createScenario = useMutation(api.scenarios.create)
   const updateScenario = useMutation(api.scenarios.update)
   const removeScenario = useMutation(api.scenarios.remove)
   const removeRun = useMutation(api.runs.remove)
-  const scenarios = useQuery(api.scenarios.listForProject, {
-    projectSlug,
-    ascending: workspace === "scenarios" ? mode !== "graph" : true,
-  })
+  const scenarios = useQuery(
+    api.scenarios.listForProject,
+    hasDeletedProject
+      ? "skip"
+      : {
+          projectSlug,
+          ascending: workspace === "scenarios" ? mode !== "graph" : true,
+        }
+  )
   const selectedScenario = useQuery(
     api.scenarios.getBySlug,
-    workspace === "scenarios" && selectedScenarioSlug
+    !hasDeletedProject && workspace === "scenarios" && selectedScenarioSlug
       ? { projectSlug, scenarioSlug: selectedScenarioSlug }
       : "skip"
   )
   const runs = useQuery(
     api.runs.listForProject,
-    workspace === "runs" ? { projectSlug, ascending: false } : "skip"
+    !hasDeletedProject && workspace === "runs"
+      ? { projectSlug, ascending: false }
+      : "skip"
   )
   const runDetail = useQuery(
     api.runs.getDetail,
-    workspace === "runs" && selectedRunId
+    !hasDeletedProject && workspace === "runs" && selectedRunId
       ? { projectSlug, runId: selectedRunId as Id<"runs"> }
       : "skip"
   )
@@ -584,6 +680,14 @@ function AuthenticatedProjectWorkspace({
     }
   )
 
+  if (hasDeletedProject) {
+    return (
+      <main className="flex min-h-svh items-center justify-center bg-background px-5 py-6 text-sm text-muted-foreground sm:px-6">
+        Redirecting to projects...
+      </main>
+    )
+  }
+
   if (!project) {
     return (
       <main className="flex min-h-svh items-center justify-center bg-background px-5 py-6 text-sm text-muted-foreground sm:px-6">
@@ -606,6 +710,28 @@ function AuthenticatedProjectWorkspace({
       ? left.startedAt - right.startedAt
       : right.startedAt - left.startedAt
   )
+  const groupedRuns = orderedRuns.reduce<
+    Array<{
+      dayKey: string
+      startedAt: number
+      runs: Array<(typeof orderedRuns)[number]>
+    }>
+  >((groups, run) => {
+    const dayKey = getLocalDayToken(run.startedAt)
+    const currentGroup = groups.at(-1)
+
+    if (!currentGroup || currentGroup.dayKey !== dayKey) {
+      groups.push({
+        dayKey,
+        startedAt: run.startedAt,
+        runs: [run],
+      })
+      return groups
+    }
+
+    currentGroup.runs.push(run)
+    return groups
+  }, [])
 
   return (
     <main className="flex min-h-svh flex-col bg-background">
@@ -616,11 +742,7 @@ function AuthenticatedProjectWorkspace({
             <span className="text-muted-foreground">/</span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  className="min-w-0 gap-1.5"
-                  size="sm"
-                  variant="ghost"
-                >
+                <Button className="min-w-0 gap-1.5" size="sm" variant="ghost">
                   <span className="truncate font-mono">{project.slug}</span>
                   <ChevronsUpDown
                     aria-hidden
@@ -760,20 +882,31 @@ function AuthenticatedProjectWorkspace({
             minSize="20%"
           >
             <div className="flex h-full flex-col border-r border-border">
-              <div className="border-b border-border px-4 py-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-                    Scenarios
+              <div className="border-b border-border bg-muted/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                    <GitBranch className="mr-2 inline size-3.5" />
+                    Scenario library
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
+                      aria-label={
+                        scenarioSortAscending
+                          ? "Sort scenarios descending"
+                          : "Sort scenarios ascending"
+                      }
                       size="icon-sm"
+                      title={
+                        scenarioSortAscending
+                          ? "Sort scenarios descending"
+                          : "Sort scenarios ascending"
+                      }
                       variant="outline"
                       onClick={() =>
                         setScenarioSortAscending((value) => !value)
                       }
                     >
-                      <ArrowUpDown />
+                      {scenarioSortAscending ? <ArrowUp /> : <ArrowDown />}
                     </Button>
                     <Button
                       size="icon-sm"
@@ -809,33 +942,92 @@ function AuthenticatedProjectWorkspace({
               </div>
 
               <div className="flex-1 overflow-auto">
-                {orderedScenarios.map((scenario) => (
-                  <button
-                    key={scenario.id}
-                    className={cn(
-                      "grid w-full gap-2 border-b border-border px-4 py-3 text-left transition-colors",
-                      scenario.slug === selectedScenarioSlug
-                        ? "bg-muted/40"
-                        : "hover:bg-muted/20"
-                    )}
-                    onClick={() =>
-                      router.push(
-                        `/projects/${projectSlug}/scenarios/${scenario.slug}?mode=${mode}`
+                {scenarios === undefined ? (
+                  <div className="px-4 py-5 text-sm text-muted-foreground">
+                    Loading scenarios...
+                  </div>
+                ) : orderedScenarios.length === 0 ? (
+                  <NavigationEmptyState
+                    action={
+                      scenarioSearch ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setScenarioSearch("")}
+                        >
+                          Clear search
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            const created = await createScenario({
+                              projectId: project.id as never,
+                              name: "New scenario",
+                              slug: "new-scenario",
+                              status: "draft",
+                              instructions:
+                                "Describe the user flow to execute.",
+                              scoringPrompt:
+                                "Explain whether the outcome met expectations.",
+                              dependsOnScenarioIds: [],
+                            })
+                            router.push(
+                              `/projects/${projectSlug}/scenarios/${created.slug}?mode=edit`
+                            )
+                          }}
+                        >
+                          <Plus />
+                          Create scenario
+                        </Button>
                       )
                     }
-                    type="button"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-foreground">
-                        {scenario.name}
+                    description={
+                      scenarioSearch
+                        ? "Adjust the query or clear it to see the authored scenario library again."
+                        : "Create the first scenario to start defining the execution graph for this project."
+                    }
+                    icon={GitBranch}
+                    title={
+                      scenarioSearch
+                        ? "No matching scenarios"
+                        : "No scenarios authored yet"
+                    }
+                  />
+                ) : (
+                  orderedScenarios.map((scenario) => (
+                    <button
+                      key={scenario.id}
+                      className={cn(
+                        "grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors",
+                        scenario.slug === selectedScenarioSlug
+                          ? "bg-muted/40"
+                          : "hover:bg-muted/20"
+                      )}
+                      onClick={() =>
+                        router.push(
+                          `/projects/${projectSlug}/scenarios/${scenario.slug}?mode=${mode}`
+                        )
+                      }
+                      type="button"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-foreground">
+                          {scenario.name}
+                        </span>
                       </span>
+                      {scenario.dependencyIds.length > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                          <GitBranch className="size-3.5" />
+                          {scenario.dependencyIds.length}
+                        </span>
+                      ) : (
+                        <span aria-hidden className="w-0" />
+                      )}
                       <ScenarioStatusIcon status={scenario.status} />
-                    </div>
-                    <p className="font-mono text-[11px] text-muted-foreground">
-                      {scenario.slug}
-                    </p>
-                  </button>
-                ))}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           </ResizablePanel>
@@ -855,14 +1047,23 @@ function AuthenticatedProjectWorkspace({
                 updateScenario={updateScenario}
               />
             ) : (
-              <BlankDetailPanel title="Select a scenario" />
+              <BlankDetailPanel
+                description="Choose a scenario from the library to edit instructions, scoring, and dependencies without leaving the current workspace."
+                icon={GitBranch}
+                title="Select a scenario"
+              />
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : workspace === "project" ? (
         <ProjectSettingsPanel
           key={`${project.id}:${project.updatedAt}`}
+          onProjectDeleted={() => {
+            setHasDeletedProject(true)
+            router.replace("/projects")
+          }}
           project={project}
+          removeProject={removeProject}
           updateProject={updateProject}
         />
       ) : (
@@ -879,50 +1080,110 @@ function AuthenticatedProjectWorkspace({
             minSize="20%"
           >
             <div className="flex h-full flex-col border-r border-border">
-              <div className="flex items-center justify-between border-b border-border px-4 py-4">
-                <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-                  Runs
-                </p>
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  onClick={() => setRunSortAscending((value) => !value)}
-                >
-                  <ArrowUpDown />
-                </Button>
+              <div className="border-b border-border bg-muted/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                    <History className="mr-2 inline size-3.5" />
+                    Run log
+                  </p>
+                  <Button
+                    aria-label={
+                      runSortAscending
+                        ? "Sort runs descending"
+                        : "Sort runs ascending"
+                    }
+                    size="icon-sm"
+                    title={
+                      runSortAscending
+                        ? "Sort runs descending"
+                        : "Sort runs ascending"
+                    }
+                    variant="outline"
+                    onClick={() => setRunSortAscending((value) => !value)}
+                  >
+                    {runSortAscending ? <ArrowUp /> : <ArrowDown />}
+                  </Button>
+                </div>
               </div>
               <div className="flex-1 overflow-auto">
-                {orderedRuns.map((run) => (
-                  <button
-                    key={run.id}
-                    className={cn(
-                      "grid w-full gap-2 border-b border-border px-4 py-3 text-left transition-colors",
-                      run.id === selectedRunId
-                        ? "bg-muted/40"
-                        : "hover:bg-muted/20"
-                    )}
-                    onClick={() =>
-                      router.push(`/projects/${projectSlug}/runs/${run.id}`)
-                    }
-                    type="button"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-sm font-medium text-foreground capitalize">
-                        {formatRunDisplayName(run.name)}
-                      </span>
-                      <RunStatusIcon status={run.status} />
+                {runs === undefined ? (
+                  <div className="px-4 py-5 text-sm text-muted-foreground">
+                    Loading runs...
+                  </div>
+                ) : orderedRuns.length === 0 ? (
+                  <NavigationEmptyState
+                    description="Run the CLI against this project and each execution will appear here as a dated log entry."
+                    icon={History}
+                    title="No runs recorded yet"
+                  />
+                ) : (
+                  groupedRuns.map((group) => (
+                    <div
+                      key={group.dayKey}
+                      className="border-b border-border last:border-b-0"
+                    >
+                      <div className="border-b border-border bg-muted/15 px-4 py-2">
+                        <p className="text-[11px] tracking-[0.18em] text-muted-foreground uppercase">
+                          {formatDateLabel(group.startedAt)}
+                        </p>
+                      </div>
+                      {group.runs.map((run, index) => (
+                        <button
+                          key={run.id}
+                          className={cn(
+                            "grid w-full grid-cols-[1.5rem_minmax(0,1fr)] gap-3 px-4 py-3 text-left transition-colors",
+                            run.id === selectedRunId
+                              ? "bg-muted/40"
+                              : "hover:bg-muted/20",
+                            index !== group.runs.length - 1 &&
+                              "border-b border-border/70"
+                          )}
+                          onClick={() =>
+                            router.push(
+                              `/projects/${projectSlug}/runs/${run.id}`
+                            )
+                          }
+                          type="button"
+                        >
+                          <span className="relative flex justify-center pt-0.5">
+                            {index !== group.runs.length - 1 ? (
+                              <span className="absolute top-4 bottom-0 w-px bg-border" />
+                            ) : null}
+                            <span className="relative z-10">
+                              <RunStatusIcon status={run.status} />
+                            </span>
+                          </span>
+                          <span className="min-w-0">
+                            <span className="flex items-center justify-between gap-3">
+                              <span className="font-mono text-[11px] text-muted-foreground">
+                                {formatTimeLabel(run.startedAt)}
+                              </span>
+                              <ScoreText
+                                className="font-mono text-xs"
+                                value={run.averageScore}
+                              />
+                            </span>
+                            <span className="mt-1 block text-sm font-medium text-foreground capitalize">
+                              {formatRunDisplayName(run.name)}
+                            </span>
+                            {run.mode === "single" &&
+                            run.requestedScenarioSlug ? (
+                              <span
+                                className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                                title={`Single scenario: ${run.requestedScenarioSlug}`}
+                              >
+                                <Target className="size-3.5" />
+                                <span className="font-mono">
+                                  {run.requestedScenarioSlug}
+                                </span>
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      ))}
                     </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-mono text-[11px] text-muted-foreground">
-                        {formatTimestamp(run.startedAt)}
-                      </span>
-                      <ScoreText
-                        className="font-mono text-xs"
-                        value={run.averageScore}
-                      />
-                    </div>
-                  </button>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </ResizablePanel>
@@ -1011,7 +1272,7 @@ function AuthenticatedProjectWorkspace({
                         <button
                           key={result.id}
                           className={cn(
-                            "grid w-full gap-2 border-b border-border px-4 py-3 text-left transition-colors",
+                            "grid w-full grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors",
                             result.scenarioSlug === selectedRunScenarioSlug
                               ? "bg-muted/40"
                               : "hover:bg-muted/20"
@@ -1023,17 +1284,7 @@ function AuthenticatedProjectWorkspace({
                           }
                           type="button"
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm text-foreground">
-                              {result.scenarioName}
-                            </span>
-                            <ScoreText
-                              className="font-mono text-xs"
-                              value={result.score}
-                            />
-                          </div>
-                          <div className="flex items-center justify-end gap-2 text-muted-foreground">
-                            <ScenarioResultStatusIcon status={result.status} />
+                          <div className="flex size-5 items-center justify-center text-muted-foreground">
                             {result.improvementInstruction ? (
                               <span
                                 aria-label="Improvement instruction available"
@@ -1042,7 +1293,18 @@ function AuthenticatedProjectWorkspace({
                               >
                                 <Wrench aria-hidden className="size-4" />
                               </span>
-                            ) : null}
+                            ) : (
+                              <span aria-hidden className="size-5 shrink-0" />
+                            )}
+                          </div>
+                          <span className="truncate text-sm text-foreground">
+                            {result.scenarioName}
+                          </span>
+                          <div className="flex justify-end">
+                            <ScenarioResultValue
+                              score={result.score}
+                              status={result.status}
+                            />
                           </div>
                         </button>
                       ))}
@@ -1063,12 +1325,20 @@ function AuthenticatedProjectWorkspace({
                       }
                     />
                   ) : (
-                    <BlankDetailPanel title="Select an executed scenario" />
+                    <BlankDetailPanel
+                      description="Choose a scenario result from this run to inspect rationale, summary, stored prompts, and failure details."
+                      icon={Wrench}
+                      title="Select an executed scenario"
+                    />
                   )}
                 </ResizablePanel>
               </ResizablePanelGroup>
             ) : (
-              <BlankDetailPanel title="Select a run" />
+              <BlankDetailPanel
+                description="Pick a run from the log to inspect aggregate status, average score, and scenario-by-scenario execution results."
+                icon={History}
+                title="Select a run"
+              />
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -1078,9 +1348,12 @@ function AuthenticatedProjectWorkspace({
 }
 
 function ProjectSettingsPanel({
+  onProjectDeleted,
   project,
+  removeProject,
   updateProject,
 }: {
+  onProjectDeleted: () => void
   project: {
     id: string
     name: string
@@ -1088,6 +1361,7 @@ function ProjectSettingsPanel({
     description: string
     projectPrompt: string
   }
+  removeProject: ReturnType<typeof useMutation<typeof api.projects.remove>>
   updateProject: ReturnType<typeof useMutation<typeof api.projects.update>>
 }) {
   const router = useRouter()
@@ -1095,8 +1369,12 @@ function ProjectSettingsPanel({
     createProjectFormState(project)
   )
   const [form, setForm] = useState(() => createProjectFormState(project))
+  const [deleteConfirmation, setDeleteConfirmation] = useState("")
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeletingProject, setIsDeletingProject] = useState(false)
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
+  const isDeleteConfirmed = deleteConfirmation.trim() === project.slug
 
   return (
     <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
@@ -1184,6 +1462,95 @@ function ProjectSettingsPanel({
           />
         </Field>
       </div>
+
+      <section className="border border-destructive/40">
+        <div className="border-b border-destructive/30 bg-destructive/5 px-4 py-4">
+          <p className="text-[11px] tracking-[0.2em] text-destructive uppercase">
+            <AlertCircle className="mr-2 inline size-3.5" />
+            Danger zone
+          </p>
+          <h3 className="mt-2 text-lg font-semibold tracking-tight text-foreground">
+            Delete project
+          </h3>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+            This permanently deletes the project, all associated scenarios, and
+            all associated runs and scenario results. There is no recovery path
+            once the deletion is confirmed.
+          </p>
+        </div>
+        <div className="grid gap-5 px-4 py-4">
+          <div className="grid gap-2">
+            <Label htmlFor="project-delete-confirmation">
+              Type the project slug to confirm deletion
+            </Label>
+            <Input
+              id="project-delete-confirmation"
+              aria-invalid={deleteConfirmation.length > 0 && !isDeleteConfirmed}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect="off"
+              placeholder={project.slug}
+              spellCheck={false}
+              value={deleteConfirmation}
+              onChange={(event) => {
+                setDeleteConfirmation(event.target.value)
+                setDeleteError(null)
+              }}
+            />
+            <p className="text-xs leading-6 text-muted-foreground">
+              Enter{" "}
+              <span className="font-mono text-foreground">{project.slug}</span>{" "}
+              to unlock deletion.
+            </p>
+            {deleteConfirmation.length > 0 && !isDeleteConfirmed ? (
+              <p className="text-sm text-destructive">
+                The entered slug does not match the current project slug.
+              </p>
+            ) : null}
+            {deleteError ? (
+              <p className="text-sm text-destructive">{deleteError}</p>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-4 border-t border-destructive/20 pt-4 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              Delete this project only if you are certain you no longer need its
+              configuration or history.
+            </p>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={!isDeleteConfirmed || isDeletingProject}
+              onClick={async () => {
+                if (!isDeleteConfirmed) {
+                  return
+                }
+
+                setDeleteError(null)
+                setIsDeletingProject(true)
+
+                try {
+                  await removeProject({
+                    projectId: project.id as never,
+                    slugConfirmation: deleteConfirmation,
+                  })
+                  onProjectDeleted()
+                } catch (error) {
+                  setDeleteError(getErrorMessage(error))
+                } finally {
+                  setIsDeletingProject(false)
+                }
+              }}
+            >
+              {isDeletingProject ? (
+                <LoaderCircle className="motion-safe:animate-spin" />
+              ) : (
+                <Trash2 />
+              )}
+              Delete project
+            </Button>
+          </div>
+        </div>
+      </section>
     </div>
   )
 }
@@ -1324,7 +1691,7 @@ function ScenarioEditor({
             >
               <ToggleGroupItem
                 aria-label="Set scenario status to draft"
-                className="flex-1 justify-center gap-1.5 px-3 text-[11px] uppercase tracking-[0.16em]"
+                className="flex-1 justify-center gap-1.5 px-3 text-[11px] tracking-[0.16em] uppercase"
                 size="lg"
                 value="draft"
               >
@@ -1333,7 +1700,7 @@ function ScenarioEditor({
               </ToggleGroupItem>
               <ToggleGroupItem
                 aria-label="Set scenario status to active"
-                className="flex-1 justify-center gap-1.5 px-3 text-[11px] uppercase tracking-[0.16em]"
+                className="flex-1 justify-center gap-1.5 px-3 text-[11px] tracking-[0.16em] uppercase"
                 size="lg"
                 value="active"
               >
@@ -1447,14 +1814,20 @@ function RunResultDetail({
     failureDetail: string | null
     runnerType: string
     startedAt: number
-    finishedAt: number
+    finishedAt: number | null
     submittedAt: number
     executionInstructions: string
     scoringPrompt: string
   } | null
 }) {
   if (!result) {
-    return <BlankDetailPanel title="Select an executed scenario" />
+    return (
+      <BlankDetailPanel
+        description="Choose a scenario result from this run to inspect rationale, summary, stored prompts, and failure details."
+        icon={Wrench}
+        title="Select an executed scenario"
+      />
+    )
   }
 
   const rationale = result.rationale ?? result.failureDetail
@@ -1472,11 +1845,26 @@ function RunResultDetail({
           {result.scenarioSlug}
         </p>
         <div className="mt-3 flex items-center gap-2">
-          <Badge variant={result.status === "success" ? "success" : "warning"}>
+          <Badge variant={getScenarioResultBadgeVariant(result.status)}>
             {formatStatusLabel(result.status)}
           </Badge>
           <ScoreBadge value={result.score} />
         </div>
+        <dl className="mt-5 flex flex-wrap items-start gap-x-8 gap-y-3 border-t border-border pt-4">
+          <RunHeaderMeta label="Runner" value={result.runnerType} />
+          <RunHeaderMeta
+            label="Started"
+            value={formatTimestamp(result.startedAt)}
+          />
+          <RunHeaderMeta
+            label="Finished"
+            value={
+              result.finishedAt === null
+                ? "In progress"
+                : formatTimestamp(result.finishedAt)
+            }
+          />
+        </dl>
       </div>
 
       {result.improvementInstruction ? (
@@ -1502,42 +1890,23 @@ function RunResultDetail({
         />
       </Field>
 
-      <div className="grid gap-4 border-t border-border pt-5">
-        <RunSectionHeader
-          description="Metadata and stored execution details for this result."
-          title="Run data"
-        />
-        <div className="grid gap-px border border-border bg-border sm:grid-cols-2">
-          <DetailMeta label="Runner" value={result.runnerType} />
-          <DetailMeta
-            label="Started"
-            value={formatTimestamp(result.startedAt)}
-          />
-          <DetailMeta
-            label="Finished"
-            value={formatTimestamp(result.finishedAt)}
-          />
-          <DetailMeta
-            label="Submitted"
-            value={formatTimestamp(result.submittedAt)}
-          />
-        </div>
+      <div className="grid gap-5 border-t border-border pt-5">
         {result.failureDetail ? (
           <Field label="Failure detail">
             <CopyableTextBlock value={result.failureDetail} />
           </Field>
         ) : null}
-      </div>
 
-      <div className="grid gap-5 border-t border-border pt-5">
-        <RunSectionHeader
-          description="The inputs captured from the scenario at execution time."
-          title="Scenario definition"
-        />
-        <Field label="Instructions">
+        <Field
+          description="Execution instructions captured from the scenario when this run started."
+          label="Instructions"
+        >
           <CopyableTextBlock value={result.executionInstructions} />
         </Field>
-        <Field label="Scoring prompt">
+        <Field
+          description="Scoring prompt captured from the scenario when this run started."
+          label="Scoring prompt"
+        >
           <CopyableTextBlock value={result.scoringPrompt} />
         </Field>
       </div>
@@ -1594,7 +1963,7 @@ function CopyableTextBlock({
     >
       <Button
         aria-label={canCopy ? "Copy text" : "Nothing to copy"}
-        className="absolute top-2 right-2 z-10"
+        className="absolute top-2 right-2 z-10 text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:bg-transparent dark:hover:bg-transparent"
         disabled={!canCopy}
         onClick={handleCopy}
         size="icon-xs"
@@ -1626,10 +1995,7 @@ function RunInsightPanel({
         description={description}
         title={title}
       />
-      <CopyableTextBlock
-        className="border-0 bg-transparent"
-        value={value}
-      />
+      <CopyableTextBlock className="border-0 bg-transparent" value={value} />
     </div>
   )
 }
@@ -1648,48 +2014,100 @@ function RunSectionHeader({
       <p className="pt-1 text-xs tracking-[0.2em] text-muted-foreground uppercase">
         {title}
       </p>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            aria-label={`${title} help`}
-            className="-mr-2 -mt-1 text-muted-foreground"
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <CircleHelp className="size-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="max-w-72 p-3">
-          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-            {title}
-          </p>
-          <p className="mt-2 text-sm leading-6 text-foreground">{description}</p>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <HelpHintButton
+        className="-mt-1 -mr-2"
+        description={description}
+        title={title}
+      />
     </div>
   )
 }
 
-function DetailMeta({ label, value }: { label: string; value: string }) {
+function useCoarsePointer() {
+  const [coarsePointer, setCoarsePointer] = useState(false)
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(hover: none), (pointer: coarse)")
+
+    const update = () => {
+      setCoarsePointer(mediaQuery.matches)
+    }
+
+    update()
+    mediaQuery.addEventListener("change", update)
+
+    return () => {
+      mediaQuery.removeEventListener("change", update)
+    }
+  }, [])
+
+  return coarsePointer
+}
+
+function RunHeaderMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-background px-3 py-2">
-      <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+    <div className="min-w-[10rem]">
+      <dt className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
         {label}
-      </p>
-      <p className="mt-1 text-sm text-foreground">{value}</p>
+      </dt>
+      <dd className="mt-1 font-mono text-[12px] leading-5 text-foreground">
+        {value}
+      </dd>
     </div>
   )
 }
 
-function BlankDetailPanel({ title }: { title: string }) {
+function NavigationEmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  description: string
+  action?: React.ReactNode
+}) {
+  return (
+    <div className="flex h-full items-center justify-center px-4 py-6">
+      <div className="max-w-xs text-center">
+        <span className="inline-flex size-10 items-center justify-center border border-border bg-muted/20 text-muted-foreground">
+          <Icon className="size-4" />
+        </span>
+        <p className="mt-3 text-sm font-medium text-foreground">{title}</p>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          {description}
+        </p>
+        {action ? (
+          <div className="mt-4 flex justify-center">{action}</div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function BlankDetailPanel({
+  title,
+  description,
+  icon: Icon = CircleHelp,
+}: {
+  title: string
+  description?: string
+  icon?: React.ComponentType<{ className?: string }>
+}) {
   return (
     <div className="flex h-full items-center justify-center px-6 py-6">
       <div className="max-w-md text-center">
-        <p className="text-lg font-medium text-foreground">{title}</p>
+        <span className="inline-flex size-12 items-center justify-center border border-border bg-muted/20 text-muted-foreground">
+          <Icon className="size-4" />
+        </span>
+        <p className="mt-4 text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+          Workspace detail
+        </p>
+        <p className="mt-2 text-lg font-medium text-foreground">{title}</p>
         <p className="mt-2 text-sm leading-7 text-muted-foreground">
-          The surrounding navigation stays active so you can change the current
-          selection without losing context.
+          {description ??
+            "The surrounding navigation stays active so you can change the current selection without losing context."}
         </p>
       </div>
     </div>
@@ -1698,15 +2116,85 @@ function BlankDetailPanel({ title }: { title: string }) {
 
 function Field({
   label,
+  description,
   children,
 }: {
   label: string
+  description?: string
   children: React.ReactNode
 }) {
   return (
     <div className="grid gap-2">
-      <Label>{label}</Label>
+      <div className="flex items-start justify-between gap-3">
+        <Label>{label}</Label>
+        {description ? (
+          <HelpHintButton
+            className="-mt-1 mr-2"
+            description={description}
+            title={label}
+          />
+        ) : null}
+      </div>
       {children}
     </div>
+  )
+}
+
+function HelpHintButton({
+  title,
+  description,
+  className,
+}: {
+  title: string
+  description: string
+  className?: string
+}) {
+  const coarsePointer = useCoarsePointer()
+
+  const button = (
+    <Button
+      aria-label={`${title} help`}
+      className={cn(
+        "text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:bg-transparent dark:hover:bg-transparent",
+        className
+      )}
+      size="icon-xs"
+      type="button"
+      variant="ghost"
+    >
+      <CircleHelp className="size-3.5" />
+    </Button>
+  )
+
+  if (coarsePointer) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>{button}</DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="max-w-72 p-3">
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            {title}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-foreground">
+            {description}
+          </p>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
+  return (
+    <TooltipProvider delayDuration={120}>
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent align="end">
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            {title}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-foreground">
+            {description}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

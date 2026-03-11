@@ -2,6 +2,7 @@ import { z } from "zod"
 
 import { API_VERSION, MIN_SUPPORTED_CLI_VERSION } from "./constants.js"
 import {
+  nullableStringSchema,
   projectSchema,
   runModeSchema,
   runSchema,
@@ -125,24 +126,54 @@ export const createRunResponseSchema = z.object({
   }),
 })
 
+export const startScenarioExecutionRequestSchema = z.object({
+  runId: z.string().min(1),
+  result: z.object({
+    scenarioId: z.string().min(1),
+    scenarioSlug: slugSchema,
+    scenarioName: z.string().min(1).max(120),
+    executionInstructions: z.string().min(1).max(20_000),
+    scoringPrompt: z.string().min(1).max(20_000),
+    sequenceIndex: z.number().int().nonnegative(),
+    runnerType: runnerTypeSchema,
+    startedAt: z.number().int().positive(),
+  }),
+})
+
+export const startScenarioExecutionResponseSchema = z.object({
+  run: runSchema.pick({
+    id: true,
+    status: true,
+    finishedAt: true,
+    updatedAt: true,
+  }),
+  result: scenarioResultSchema,
+})
+
 export const submitScenarioResultRequestSchema = z.object({
   runId: z.string().min(1),
-  result: scenarioResultSchema.pick({
-    scenarioId: true,
-    scenarioSlug: true,
-    scenarioName: true,
-    executionInstructions: true,
-    scoringPrompt: true,
-    sequenceIndex: true,
-    status: true,
-    runnerType: true,
-    score: true,
-    rationale: true,
-    improvementInstruction: true,
-    executionSummary: true,
-    failureDetail: true,
-    startedAt: true,
-    finishedAt: true,
+  result: z.object({
+    scenarioId: z.string().min(1),
+    scenarioSlug: slugSchema,
+    scenarioName: z.string().min(1).max(120),
+    executionInstructions: z.string().min(1).max(20_000),
+    scoringPrompt: z.string().min(1).max(20_000),
+    sequenceIndex: z.number().int().nonnegative(),
+    status: z.enum([
+      "success",
+      "scoring_failed",
+      "runner_failed",
+      "dependency_failed",
+      "interrupted",
+    ]),
+    runnerType: runnerTypeSchema,
+    score: z.number().min(0).max(1).nullable(),
+    rationale: nullableStringSchema,
+    improvementInstruction: nullableStringSchema,
+    executionSummary: nullableStringSchema,
+    failureDetail: nullableStringSchema,
+    startedAt: z.number().int().positive(),
+    finishedAt: z.number().int().positive(),
   }),
 })
 

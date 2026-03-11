@@ -27,7 +27,7 @@ describe("api client", () => {
     await expect(
       fetchProjects("https://example.com", "token", "0.1.0"),
     ).rejects.toThrowError(
-      /internal_error: Unexpected server error\.\n\{\n  "reason": "Database insert failed"\n\}/,
+      /internal_error: Unexpected server error\.\n\{\n {2}"reason": "Database insert failed"\n\}/,
     )
   })
 })

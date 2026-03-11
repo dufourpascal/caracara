@@ -9,6 +9,8 @@ import {
   parseApiError,
   projectListResponseSchema,
   singleScenarioResponseSchema,
+  startScenarioExecutionRequestSchema,
+  startScenarioExecutionResponseSchema,
   submitScenarioResultRequestSchema,
   submitScenarioResultResponseSchema,
   whoAmIResponseSchema,
@@ -39,7 +41,7 @@ async function request<T>(args: {
         ? Object.fromEntries(args.init.headers.entries())
         : Array.isArray(args.init?.headers)
           ? Object.fromEntries(args.init.headers)
-          : args.init?.headers ?? {}),
+          : (args.init?.headers ?? {})),
     }),
   })
   const json = await response.json()
@@ -51,14 +53,18 @@ async function request<T>(args: {
     }
 
     throw new Error(
-      `Unexpected API error (${response.status} ${response.statusText}): ${JSON.stringify(json, null, 2)}`,
+      `Unexpected API error (${response.status} ${response.statusText}): ${JSON.stringify(json, null, 2)}`
     )
   }
 
   return args.schema.parse(json)
 }
 
-export async function fetchWhoAmI(apiBaseUrl: string, accessToken: string, version: string) {
+export async function fetchWhoAmI(
+  apiBaseUrl: string,
+  accessToken: string,
+  version: string
+) {
   return request({
     url: `${apiBaseUrl}/api/v1/whoami`,
     version,
@@ -67,7 +73,11 @@ export async function fetchWhoAmI(apiBaseUrl: string, accessToken: string, versi
   })
 }
 
-export async function fetchProjects(apiBaseUrl: string, accessToken: string, version: string) {
+export async function fetchProjects(
+  apiBaseUrl: string,
+  accessToken: string,
+  version: string
+) {
   return request({
     url: `${apiBaseUrl}/api/v1/projects`,
     version,
@@ -124,6 +134,28 @@ export async function createRun(args: {
   })
 }
 
+export async function startScenarioExecution(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  runId: string
+  payload: Parameters<typeof startScenarioExecutionRequestSchema.parse>[0]
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
+    version: args.version,
+    accessToken: args.accessToken,
+    init: {
+      method: "POST",
+      body: JSON.stringify(
+        startScenarioExecutionRequestSchema.parse(args.payload)
+      ),
+    },
+    schema: startScenarioExecutionResponseSchema,
+  })
+}
+
 export async function submitScenarioResult(args: {
   apiBaseUrl: string
   accessToken: string
@@ -138,7 +170,9 @@ export async function submitScenarioResult(args: {
     accessToken: args.accessToken,
     init: {
       method: "POST",
-      body: JSON.stringify(submitScenarioResultRequestSchema.parse(args.payload)),
+      body: JSON.stringify(
+        submitScenarioResultRequestSchema.parse(args.payload)
+      ),
     },
     schema: submitScenarioResultResponseSchema,
   })

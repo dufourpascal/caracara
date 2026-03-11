@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   ApiRouteError,
   handleApiError,
+  startScenarioExecution,
   submitScenarioResult,
 } from "./api-route"
 
@@ -79,6 +80,35 @@ describe("api-route helpers", () => {
             failureDetail: null,
             startedAt: 1,
             finishedAt: 2,
+          },
+        },
+      })
+    ).rejects.toEqual(
+      new ApiRouteError(
+        400,
+        "validation_error",
+        "Run ID in URL does not match request body."
+      )
+    )
+  })
+
+  it("rejects scenario start submissions when the URL run id and body run id differ", async () => {
+    await expect(
+      startScenarioExecution({
+        token: "token",
+        projectSlug: "demo-project",
+        runId: "url-run-id",
+        body: {
+          runId: "body-run-id",
+          result: {
+            scenarioId: "scenario-id",
+            scenarioSlug: "demo-scenario",
+            scenarioName: "Demo scenario",
+            executionInstructions: "Do the thing",
+            scoringPrompt: "Score the thing",
+            sequenceIndex: 0,
+            runnerType: "codex",
+            startedAt: 1,
           },
         },
       })

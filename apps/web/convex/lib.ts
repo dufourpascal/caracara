@@ -378,6 +378,43 @@ export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
   }
 }
 
+export async function deleteProjectCascade(
+  ctx: MutationCtx,
+  projectId: Id<"projects">
+) {
+  const dependencies = await getProjectDependencies(ctx, projectId)
+  const scenarios = await getProjectScenarios(ctx, projectId)
+  const runs = await ctx.db
+    .query("runs")
+    .withIndex("by_project", (query) => query.eq("projectId", projectId))
+    .collect()
+
+  let deletedResultCount = 0
+
+  for (const run of runs) {
+    const result = await deleteRunAndResults(ctx, run._id)
+    deletedResultCount += result.deletedResultCount
+  }
+
+  for (const dependency of dependencies) {
+    await ctx.db.delete(dependency._id)
+  }
+
+  for (const scenario of scenarios) {
+    await ctx.db.delete(scenario._id)
+  }
+
+  await ctx.db.delete(projectId)
+
+  return {
+    deletedDependencyCount: dependencies.length,
+    deletedProjectId: projectId,
+    deletedResultCount,
+    deletedRunCount: runs.length,
+    deletedScenarioCount: scenarios.length,
+  }
+}
+
 export function createRunName() {
   return formatRunName(new Date())
 }

@@ -29,6 +29,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
+import { normalizeSlug } from "@workspace/contracts"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -42,6 +43,13 @@ import {
 } from "@workspace/ui/components/dropdown-menu"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@workspace/ui/components/pagination"
 import {
   ResizableHandle,
   ResizablePanel,
@@ -64,6 +72,15 @@ import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
 
 type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
+const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
+const SIDEBAR_PAGE_SIZES = [10, 20, 50] as const
+const UNTITLED_SCENARIO_SLUG_PATTERN = /^untitled(?:-\d+)?$/
+const WORKSPACE_NAVIGATION_ORDER = [
+  "project",
+  "phases",
+  "scenarios",
+  "runs",
+] as const satisfies WorkspaceKind[]
 
 function getWorkspaceHref({
   mode,
@@ -106,8 +123,67 @@ function getScenarioModeHref({
   return `/projects/${projectSlug}/scenarios?mode=${mode}`
 }
 
+function getNewScenarioHref({
+  projectSlug,
+  phaseFilter,
+}: {
+  projectSlug: string
+  phaseFilter: string | null
+}) {
+  const searchParams = new URLSearchParams({ mode: "edit" })
+
+  if (phaseFilter) {
+    searchParams.set("phase", phaseFilter)
+  }
+
+  searchParams.set("draft", "new")
+
+  return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
+}
+
 function formatScenarioModeLabel(mode: "edit" | "graph") {
   return mode === "edit" ? "Edit" : "Graph"
+}
+
+function getScenarioPhaseFilterLabel(filter: string | null, phases: Array<{
+  id: Id<"phases">
+  order: number
+  name: string
+}>) {
+  if (filter === UNASSIGNED_SCENARIO_PHASE_FILTER) {
+    return "Unassigned"
+  }
+
+  const phase = phases.find((item) => item.id === filter)
+
+  if (!phase) {
+    return "Choose phase"
+  }
+
+  return `${phase.order}. ${phase.name}`
+}
+
+function getScenarioPhaseIdForCreation({
+  phases,
+  selectedFilter,
+}: {
+  phases: Array<{ id: Id<"phases"> }>
+  selectedFilter: string | null
+}) {
+  if (selectedFilter === UNASSIGNED_SCENARIO_PHASE_FILTER) {
+    return null
+  }
+
+  const selectedPhase =
+    selectedFilter !== null
+      ? phases.find((phase) => phase.id === selectedFilter) ?? null
+      : null
+
+  if (selectedPhase) {
+    return selectedPhase.id
+  }
+
+  return phases.length > 0 ? phases[phases.length - 1]?.id ?? null : null
 }
 
 function createProjectFormState(project: {
@@ -139,14 +215,32 @@ function createScenarioFormState(scenario: {
   phaseId?: string | null
   dependencyIds: string[]
 }) {
+  const shouldHideGeneratedSlug =
+    scenario.name.trim() === "" &&
+    scenario.instructions.trim() === "" &&
+    scenario.scoringPrompt.trim() === "" &&
+    UNTITLED_SCENARIO_SLUG_PATTERN.test(scenario.slug)
+
   return {
     name: scenario.name,
-    slug: scenario.slug,
+    slug: shouldHideGeneratedSlug ? "" : scenario.slug,
     status: scenario.status,
     instructions: scenario.instructions,
     scoringPrompt: scenario.scoringPrompt,
     phaseId: scenario.phaseId ?? null,
     dependencyIds: scenario.dependencyIds,
+  }
+}
+
+function createEmptyScenarioDraft({ phaseId }: { phaseId: Id<"phases"> | null }) {
+  return {
+    name: "",
+    slug: "",
+    status: "draft" as const,
+    instructions: "",
+    scoringPrompt: "",
+    phaseId,
+    dependencyIds: [],
   }
 }
 
@@ -156,6 +250,10 @@ function formatRunDisplayName(name: string) {
 
 function isScenarioStatus(value: string): value is "draft" | "active" {
   return value === "draft" || value === "active"
+}
+
+function getAutoScenarioSlug(name: string) {
+  return name.trim() === "" ? "" : normalizeSlug(name)
 }
 
 function getErrorMessage(error: unknown) {
@@ -196,6 +294,102 @@ function getLocalDayToken(value: number) {
 
 function formatScore(value: number | null) {
   return value === null ? "n/a" : value.toFixed(2)
+}
+
+function useCursorPager(resetKey: string) {
+  const [pageState, setPageState] = useState<{
+    key: string
+    starts: Array<string | null>
+  }>({
+    key: resetKey,
+    starts: [null],
+  })
+  const pageStarts =
+    pageState.key === resetKey ? pageState.starts : ([null] as Array<string | null>)
+
+  return {
+    canGoPrevious: pageStarts.length > 1,
+    currentCursor: pageStarts[pageStarts.length - 1] ?? null,
+    goToNextPage(cursor: string) {
+      setPageState({
+        key: resetKey,
+        starts: [...pageStarts, cursor],
+      })
+    },
+    goToPreviousPage() {
+      setPageState({
+        key: resetKey,
+        starts: pageStarts.length > 1 ? pageStarts.slice(0, -1) : pageStarts,
+      })
+    },
+    pageNumber: pageStarts.length,
+  }
+}
+
+function SidebarPaginationControls({
+  canGoNext,
+  canGoPrevious,
+  itemLabel,
+  onNext,
+  onPageSizeChange,
+  onPrevious,
+  pageNumber,
+  pageSize,
+}: {
+  canGoNext: boolean
+  canGoPrevious: boolean
+  itemLabel: string
+  onNext: () => void
+  onPageSizeChange: (value: 10 | 20 | 50) => void
+  onPrevious: () => void
+  pageNumber: number
+  pageSize: 10 | 20 | 50
+}) {
+  return (
+    <div className="border-t border-border bg-muted/10 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] tracking-[0.16em] text-muted-foreground uppercase">
+          Page {pageNumber} · {pageSize} {itemLabel}
+        </p>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button className="h-7 px-2.5 font-mono text-[11px]" size="sm" variant="outline">
+              {pageSize} / page
+              <ChevronsUpDown className="size-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {SIDEBAR_PAGE_SIZES.map((size) => (
+              <DropdownMenuItem key={size} onSelect={() => onPageSizeChange(size)}>
+                <span className="font-mono">{size}</span>
+                {size === pageSize ? <Check className="ml-2 size-3.5" /> : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <Pagination className="mt-3 justify-start">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious disabled={!canGoPrevious} onClick={onPrevious} />
+          </PaginationItem>
+          <PaginationItem>
+            <Button
+              className="h-7 min-w-16 px-2.5 font-mono text-[11px]"
+              disabled
+              size="sm"
+              variant="secondary"
+            >
+              {pageNumber}
+            </Button>
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext disabled={!canGoNext} onClick={onNext} />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  )
 }
 
 type ScoreStyle = CSSProperties & {
@@ -538,6 +732,8 @@ export function ProjectWorkspace({
   selectedScenarioSlug,
   selectedRunId,
   selectedRunScenarioSlug,
+  initialScenarioPhaseFilter,
+  creatingScenario = false,
   mode,
 }: {
   projectSlug: string
@@ -545,6 +741,8 @@ export function ProjectWorkspace({
   selectedScenarioSlug?: string
   selectedRunId?: string
   selectedRunScenarioSlug?: string
+  initialScenarioPhaseFilter?: string | null
+  creatingScenario?: boolean
   mode: "edit" | "graph"
 }) {
   return (
@@ -556,6 +754,8 @@ export function ProjectWorkspace({
       </AuthLoading>
       <Authenticated>
         <AuthenticatedProjectWorkspace
+          creatingScenario={creatingScenario}
+          initialScenarioPhaseFilter={initialScenarioPhaseFilter}
           mode={mode}
           projectSlug={projectSlug}
           selectedRunId={selectedRunId}
@@ -574,6 +774,8 @@ function AuthenticatedProjectWorkspace({
   selectedScenarioSlug,
   selectedRunId,
   selectedRunScenarioSlug,
+  initialScenarioPhaseFilter,
+  creatingScenario = false,
   mode,
 }: {
   projectSlug: string
@@ -581,6 +783,8 @@ function AuthenticatedProjectWorkspace({
   selectedScenarioSlug?: string
   selectedRunId?: string
   selectedRunScenarioSlug?: string
+  initialScenarioPhaseFilter?: string | null
+  creatingScenario?: boolean
   mode: "edit" | "graph"
 }) {
   const router = useRouter()
@@ -597,6 +801,9 @@ function AuthenticatedProjectWorkspace({
   const reorderPhases = useMutation(api.phases.reorder)
   const removePhase = useMutation(api.phases.remove)
   const createScenario = useMutation(api.scenarios.create)
+  const ensureScenarioNavigationMetadata = useMutation(
+    api.scenarios.ensureNavigationMetadataForProject
+  )
   const updateScenario = useMutation(api.scenarios.update)
   const removeScenario = useMutation(api.scenarios.remove)
   const removeRun = useMutation(api.runs.remove)
@@ -604,25 +811,78 @@ function AuthenticatedProjectWorkspace({
     api.phases.listForProject,
     hasDeletedProject ? "skip" : { projectSlug }
   )
-  const scenarios = useQuery(
-    api.scenarios.listForProject,
-    hasDeletedProject
-      ? "skip"
-      : {
+  const [scenarioSearch, setScenarioSearch] = useState("")
+  const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
+  const [scenarioPageSize, setScenarioPageSize] = useState<10 | 20 | 50>(20)
+  const [runSortAscending, setRunSortAscending] = useState(false)
+  const [runPageSize, setRunPageSize] = useState<10 | 20 | 50>(20)
+  const [isDeletingRun, setIsDeletingRun] = useState(false)
+  const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
+  const [selectedScenarioPhaseFilter, setSelectedScenarioPhaseFilter] =
+    useState<string | null>(initialScenarioPhaseFilter ?? null)
+  const normalizedScenarioSearch = scenarioSearch.trim()
+  const isScenarioSearchActive = normalizedScenarioSearch.length > 0
+  const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
+  const runSortDirection = runSortAscending ? "asc" : "desc"
+  const scenarioPager = useCursorPager(
+    `${selectedScenarioPhaseFilter ?? "all"}:${scenarioSortDirection}:${scenarioPageSize}:${normalizedScenarioSearch}`
+  )
+  const runPager = useCursorPager(`${runSortDirection}:${runPageSize}`)
+  const scenarioPage = useQuery(
+    api.scenarios.listPageForProject,
+    !hasDeletedProject && workspace === "scenarios"
+      ? {
           projectSlug,
-          ascending: workspace === "scenarios" ? mode !== "graph" : true,
+          phaseFilter: selectedScenarioPhaseFilter,
+          searchQuery: normalizedScenarioSearch || undefined,
+          sortDirection: scenarioSortDirection,
+          paginationOpts: {
+            cursor: scenarioPager.currentCursor,
+            numItems: scenarioPageSize,
+          },
         }
+      : "skip"
+  )
+  const scenarioNavigationSummary = useQuery(
+    api.scenarios.getNavigationSummaryForProject,
+    !hasDeletedProject && workspace === "scenarios" ? { projectSlug } : "skip"
+  )
+  const scenarioSummaries = useQuery(
+    api.scenarios.listSummariesForProject,
+    !hasDeletedProject &&
+      (workspace === "phases" ||
+        (workspace === "scenarios" &&
+          mode === "edit" &&
+          (creatingScenario || !!selectedScenarioSlug)))
+      ? { projectSlug }
+      : "skip"
+  )
+  const graphScenarios = useQuery(
+    api.scenarios.listForProject,
+    !hasDeletedProject && workspace === "scenarios" && mode === "graph"
+      ? { projectSlug, ascending: true }
+      : "skip"
   )
   const selectedScenario = useQuery(
     api.scenarios.getBySlug,
-    !hasDeletedProject && workspace === "scenarios" && selectedScenarioSlug
+    !hasDeletedProject &&
+      workspace === "scenarios" &&
+      selectedScenarioSlug &&
+      !creatingScenario
       ? { projectSlug, scenarioSlug: selectedScenarioSlug }
       : "skip"
   )
-  const runs = useQuery(
-    api.runs.listForProject,
+  const runPage = useQuery(
+    api.runs.listPageForProject,
     !hasDeletedProject && workspace === "runs"
-      ? { projectSlug, ascending: false }
+      ? {
+          projectSlug,
+          sortDirection: runSortDirection,
+          paginationOpts: {
+            cursor: runPager.currentCursor,
+            numItems: runPageSize,
+          },
+        }
       : "skip"
   )
   const runDetail = useQuery(
@@ -631,11 +891,6 @@ function AuthenticatedProjectWorkspace({
       ? { projectSlug, runId: selectedRunId as Id<"runs"> }
       : "skip"
   )
-  const [scenarioSearch, setScenarioSearch] = useState("")
-  const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
-  const [runSortAscending, setRunSortAscending] = useState(false)
-  const [isDeletingRun, setIsDeletingRun] = useState(false)
-  const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
   const scenarioListPanelId = getPanelLayoutToken({
     projectSlug,
     workspace: "scenarios",
@@ -699,6 +954,7 @@ function AuthenticatedProjectWorkspace({
       [runResultPanelId]: 68,
     }
   )
+  const hasTriggeredScenarioMetadataEnsure = useRef(false)
 
   useEffect(() => {
     if (workspace !== "phases" || phases === undefined) {
@@ -717,6 +973,118 @@ function AuthenticatedProjectWorkspace({
     }
   }, [phases, selectedPhaseId, workspace])
 
+  useEffect(() => {
+    if (
+      workspace !== "scenarios" ||
+      !creatingScenario ||
+      initialScenarioPhaseFilter === undefined ||
+      phases === undefined
+    ) {
+      return
+    }
+
+    const normalizedFilter =
+      initialScenarioPhaseFilter === UNASSIGNED_SCENARIO_PHASE_FILTER
+        ? UNASSIGNED_SCENARIO_PHASE_FILTER
+        : phases.some((phase) => phase.id === initialScenarioPhaseFilter)
+          ? initialScenarioPhaseFilter
+          : null
+
+    if (selectedScenarioPhaseFilter !== normalizedFilter) {
+      setSelectedScenarioPhaseFilter(normalizedFilter)
+    }
+  }, [
+    creatingScenario,
+    initialScenarioPhaseFilter,
+    phases,
+    selectedScenarioPhaseFilter,
+    workspace,
+  ])
+
+  useEffect(() => {
+    if (workspace !== "scenarios" || phases === undefined) {
+      return
+    }
+
+    if (!creatingScenario && selectedScenarioSlug) {
+      if (selectedScenario === undefined) {
+        return
+      }
+
+      if (selectedScenario) {
+        const nextFilter =
+          selectedScenario.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER
+
+        if (selectedScenarioPhaseFilter !== nextFilter) {
+          setSelectedScenarioPhaseFilter(nextFilter)
+        }
+        return
+      }
+    }
+
+    const hasValidSelectedFilter =
+      selectedScenarioPhaseFilter === UNASSIGNED_SCENARIO_PHASE_FILTER ||
+      (!!selectedScenarioPhaseFilter &&
+        phases.some((phase) => phase.id === selectedScenarioPhaseFilter))
+
+    if (!hasValidSelectedFilter) {
+      if (phases.length > 0) {
+        setSelectedScenarioPhaseFilter(phases[0]?.id ?? null)
+      } else {
+        setSelectedScenarioPhaseFilter(UNASSIGNED_SCENARIO_PHASE_FILTER)
+      }
+    }
+  }, [
+    creatingScenario,
+    phases,
+    selectedScenario,
+    selectedScenarioPhaseFilter,
+    selectedScenarioSlug,
+    workspace,
+  ])
+
+  const pagedScenarios = scenarioPage?.page ?? []
+  const pagedRuns = runPage?.page ?? []
+  const unassignedScenarioCount =
+    scenarioNavigationSummary?.unassignedScenarioCount ?? 0
+
+  useEffect(() => {
+    if (
+      workspace !== "scenarios" ||
+      hasTriggeredScenarioMetadataEnsure.current ||
+      phases === undefined ||
+      scenarioPage === undefined ||
+      isScenarioSearchActive
+    ) {
+      return
+    }
+
+    const expectedCount =
+      selectedScenarioPhaseFilter === UNASSIGNED_SCENARIO_PHASE_FILTER
+        ? unassignedScenarioCount
+        : selectedScenarioPhaseFilter
+          ? (phases.find((phase) => phase.id === selectedScenarioPhaseFilter)
+              ?.scenarioCount ?? 0)
+          : 0
+
+    if (expectedCount === 0 || pagedScenarios.length > 0) {
+      return
+    }
+
+    hasTriggeredScenarioMetadataEnsure.current = true
+    void ensureScenarioNavigationMetadata({ projectSlug })
+  }, [
+    ensureScenarioNavigationMetadata,
+    isScenarioSearchActive,
+    pagedScenarios.length,
+    phases,
+    projectSlug,
+    scenarioPage,
+    selectedScenarioPhaseFilter,
+    unassignedScenarioCount,
+    workspace,
+  ])
+
   if (hasDeletedProject) {
     return (
       <main className="flex min-h-svh items-center justify-center bg-background px-5 py-6 text-sm text-muted-foreground sm:px-6">
@@ -733,23 +1101,11 @@ function AuthenticatedProjectWorkspace({
     )
   }
 
-  const filteredScenarios =
-    scenarios?.filter((scenario) =>
-      scenario.name.toLowerCase().includes(scenarioSearch.toLowerCase())
-    ) ?? []
-  const orderedScenarios = scenarioSortAscending
-    ? [...filteredScenarios]
-    : [...filteredScenarios].reverse()
-  const orderedRuns = [...(runs ?? [])].sort((left, right) =>
-    runSortAscending
-      ? left.startedAt - right.startedAt
-      : right.startedAt - left.startedAt
-  )
-  const groupedRuns = orderedRuns.reduce<
+  const groupedRuns = pagedRuns.reduce<
     Array<{
       dayKey: string
       startedAt: number
-      runs: Array<(typeof orderedRuns)[number]>
+      runs: Array<(typeof pagedRuns)[number]>
     }>
   >((groups, run) => {
     const dayKey = getLocalDayToken(run.startedAt)
@@ -769,6 +1125,18 @@ function AuthenticatedProjectWorkspace({
   }, [])
   const selectedPhase =
     phases?.find((phase) => phase.id === selectedPhaseId) ?? null
+  const selectedScenarioListFilterLabel = getScenarioPhaseFilterLabel(
+    selectedScenarioPhaseFilter,
+    phases ?? []
+  )
+  const createScenarioForCurrentPhase = async () => {
+    router.push(
+      getNewScenarioHref({
+        projectSlug,
+        phaseFilter: selectedScenarioPhaseFilter,
+      })
+    )
+  }
 
   return (
     <main className="flex min-h-svh flex-col bg-background">
@@ -828,7 +1196,7 @@ function AuthenticatedProjectWorkspace({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                {(["scenarios", "phases", "runs", "project"] as const).map((item) => (
+                {WORKSPACE_NAVIGATION_ORDER.map((item) => (
                   <DropdownMenuItem
                     key={item}
                     onSelect={() =>
@@ -928,15 +1296,20 @@ function AuthenticatedProjectWorkspace({
                   <div className="flex items-center gap-2">
                     <Button
                       aria-label={
-                        scenarioSortAscending
-                          ? "Sort scenarios descending"
-                          : "Sort scenarios ascending"
+                        isScenarioSearchActive
+                          ? "Scenario search uses relevance ordering"
+                          : scenarioSortAscending
+                            ? "Sort scenarios descending"
+                            : "Sort scenarios ascending"
                       }
+                      disabled={isScenarioSearchActive}
                       size="icon-sm"
                       title={
-                        scenarioSortAscending
-                          ? "Sort scenarios descending"
-                          : "Sort scenarios ascending"
+                        isScenarioSearchActive
+                          ? "Scenario search uses relevance ordering"
+                          : scenarioSortAscending
+                            ? "Sort scenarios descending"
+                            : "Sort scenarios ascending"
                       }
                       variant="outline"
                       onClick={() =>
@@ -947,47 +1320,126 @@ function AuthenticatedProjectWorkspace({
                     </Button>
                     <Button
                       size="icon-sm"
-                      onClick={async () => {
-                        const created = await createScenario({
-                          projectId: project.id as never,
-                          name: "New scenario",
-                          slug: "new-scenario",
-                          status: "draft",
-                          instructions: "Describe the user flow to execute.",
-                          scoringPrompt:
-                            "Explain whether the outcome met expectations.",
-                          phaseId:
-                            phases && phases.length > 0
-                              ? phases[phases.length - 1]?.id ?? null
-                              : null,
-                          dependsOnScenarioIds: [],
-                        })
-                        router.push(
-                          `/projects/${projectSlug}/scenarios/${created.slug}?mode=edit`
-                        )
-                      }}
+                      onClick={createScenarioForCurrentPhase}
                     >
                       <Plus />
                     </Button>
                   </div>
                 </div>
-                <div className="mt-4 flex items-center gap-2 border border-border px-3 py-2">
-                  <Search className="size-4 text-muted-foreground" />
-                  <input
-                    className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                    onChange={(event) => setScenarioSearch(event.target.value)}
-                    placeholder="Search scenarios"
-                    value={scenarioSearch}
-                  />
+                <div className="mt-4 space-y-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label className="text-[11px] tracking-[0.18em] text-muted-foreground uppercase">
+                        Phase
+                      </Label>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {selectedScenarioPhaseFilter ===
+                        UNASSIGNED_SCENARIO_PHASE_FILTER
+                          ? unassignedScenarioCount
+                          : selectedScenarioPhaseFilter
+                            ? (phases ?? []).find(
+                                (phase) => phase.id === selectedScenarioPhaseFilter
+                              )?.scenarioCount ?? 0
+                            : "All"}
+                      </span>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          className="h-10 w-full justify-between rounded-none border-border bg-background px-3 font-normal text-foreground shadow-none"
+                          variant="outline"
+                        >
+                          <span className="truncate text-sm">
+                            {selectedScenarioListFilterLabel}
+                          </span>
+                          <ChevronsUpDown
+                            aria-hidden
+                            className="size-3.5 text-muted-foreground"
+                          />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-72">
+                        <DropdownMenuLabel>Filter Scenarios</DropdownMenuLabel>
+                        <DropdownMenuSeparator className="my-1 h-px bg-border" />
+                        {(phases ?? []).map((phase) => (
+                          <DropdownMenuItem
+                            key={phase.id}
+                            className="justify-between gap-3"
+                            onSelect={() => {
+                              setSelectedScenarioPhaseFilter(phase.id)
+                              if (
+                                selectedScenarioSlug &&
+                                selectedScenario?.phaseId !== phase.id
+                              ) {
+                                router.push(
+                                  `/projects/${projectSlug}/scenarios?mode=${mode}`
+                                )
+                              }
+                            }}
+                          >
+                            <span className="truncate text-sm">
+                              {phase.order}. {phase.name}
+                            </span>
+                            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="font-mono">{phase.scenarioCount ?? 0}</span>
+                              {selectedScenarioPhaseFilter === phase.id ? (
+                                <Check className="size-3.5 text-foreground" />
+                              ) : null}
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuSeparator className="my-1 h-px bg-border" />
+                        <DropdownMenuItem
+                          className="justify-between gap-3"
+                          onSelect={() => {
+                            setSelectedScenarioPhaseFilter(
+                              UNASSIGNED_SCENARIO_PHASE_FILTER
+                            )
+                            if (selectedScenarioSlug && selectedScenario?.phaseId !== null) {
+                              router.push(
+                                `/projects/${projectSlug}/scenarios?mode=${mode}`
+                              )
+                            }
+                          }}
+                        >
+                          <span className="inline-flex items-center gap-2 text-sm">
+                            <AlertCircle className="size-3.5 text-amber-700 dark:text-amber-300" />
+                            Unassigned
+                          </span>
+                          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span className="font-mono">{unassignedScenarioCount}</span>
+                            {selectedScenarioPhaseFilter ===
+                            UNASSIGNED_SCENARIO_PHASE_FILTER ? (
+                              <Check className="size-3.5 text-foreground" />
+                            ) : null}
+                          </span>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <div className="flex items-center gap-2 border border-border px-3 py-2">
+                    <Search className="size-4 text-muted-foreground" />
+                    <input
+                      className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                      onChange={(event) => setScenarioSearch(event.target.value)}
+                      placeholder="Search scenarios"
+                      value={scenarioSearch}
+                    />
+                  </div>
+                  {isScenarioSearchActive ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Search uses relevance order. Phase filtering and paging still run on Convex.
+                    </p>
+                  ) : null}
                 </div>
               </div>
 
               <div className="flex-1 overflow-auto">
-                {scenarios === undefined ? (
+                {scenarioPage === undefined ? (
                   <div className="px-4 py-5 text-sm text-muted-foreground">
                     Loading scenarios...
                   </div>
-                ) : orderedScenarios.length === 0 ? (
+                ) : pagedScenarios.length === 0 ? (
                   <NavigationEmptyState
                     action={
                       scenarioSearch ? (
@@ -1001,26 +1453,7 @@ function AuthenticatedProjectWorkspace({
                       ) : (
                         <Button
                           size="sm"
-                          onClick={async () => {
-                            const created = await createScenario({
-                              projectId: project.id as never,
-                              name: "New scenario",
-                              slug: "new-scenario",
-                              status: "draft",
-                              instructions:
-                                "Describe the user flow to execute.",
-                              scoringPrompt:
-                                "Explain whether the outcome met expectations.",
-                              phaseId:
-                                phases && phases.length > 0
-                                  ? phases[phases.length - 1]?.id ?? null
-                                  : null,
-                              dependsOnScenarioIds: [],
-                            })
-                            router.push(
-                              `/projects/${projectSlug}/scenarios/${created.slug}?mode=edit`
-                            )
-                          }}
+                          onClick={createScenarioForCurrentPhase}
                         >
                           <Plus />
                           Create scenario
@@ -1030,17 +1463,23 @@ function AuthenticatedProjectWorkspace({
                     description={
                       scenarioSearch
                         ? "Adjust the query or clear it to see the authored scenario library again."
-                        : "Create the first scenario to start defining the execution graph for this project."
+                        : selectedScenarioPhaseFilter ===
+                            UNASSIGNED_SCENARIO_PHASE_FILTER
+                          ? "Create an unassigned scenario or move scenarios here when they should stay outside normal phase execution."
+                          : "Create the first scenario in this phase to continue shaping the execution flow."
                     }
                     icon={GitBranch}
                     title={
                       scenarioSearch
                         ? "No matching scenarios"
-                        : "No scenarios authored yet"
+                        : selectedScenarioPhaseFilter ===
+                            UNASSIGNED_SCENARIO_PHASE_FILTER
+                          ? "No unassigned scenarios"
+                          : "No scenarios in this phase"
                     }
                   />
                 ) : (
-                  orderedScenarios.map((scenario) => (
+                  pagedScenarios.map((scenario) => (
                     <button
                       key={scenario.id}
                       className={cn(
@@ -1058,7 +1497,7 @@ function AuthenticatedProjectWorkspace({
                     >
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-medium text-foreground">
-                          {scenario.name}
+                          {scenario.name || "Untitled scenario"}
                         </span>
                         <span className="mt-1 flex items-center gap-2">
                           {scenario.phaseId ? (
@@ -1073,10 +1512,10 @@ function AuthenticatedProjectWorkspace({
                           )}
                         </span>
                       </span>
-                      {scenario.dependencyIds.length > 0 ? (
+                      {scenario.dependencyCount > 0 ? (
                         <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
                           <GitBranch className="size-3.5" />
-                          {scenario.dependencyIds.length}
+                          {scenario.dependencyCount}
                         </span>
                       ) : (
                         <span aria-hidden className="w-0" />
@@ -1097,6 +1536,22 @@ function AuthenticatedProjectWorkspace({
                   ))
                 )}
               </div>
+              <SidebarPaginationControls
+                canGoNext={!!scenarioPage && !scenarioPage.isDone}
+                canGoPrevious={scenarioPager.canGoPrevious}
+                itemLabel="shown"
+                onNext={() => {
+                  const nextCursor = scenarioPage?.continueCursor
+
+                  if (scenarioPage && !scenarioPage.isDone && nextCursor) {
+                    scenarioPager.goToNextPage(nextCursor)
+                  }
+                }}
+                onPageSizeChange={setScenarioPageSize}
+                onPrevious={scenarioPager.goToPreviousPage}
+                pageNumber={scenarioPager.pageNumber}
+                pageSize={scenarioPageSize}
+              />
             </div>
           </ResizablePanel>
 
@@ -1104,12 +1559,29 @@ function AuthenticatedProjectWorkspace({
 
           <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
             {mode === "graph" ? (
-              <ScenarioGraph scenarios={orderedScenarios} />
+              <ScenarioGraph scenarios={graphScenarios ?? []} />
+            ) : creatingScenario ? (
+              <ScenarioEditor
+                allScenarios={scenarioSummaries ?? []}
+                allPhases={phases ?? []}
+                createScenario={createScenario}
+                projectId={project.id}
+                projectSlug={projectSlug}
+                scenario={createEmptyScenarioDraft({
+                  phaseId: getScenarioPhaseIdForCreation({
+                    phases: phases ?? [],
+                    selectedFilter: selectedScenarioPhaseFilter,
+                  }),
+                })}
+                updateScenario={updateScenario}
+              />
             ) : selectedScenario ? (
               <ScenarioEditor
-                allScenarios={scenarios ?? []}
+                allScenarios={scenarioSummaries ?? []}
                 allPhases={phases ?? []}
+                createScenario={createScenario}
                 key={`${selectedScenario.id}:${selectedScenario.updatedAt}`}
+                projectId={project.id}
                 removeScenario={removeScenario}
                 projectSlug={projectSlug}
                 scenario={selectedScenario}
@@ -1232,7 +1704,7 @@ function AuthenticatedProjectWorkspace({
           <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
             {selectedPhase ? (
               <PhaseEditor
-                allScenarios={scenarios ?? []}
+                allScenarios={scenarioSummaries ?? []}
                 key={`${selectedPhase.id}:${selectedPhase.updatedAt}`}
                 phase={selectedPhase}
                 removePhase={removePhase}
@@ -1299,11 +1771,11 @@ function AuthenticatedProjectWorkspace({
                 </div>
               </div>
               <div className="flex-1 overflow-auto">
-                {runs === undefined ? (
+                {runPage === undefined ? (
                   <div className="px-4 py-5 text-sm text-muted-foreground">
                     Loading runs...
                   </div>
-                ) : orderedRuns.length === 0 ? (
+                ) : pagedRuns.length === 0 ? (
                   <NavigationEmptyState
                     description="Run the CLI against this project and each execution will appear here as a dated log entry."
                     icon={History}
@@ -1378,6 +1850,22 @@ function AuthenticatedProjectWorkspace({
                   ))
                 )}
               </div>
+              <SidebarPaginationControls
+                canGoNext={!!runPage && !runPage.isDone}
+                canGoPrevious={runPager.canGoPrevious}
+                itemLabel="runs"
+                onNext={() => {
+                  const nextCursor = runPage?.continueCursor
+
+                  if (runPage && !runPage.isDone && nextCursor) {
+                    runPager.goToNextPage(nextCursor)
+                  }
+                }}
+                onPageSizeChange={setRunPageSize}
+                onPrevious={runPager.goToPreviousPage}
+                pageNumber={runPager.pageNumber}
+                pageSize={runPageSize}
+              />
             </div>
           </ResizablePanel>
 
@@ -1752,12 +2240,14 @@ function ScenarioEditor({
   scenario,
   allScenarios,
   allPhases,
+  projectId,
   projectSlug,
+  createScenario,
   removeScenario,
   updateScenario,
 }: {
   scenario: {
-    id: string
+    id?: string
     name: string
     slug: string
     status: "draft" | "active"
@@ -1779,8 +2269,10 @@ function ScenarioEditor({
     name: string
     order: number
   }>
+  projectId: Id<"projects">
   projectSlug: string
-  removeScenario: ReturnType<typeof useMutation<typeof api.scenarios.remove>>
+  createScenario: ReturnType<typeof useMutation<typeof api.scenarios.create>>
+  removeScenario?: ReturnType<typeof useMutation<typeof api.scenarios.remove>>
   updateScenario: ReturnType<typeof useMutation<typeof api.scenarios.update>>
 }) {
   const router = useRouter()
@@ -1789,6 +2281,7 @@ function ScenarioEditor({
   )
   const [form, setForm] = useState(() => createScenarioFormState(scenario))
   const [dependencySearch, setDependencySearch] = useState("")
+  const isDraftScenario = !scenario.id
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
 
@@ -1803,35 +2296,29 @@ function ScenarioEditor({
 
   return (
     <div className="grid h-full content-start gap-6 px-6 py-6">
-      <div className="flex items-start justify-between gap-6">
-        <div>
-          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-            Scenario editor
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-            {scenario.name}
-          </h2>
-        </div>
+      <div className="flex items-center justify-end gap-2">
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={async () => {
-              if (
-                !window.confirm(
-                  `Delete scenario "${scenario.name}"? Existing run history will be kept.`
-                )
-              ) {
-                return
-              }
+          {isDraftScenario ? null : (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={async () => {
+                if (
+                  !window.confirm(
+                    `Delete scenario "${scenario.name || "Untitled scenario"}"? Existing run history will be kept.`
+                  )
+                ) {
+                  return
+                }
 
-              await removeScenario({ scenarioId: scenario.id as never })
-              router.push(`/projects/${projectSlug}/scenarios?mode=edit`)
-            }}
-          >
-            <Trash2 />
-            Delete
-          </Button>
+                await removeScenario?.({ scenarioId: scenario.id as never })
+                router.push(`/projects/${projectSlug}/scenarios?mode=edit`)
+              }}
+            >
+              <Trash2 />
+              Delete
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -1845,6 +2332,25 @@ function ScenarioEditor({
             size="sm"
             disabled={!isDirty}
             onClick={async () => {
+              if (isDraftScenario) {
+                const created = await createScenario({
+                  projectId: projectId as never,
+                  name: form.name,
+                  slug: form.slug.trim() === "" ? undefined : form.slug,
+                  status: form.status,
+                  instructions: form.instructions,
+                  scoringPrompt: form.scoringPrompt,
+                  phaseId: form.phaseId ? (form.phaseId as never) : null,
+                  dependsOnScenarioIds: form.dependencyIds.map(
+                    (dependencyId) => dependencyId as never
+                  ),
+                })
+                router.replace(
+                  `/projects/${projectSlug}/scenarios/${created.slug}?mode=edit`
+                )
+                return
+              }
+
               const updated = await updateScenario({
                 scenarioId: scenario.id as never,
                 name: form.name,
@@ -1864,7 +2370,7 @@ function ScenarioEditor({
             }}
           >
             <Save />
-            Save
+            {isDraftScenario ? "Create" : "Save"}
           </Button>
         </div>
       </div>
@@ -1874,8 +2380,17 @@ function ScenarioEditor({
           <Field label="Name">
             <Input
               onChange={(event) =>
-                setForm((current) => ({ ...current, name: event.target.value }))
+                setForm((current) => {
+                  const name = event.target.value
+
+                  return {
+                    ...current,
+                    name,
+                    slug: getAutoScenarioSlug(name),
+                  }
+                })
               }
+              placeholder="Scenario name"
               value={form.name}
             />
           </Field>
@@ -1923,6 +2438,7 @@ function ScenarioEditor({
             onChange={(event) =>
               setForm((current) => ({ ...current, slug: event.target.value }))
             }
+            placeholder="scenario-slug"
             value={form.slug}
           />
         </Field>
@@ -1993,6 +2509,7 @@ function ScenarioEditor({
                 instructions: event.target.value,
               }))
             }
+            placeholder="Describe the user flow to execute."
             value={form.instructions}
           />
         </Field>
@@ -2006,6 +2523,7 @@ function ScenarioEditor({
                 scoringPrompt: event.target.value,
               }))
             }
+            placeholder="Explain how the outcome should be judged."
             value={form.scoringPrompt}
           />
         </Field>
@@ -2104,18 +2622,7 @@ function PhaseEditor({
 
   return (
     <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
-      <div className="flex items-start justify-between gap-6">
-        <div>
-          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-            Phase editor
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-            {phase.name}
-          </h2>
-          <p className="mt-2 text-sm leading-7 text-muted-foreground">
-            Phase {phase.order} in the linear execution chain.
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-2">
         <div className="flex items-center gap-2">
           <Button
             size="sm"

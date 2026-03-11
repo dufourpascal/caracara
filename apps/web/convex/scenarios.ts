@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel"
 
 import { mutation, query } from "./_generated/server"
 import {
+  deleteDependenciesTouchingScenarioIds,
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
   getExecutionPlan,
@@ -339,6 +340,9 @@ export const update = mutation({
       throw new Error("Selected phase does not belong to this project")
     }
 
+    const currentPhaseId = scenario.phaseId ?? null
+    const isChangingPhase = currentPhaseId !== selectedPhaseId
+
     await ctx.db.patch(scenario._id, {
       name: args.name,
       slug,
@@ -348,6 +352,11 @@ export const update = mutation({
       phaseId: selectedPhaseId,
       updatedAt: Date.now(),
     })
+
+    if (isChangingPhase) {
+      await deleteDependenciesTouchingScenarioIds(ctx, project._id, [scenario._id])
+    }
+
     await replaceScenarioDependencies(ctx, {
       projectId: project._id,
       scenarioId: scenario._id,

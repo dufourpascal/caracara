@@ -110,14 +110,20 @@ function formatWorkspaceLabel(workspace: WorkspaceKind) {
 
 function getScenarioModeHref({
   mode,
+  phaseFilter,
   projectSlug,
   selectedScenarioSlug,
 }: {
   mode: "edit" | "graph"
+  phaseFilter: string | null
   projectSlug: string
   selectedScenarioSlug?: string
 }) {
   const searchParams = new URLSearchParams({ mode })
+
+  if (phaseFilter) {
+    searchParams.set("phase", phaseFilter)
+  }
 
   if (mode === "edit" && selectedScenarioSlug) {
     searchParams.set("scenario", selectedScenarioSlug)
@@ -144,16 +150,40 @@ function getNewScenarioHref({
   return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
 }
 
+function getScenarioLibraryHref({
+  mode,
+  projectSlug,
+  phaseFilter,
+}: {
+  mode: "edit" | "graph"
+  projectSlug: string
+  phaseFilter: string | null
+}) {
+  const searchParams = new URLSearchParams({ mode })
+
+  if (phaseFilter) {
+    searchParams.set("phase", phaseFilter)
+  }
+
+  return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
+}
+
 function getScenarioSelectionHref({
   mode,
+  phaseFilter,
   projectSlug,
   scenarioSlug,
 }: {
   mode: "edit" | "graph"
+  phaseFilter: string | null
   projectSlug: string
   scenarioSlug: string
 }) {
   const searchParams = new URLSearchParams({ mode })
+
+  if (phaseFilter) {
+    searchParams.set("phase", phaseFilter)
+  }
 
   if (mode === "edit") {
     searchParams.set("scenario", scenarioSlug)
@@ -182,6 +212,30 @@ function getScenarioPhaseFilterLabel(filter: string | null, phases: Array<{
   }
 
   return `${phase.order}. ${phase.name}`
+}
+
+function normalizeScenarioPhaseFilter({
+  initialFilter,
+  phases,
+}: {
+  initialFilter: string | null | undefined
+  phases: Array<{ id: Id<"phases"> }>
+}) {
+  if (initialFilter === UNASSIGNED_SCENARIO_PHASE_FILTER) {
+    return UNASSIGNED_SCENARIO_PHASE_FILTER
+  }
+
+  if (initialFilter && phases.some((phase) => phase.id === initialFilter)) {
+    return initialFilter
+  }
+
+  return null
+}
+
+function getDefaultScenarioPhaseFilter(phases: Array<{ id: Id<"phases"> }>) {
+  return phases.length > 0
+    ? phases[0]?.id ?? null
+    : UNASSIGNED_SCENARIO_PHASE_FILTER
 }
 
 function getScenarioPhaseIdForCreation({
@@ -839,19 +893,26 @@ function AuthenticatedProjectWorkspace({
   const [runPageSize, setRunPageSize] = useState<10 | 20 | 50>(20)
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
-  const [selectedScenarioPhaseFilter, setSelectedScenarioPhaseFilter] =
-    useState<string | null>(initialScenarioPhaseFilter ?? null)
   const normalizedScenarioSearch = scenarioSearch.trim()
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
   const runSortDirection = runSortAscending ? "asc" : "desc"
+  const normalizedInitialScenarioPhaseFilter = normalizeScenarioPhaseFilter({
+    initialFilter: initialScenarioPhaseFilter,
+    phases: phases ?? [],
+  })
+  const selectedScenarioPhaseFilter =
+    normalizedInitialScenarioPhaseFilter ??
+    (phases === undefined ? null : getDefaultScenarioPhaseFilter(phases))
   const scenarioPager = useCursorPager(
-    `${selectedScenarioPhaseFilter ?? "all"}:${scenarioSortDirection}:${scenarioPageSize}:${normalizedScenarioSearch}`
+    `${selectedScenarioPhaseFilter ?? "pending"}:${scenarioSortDirection}:${scenarioPageSize}:${normalizedScenarioSearch}`
   )
   const runPager = useCursorPager(`${runSortDirection}:${runPageSize}`)
   const scenarioPage = useQuery(
     api.scenarios.listPageForProject,
-    !hasDeletedProject && workspace === "scenarios"
+    !hasDeletedProject &&
+      workspace === "scenarios" &&
+      selectedScenarioPhaseFilter !== null
       ? {
           projectSlug,
           phaseFilter: selectedScenarioPhaseFilter,
@@ -992,71 +1053,38 @@ function AuthenticatedProjectWorkspace({
   }, [phases, selectedPhaseId, workspace])
 
   useEffect(() => {
+    if (workspace !== "scenarios" || creatingScenario || !selectedScenarioSlug) {
+      return
+    }
+
+    if (selectedScenario === undefined) {
+      return
+    }
+
+    const scenarioPhaseFilter = selectedScenario
+      ? (selectedScenario.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER)
+      : null
+
     if (
-      workspace !== "scenarios" ||
-      !creatingScenario ||
-      initialScenarioPhaseFilter === undefined ||
-      phases === undefined
+      scenarioPhaseFilter !== null &&
+      scenarioPhaseFilter !== normalizedInitialScenarioPhaseFilter
     ) {
-      return
-    }
-
-    const normalizedFilter =
-      initialScenarioPhaseFilter === UNASSIGNED_SCENARIO_PHASE_FILTER
-        ? UNASSIGNED_SCENARIO_PHASE_FILTER
-        : phases.some((phase) => phase.id === initialScenarioPhaseFilter)
-          ? initialScenarioPhaseFilter
-          : null
-
-    if (selectedScenarioPhaseFilter !== normalizedFilter) {
-      setSelectedScenarioPhaseFilter(normalizedFilter)
+      router.replace(
+        getScenarioSelectionHref({
+          mode,
+          phaseFilter: scenarioPhaseFilter,
+          projectSlug,
+          scenarioSlug: selectedScenarioSlug,
+        })
+      )
     }
   }, [
     creatingScenario,
-    initialScenarioPhaseFilter,
-    phases,
-    selectedScenarioPhaseFilter,
-    workspace,
-  ])
-
-  useEffect(() => {
-    if (workspace !== "scenarios" || phases === undefined) {
-      return
-    }
-
-    if (!creatingScenario && selectedScenarioSlug) {
-      if (selectedScenario === undefined) {
-        return
-      }
-
-      if (selectedScenario) {
-        const nextFilter =
-          selectedScenario.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER
-
-        if (selectedScenarioPhaseFilter !== nextFilter) {
-          setSelectedScenarioPhaseFilter(nextFilter)
-        }
-        return
-      }
-    }
-
-    const hasValidSelectedFilter =
-      selectedScenarioPhaseFilter === UNASSIGNED_SCENARIO_PHASE_FILTER ||
-      (!!selectedScenarioPhaseFilter &&
-        phases.some((phase) => phase.id === selectedScenarioPhaseFilter))
-
-    if (!hasValidSelectedFilter) {
-      if (phases.length > 0) {
-        setSelectedScenarioPhaseFilter(phases[0]?.id ?? null)
-      } else {
-        setSelectedScenarioPhaseFilter(UNASSIGNED_SCENARIO_PHASE_FILTER)
-      }
-    }
-  }, [
-    creatingScenario,
-    phases,
+    mode,
+    normalizedInitialScenarioPhaseFilter,
+    projectSlug,
+    router,
     selectedScenario,
-    selectedScenarioPhaseFilter,
     selectedScenarioSlug,
     workspace,
   ])
@@ -1257,6 +1285,7 @@ function AuthenticatedProjectWorkspace({
                           router.push(
                             getScenarioModeHref({
                               mode: item,
+                              phaseFilter: selectedScenarioPhaseFilter,
                               projectSlug,
                               selectedScenarioSlug,
                             })
@@ -1384,15 +1413,20 @@ function AuthenticatedProjectWorkspace({
                             key={phase.id}
                             className="justify-between gap-3"
                             onSelect={() => {
-                              setSelectedScenarioPhaseFilter(phase.id)
                               if (
-                                selectedScenarioSlug &&
-                                selectedScenario?.phaseId !== phase.id
+                                !selectedScenarioSlug &&
+                                selectedScenarioPhaseFilter === phase.id
                               ) {
-                                router.push(
-                                  `/projects/${projectSlug}/scenarios?mode=${mode}`
-                                )
+                                return
                               }
+
+                              router.push(
+                                getScenarioLibraryHref({
+                                  mode,
+                                  projectSlug,
+                                  phaseFilter: phase.id,
+                                })
+                              )
                             }}
                           >
                             <span className="truncate text-sm">
@@ -1410,14 +1444,21 @@ function AuthenticatedProjectWorkspace({
                         <DropdownMenuItem
                           className="justify-between gap-3"
                           onSelect={() => {
-                            setSelectedScenarioPhaseFilter(
-                              UNASSIGNED_SCENARIO_PHASE_FILTER
-                            )
-                            if (selectedScenarioSlug && selectedScenario?.phaseId !== null) {
-                              router.push(
-                                `/projects/${projectSlug}/scenarios?mode=${mode}`
-                              )
+                            if (
+                              !selectedScenarioSlug &&
+                              selectedScenarioPhaseFilter ===
+                                UNASSIGNED_SCENARIO_PHASE_FILTER
+                            ) {
+                              return
                             }
+
+                            router.push(
+                              getScenarioLibraryHref({
+                                mode,
+                                projectSlug,
+                                phaseFilter: UNASSIGNED_SCENARIO_PHASE_FILTER,
+                              })
+                            )
                           }}
                         >
                           <span className="inline-flex items-center gap-2 text-sm">
@@ -1510,6 +1551,8 @@ function AuthenticatedProjectWorkspace({
                         router.push(
                           getScenarioSelectionHref({
                             mode,
+                            phaseFilter:
+                              scenario.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
                             projectSlug,
                             scenarioSlug: scenario.slug,
                           })
@@ -2372,6 +2415,8 @@ function ScenarioEditor({
                 router.replace(
                   getScenarioSelectionHref({
                     mode: "edit",
+                    phaseFilter:
+                      created.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
                     projectSlug,
                     scenarioSlug: created.slug,
                   })
@@ -2395,6 +2440,8 @@ function ScenarioEditor({
               router.replace(
                 getScenarioSelectionHref({
                   mode: "edit",
+                  phaseFilter:
+                    updated.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
                   projectSlug,
                   scenarioSlug: updated.slug,
                 })

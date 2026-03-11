@@ -8,6 +8,7 @@
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen --typecheck disable",
     "build": "next build",
+    "build:vercel": "convex deploy --cmd 'next build' --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

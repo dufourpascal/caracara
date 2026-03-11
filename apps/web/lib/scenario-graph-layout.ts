@@ -3,15 +3,34 @@ export type ScenarioGraphScenario = {
   slug: string
   name: string
   dependencyIds: string[]
+  phaseId?: string | null
+  phaseName?: string | null
+  phaseOrder?: number | null
 }
 
-export type ScenarioGraphLayoutNode = {
+export type ScenarioGraphLayoutPhaseNode = {
+  id: string
+  name: string
+  order: number
+  scenarioCount: number
+  position: {
+    x: number
+    y: number
+  }
+  size: {
+    width: number
+    height: number
+  }
+}
+
+export type ScenarioGraphLayoutScenarioNode = {
   id: string
   name: string
   slug: string
   dependencyCount: number
   dependentCount: number
   isRoot: boolean
+  phaseId: string
   position: {
     x: number
     y: number
@@ -20,6 +39,7 @@ export type ScenarioGraphLayoutNode = {
 
 export type ScenarioGraphLayoutEdge = {
   id: string
+  kind: "phase" | "scenario"
   source: string
   target: string
 }
@@ -36,7 +56,10 @@ const NODE_WIDTH = 184
 const NODE_HEIGHT = 72
 const HORIZONTAL_GAP = 64
 const VERTICAL_GAP = 104
-const PADDING = 48
+const PHASE_PADDING_X = 32
+const PHASE_PADDING_Y = 56
+const PHASE_GAP = 80
+const PHASE_HEADER_HEIGHT = 44
 
 function byScenarioName(
   scenarioById: Map<string, ScenarioGraphScenario>,
@@ -70,7 +93,7 @@ function getAverageIndex(ids: string[], orderById: Map<string, number>) {
   )
 }
 
-export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
+function buildPhaseScenarioLayout(scenarios: ScenarioGraphScenario[]) {
   const scenarioById = new Map(
     scenarios.map((scenario) => [scenario.id, scenario])
   )
@@ -141,31 +164,6 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
     }
   }
 
-  if (topoOrder.length < scenarios.length) {
-    const remainingIds = scenarios
-      .map((scenario) => scenario.id)
-      .filter((id) => !topoOrder.includes(id))
-      .sort((leftId, rightId) => byScenarioName(scenarioById, leftId, rightId))
-
-    for (const id of remainingIds) {
-      if (!depthById.has(id)) {
-        const dependencyIds = dependencyIdsById.get(id) ?? []
-        const depth =
-          dependencyIds.length === 0
-            ? 0
-            : Math.max(
-                ...dependencyIds.map(
-                  (dependencyId) => depthById.get(dependencyId) ?? 0
-                )
-              ) + 1
-
-        depthById.set(id, depth)
-      }
-
-      topoOrder.push(id)
-    }
-  }
-
   const orderedNodes: OrderedNode[] = topoOrder.map((id, sortIndex) => ({
     id,
     dependencyIds: dependencyIdsById.get(id) ?? [],
@@ -173,7 +171,6 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
     depth: depthById.get(id) ?? 0,
     sortIndex,
   }))
-
   const layers = new Map<number, OrderedNode[]>()
 
   for (const node of orderedNodes) {
@@ -203,7 +200,6 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
   for (let index = 1; index < sortedDepths.length; index += 1) {
     const depth = sortedDepths[index]!
     const priorDepth = sortedDepths[index - 1]!
-
     const layer = layers.get(depth)
 
     if (!layer) {
@@ -241,47 +237,6 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
     })
   }
 
-  for (let index = sortedDepths.length - 2; index >= 0; index -= 1) {
-    const depth = sortedDepths[index]!
-    const nextDepth = sortedDepths[index + 1]!
-
-    const layer = layers.get(depth)
-
-    if (!layer) {
-      continue
-    }
-
-    const nextOrder = new Map(
-      (layers.get(nextDepth) ?? []).map((node, layerIndex) => [
-        node.id,
-        layerIndex,
-      ])
-    )
-
-    layer.sort((left, right) => {
-      const leftAverage = getAverageIndex(left.dependentIds, nextOrder)
-      const rightAverage = getAverageIndex(right.dependentIds, nextOrder)
-
-      if (
-        leftAverage !== null &&
-        rightAverage !== null &&
-        leftAverage !== rightAverage
-      ) {
-        return leftAverage - rightAverage
-      }
-
-      if (leftAverage !== null && rightAverage === null) {
-        return -1
-      }
-
-      if (leftAverage === null && rightAverage !== null) {
-        return 1
-      }
-
-      return byScenarioName(scenarioById, left.id, right.id)
-    })
-  }
-
   const widestLayerWidth = Math.max(
     0,
     ...Array.from(layers.values()).map(
@@ -295,7 +250,7 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
     const layer = layers.get(depth) ?? []
     const layerWidth =
       layer.length * NODE_WIDTH + Math.max(layer.length - 1, 0) * HORIZONTAL_GAP
-    const startX = PADDING + (widestLayerWidth - layerWidth) / 2
+    const startX = PHASE_PADDING_X + (widestLayerWidth - layerWidth) / 2
 
     return layer.map((node, index) => {
       const scenario = scenarioById.get(node.id)
@@ -315,7 +270,10 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
         isRoot: node.dependencyIds.length === 0,
         position: {
           x: startX + index * (NODE_WIDTH + HORIZONTAL_GAP),
-          y: PADDING + depth * (NODE_HEIGHT + VERTICAL_GAP),
+          y:
+            PHASE_PADDING_Y +
+            PHASE_HEADER_HEIGHT +
+            depth * (NODE_HEIGHT + VERTICAL_GAP),
         },
       }
     })
@@ -324,10 +282,144 @@ export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
   const edges = scenarios.flatMap((scenario) =>
     (dependencyIdsById.get(scenario.id) ?? []).map((dependencyId) => ({
       id: `${dependencyId}->${scenario.id}`,
+      kind: "scenario" as const,
       source: dependencyId,
       target: scenario.id,
     }))
   )
 
-  return { edges, nodes }
+  const height =
+    sortedDepths.length === 0
+      ? PHASE_PADDING_Y * 2 + PHASE_HEADER_HEIGHT
+      : PHASE_PADDING_Y * 2 +
+        PHASE_HEADER_HEIGHT +
+        (sortedDepths.length - 1) * (NODE_HEIGHT + VERTICAL_GAP) +
+        NODE_HEIGHT
+  const width = widestLayerWidth + PHASE_PADDING_X * 2
+
+  return {
+    edges,
+    height,
+    nodes,
+    width,
+  }
+}
+
+export function buildScenarioGraphLayout(scenarios: ScenarioGraphScenario[]) {
+  const assignedScenarios = scenarios.filter(
+    (scenario) =>
+      scenario.phaseId !== null &&
+      scenario.phaseId !== undefined &&
+      scenario.phaseName !== null &&
+      scenario.phaseName !== undefined &&
+      scenario.phaseOrder !== null &&
+      scenario.phaseOrder !== undefined
+  ) as Array<
+    ScenarioGraphScenario & {
+      phaseId: string
+      phaseName: string
+      phaseOrder: number
+    }
+  >
+  const omittedScenarioCount = scenarios.length - assignedScenarios.length
+  const phaseMap = new Map<
+    string,
+    {
+      id: string
+      name: string
+      order: number
+      scenarios: ScenarioGraphScenario[]
+    }
+  >()
+
+  for (const scenario of assignedScenarios) {
+    const existing = phaseMap.get(scenario.phaseId)
+
+    if (existing) {
+      existing.scenarios.push(scenario)
+    } else {
+      phaseMap.set(scenario.phaseId, {
+        id: scenario.phaseId,
+        name: scenario.phaseName,
+        order: scenario.phaseOrder,
+        scenarios: [scenario],
+      })
+    }
+  }
+
+  const orderedPhases = Array.from(phaseMap.values()).sort(
+    (left, right) => left.order - right.order
+  )
+  const phaseNodes: ScenarioGraphLayoutPhaseNode[] = []
+  const scenarioNodes: ScenarioGraphLayoutScenarioNode[] = []
+  const edges: ScenarioGraphLayoutEdge[] = []
+  let currentY = 0
+  let widestPhaseWidth = 0
+
+  for (const phase of orderedPhases) {
+    const layout = buildPhaseScenarioLayout(phase.scenarios)
+    const phaseNode = {
+      id: phase.id,
+      name: phase.name,
+      order: phase.order,
+      scenarioCount: phase.scenarios.length,
+      position: {
+        x: 0,
+        y: currentY,
+      },
+      size: {
+        width: layout.width,
+        height: layout.height,
+      },
+    }
+
+    phaseNodes.push(phaseNode)
+    widestPhaseWidth = Math.max(widestPhaseWidth, layout.width)
+
+    scenarioNodes.push(
+      ...layout.nodes.map((node) => ({
+        ...node,
+        phaseId: phase.id,
+        position: {
+          x: node.position.x,
+          y: currentY + node.position.y,
+        },
+      }))
+    )
+    edges.push(...layout.edges)
+    currentY += layout.height + PHASE_GAP
+  }
+
+  for (const phaseNode of phaseNodes) {
+    phaseNode.position.x = (widestPhaseWidth - phaseNode.size.width) / 2
+  }
+
+  for (const scenarioNode of scenarioNodes) {
+    const phaseNode = phaseNodes.find((phase) => phase.id === scenarioNode.phaseId)
+
+    if (!phaseNode) {
+      continue
+    }
+
+    scenarioNode.position.x += phaseNode.position.x
+  }
+
+  for (let index = 1; index < phaseNodes.length; index += 1) {
+    const previousPhase = phaseNodes[index - 1]!
+    const currentPhase = phaseNodes[index]!
+
+    edges.push({
+      id: `${previousPhase.id}=>${currentPhase.id}`,
+      kind: "phase",
+      source: previousPhase.id,
+      target: currentPhase.id,
+    })
+  }
+
+  return {
+    edges,
+    omittedScenarioCount,
+    phaseNodes,
+    scenarioNodes,
+  }
 }

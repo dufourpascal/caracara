@@ -1,5 +1,11 @@
 import type { ScenarioStatus } from "@workspace/contracts"
 
+export type PhaseNode = {
+  id: string
+  name: string
+  order: number
+}
+
 export type ScenarioNode = {
   id: string
   slug: string
@@ -7,6 +13,9 @@ export type ScenarioNode = {
   status: ScenarioStatus
   instructions: string
   scoringPrompt: string
+  phaseId?: string | null
+  phaseName?: string | null
+  phaseOrder?: number | null
 }
 
 export type DependencyEdge = {
@@ -14,17 +23,29 @@ export type DependencyEdge = {
   dependsOnScenarioId: string
 }
 
+type ExecutionPhase = {
+  phase: PhaseNode
+  scenarios: ScenarioNode[]
+}
+
+function normalizePhaseId(value: string | null | undefined) {
+  return value ?? null
+}
+
 export function assertValidDependencies(
   scenarios: ScenarioNode[],
-  dependencies: DependencyEdge[]
+  dependencies: DependencyEdge[],
+  options?: {
+    strictPhaseBoundaries?: boolean
+  }
 ) {
-  const scenarioIds = new Set(scenarios.map((scenario) => scenario.id))
+  const scenarioById = new Map(scenarios.map((scenario) => [scenario.id, scenario]))
 
   for (const dependency of dependencies) {
-    if (
-      !scenarioIds.has(dependency.scenarioId) ||
-      !scenarioIds.has(dependency.dependsOnScenarioId)
-    ) {
+    const scenario = scenarioById.get(dependency.scenarioId)
+    const dependsOnScenario = scenarioById.get(dependency.dependsOnScenarioId)
+
+    if (!scenario || !dependsOnScenario) {
       throw new Error(
         "Dependencies must reference scenarios in the same project"
       )
@@ -33,9 +54,78 @@ export function assertValidDependencies(
     if (dependency.scenarioId === dependency.dependsOnScenarioId) {
       throw new Error("A scenario cannot depend on itself")
     }
+
+    const scenarioPhaseId = normalizePhaseId(scenario.phaseId)
+    const dependsOnPhaseId = normalizePhaseId(dependsOnScenario.phaseId)
+
+    if (scenarioPhaseId === null || dependsOnPhaseId === null) {
+      continue
+    }
+
+    if (scenarioPhaseId !== dependsOnPhaseId) {
+      if (options?.strictPhaseBoundaries) {
+        throw new Error(
+          "Dependencies are only allowed between scenarios in the same phase"
+        )
+      }
+
+      continue
+    }
   }
 
-  buildExecutionOrder(scenarios, dependencies)
+  const groupedScenarios = new Map<string, ScenarioNode[]>()
+
+  for (const scenario of scenarios) {
+    const phaseId = normalizePhaseId(scenario.phaseId)
+
+    if (!phaseId) {
+      continue
+    }
+
+    const current = groupedScenarios.get(phaseId) ?? []
+    current.push(scenario)
+    groupedScenarios.set(phaseId, current)
+  }
+
+  for (const phaseScenarios of groupedScenarios.values()) {
+    const scenarioIds = new Set(phaseScenarios.map((scenario) => scenario.id))
+    const phaseDependencies = dependencies.filter(
+      (dependency) =>
+        scenarioIds.has(dependency.scenarioId) &&
+        scenarioIds.has(dependency.dependsOnScenarioId)
+    )
+
+    buildExecutionOrder(phaseScenarios, phaseDependencies)
+  }
+}
+
+export function filterDependenciesForPhaseExecution(
+  scenarios: ScenarioNode[],
+  dependencies: DependencyEdge[]
+) {
+  const scenarioById = new Map(scenarios.map((scenario) => [scenario.id, scenario]))
+
+  return dependencies.filter((dependency) => {
+    const scenario = scenarioById.get(dependency.scenarioId)
+    const dependsOnScenario = scenarioById.get(dependency.dependsOnScenarioId)
+
+    if (!scenario || !dependsOnScenario) {
+      return false
+    }
+
+    if (scenario.id === dependsOnScenario.id) {
+      return false
+    }
+
+    const scenarioPhaseId = normalizePhaseId(scenario.phaseId)
+    const dependsOnPhaseId = normalizePhaseId(dependsOnScenario.phaseId)
+
+    if (scenarioPhaseId === null || dependsOnPhaseId === null) {
+      return false
+    }
+
+    return scenarioPhaseId === dependsOnPhaseId
+  })
 }
 
 export function buildExecutionOrder(
@@ -111,4 +201,71 @@ export function buildExecutionOrder(
   }
 
   return ordered
+}
+
+export function buildPhaseExecutionPlan(
+  phases: PhaseNode[],
+  scenarios: ScenarioNode[],
+  dependencies: DependencyEdge[],
+  options?: {
+    activeOnly?: boolean
+    ascending?: boolean
+  }
+) {
+  const selectedScenarios = options?.activeOnly
+    ? scenarios.filter((scenario) => scenario.status === "active")
+    : [...scenarios]
+  const phaseById = new Map(phases.map((phase) => [phase.id, phase]))
+  const assignedScenarios = selectedScenarios.filter((scenario) => {
+    const phaseId = normalizePhaseId(scenario.phaseId)
+    return phaseId !== null && phaseById.has(phaseId)
+  })
+  const scenarioIds = new Set(assignedScenarios.map((scenario) => scenario.id))
+  const relevantDependencies = dependencies.filter(
+    (dependency) =>
+      scenarioIds.has(dependency.scenarioId) &&
+      scenarioIds.has(dependency.dependsOnScenarioId)
+  )
+  const scenariosByPhase = new Map<string, ScenarioNode[]>()
+
+  for (const scenario of assignedScenarios) {
+    const phaseId = normalizePhaseId(scenario.phaseId)
+
+    if (!phaseId) {
+      continue
+    }
+
+    const current = scenariosByPhase.get(phaseId) ?? []
+    current.push(scenario)
+    scenariosByPhase.set(phaseId, current)
+  }
+
+  const orderedPhases = [...phases].sort((left, right) => left.order - right.order)
+  const executionPhases: ExecutionPhase[] = []
+
+  for (const phase of orderedPhases) {
+    const phaseScenarios = scenariosByPhase.get(phase.id) ?? []
+
+    if (phaseScenarios.length === 0) {
+      executionPhases.push({
+        phase,
+        scenarios: [],
+      })
+      continue
+    }
+
+    const phaseScenarioIds = new Set(phaseScenarios.map((scenario) => scenario.id))
+    const phaseDependencies = relevantDependencies.filter(
+      (dependency) =>
+        phaseScenarioIds.has(dependency.scenarioId) &&
+        phaseScenarioIds.has(dependency.dependsOnScenarioId)
+    )
+
+    executionPhases.push({
+      phase,
+      scenarios: buildExecutionOrder(phaseScenarios, phaseDependencies, options),
+    })
+  }
+
+  return executionPhases
 }

@@ -8,12 +8,60 @@ import {
 
 import type { Doc, Id } from "./_generated/dataModel"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
-import { assertValidDependencies, buildExecutionOrder } from "./domain"
+import {
+  assertValidDependencies,
+  buildPhaseExecutionPlan,
+  filterDependenciesForPhaseExecution,
+  type DependencyEdge,
+  type PhaseNode,
+  type ScenarioNode,
+} from "./domain"
 
 type Ctx = QueryCtx | MutationCtx
 
 function toTimestamp(value: number) {
   return Math.trunc(value)
+}
+
+function normalizePhaseId<T>(value: T | null | undefined) {
+  return value ?? null
+}
+
+function toPhaseNode(phase: Doc<"phases">): PhaseNode {
+  return {
+    id: phase._id,
+    name: phase.name,
+    order: phase.order,
+  }
+}
+
+function toScenarioNode(args: {
+  scenario: Doc<"scenarios">
+  phaseById: Map<string, Doc<"phases">>
+}): ScenarioNode {
+  const phaseId = normalizePhaseId(args.scenario.phaseId)
+  const phase = phaseId ? args.phaseById.get(phaseId) ?? null : null
+
+  return {
+    id: args.scenario._id,
+    slug: args.scenario.slug,
+    name: args.scenario.name,
+    status: args.scenario.status,
+    instructions: args.scenario.instructions,
+    scoringPrompt: args.scenario.scoringPrompt,
+    phaseId,
+    phaseName: phase?.name ?? null,
+    phaseOrder: phase?.order ?? null,
+  }
+}
+
+function toDependencyEdges(
+  dependencies: Array<Doc<"scenarioDependencies">>
+): DependencyEdge[] {
+  return dependencies.map((dependency) => ({
+    scenarioId: dependency.scenarioId,
+    dependsOnScenarioId: dependency.dependsOnScenarioId,
+  }))
 }
 
 export async function requireIdentity(ctx: Ctx) {
@@ -102,7 +150,22 @@ export function toProject(project: Doc<"projects">) {
   }
 }
 
-export function toScenario(scenario: Doc<"scenarios">) {
+export function toPhase(phase: Doc<"phases">, scenarioCount?: number) {
+  return {
+    id: phase._id,
+    projectId: phase.projectId,
+    name: phase.name,
+    order: phase.order,
+    scenarioCount,
+    createdAt: phase.createdAt,
+    updatedAt: phase.updatedAt,
+  }
+}
+
+export function toScenario(
+  scenario: Doc<"scenarios">,
+  phase?: Doc<"phases"> | null
+) {
   return {
     id: scenario._id,
     projectId: scenario.projectId,
@@ -111,6 +174,9 @@ export function toScenario(scenario: Doc<"scenarios">) {
     status: scenario.status,
     instructions: scenario.instructions,
     scoringPrompt: scenario.scoringPrompt,
+    phaseId: normalizePhaseId(scenario.phaseId),
+    phaseName: phase?.name ?? null,
+    phaseOrder: phase?.order ?? null,
     updatedAt: scenario.updatedAt,
   }
 }
@@ -124,6 +190,7 @@ export function toRun(run: Doc<"runs">) {
     status: run.status,
     mode: run.mode,
     requestedScenarioSlug: run.requestedScenarioSlug,
+    requestedPhaseOrder: run.requestedPhaseOrder ?? null,
     runnerType: run.runnerType,
     averageScore: run.averageScore,
     startedAt: run.startedAt,
@@ -146,6 +213,9 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     scenarioName: result.scenarioName,
     executionInstructions: result.executionInstructions,
     scoringPrompt: result.scoringPrompt,
+    phaseId: result.phaseId ?? null,
+    phaseName: result.phaseName ?? null,
+    phaseOrder: result.phaseOrder ?? null,
     sequenceIndex: result.sequenceIndex,
     status: result.status,
     runnerType: result.runnerType,
@@ -167,6 +237,13 @@ export async function getProjectScenarios(ctx: Ctx, projectId: Id<"projects">) {
     .collect()
 }
 
+export async function getProjectPhases(ctx: Ctx, projectId: Id<"projects">) {
+  return await ctx.db
+    .query("phases")
+    .withIndex("by_project_order", (query) => query.eq("projectId", projectId))
+    .collect()
+}
+
 export async function getProjectDependencies(
   ctx: Ctx,
   projectId: Id<"projects">
@@ -177,20 +254,108 @@ export async function getProjectDependencies(
     .collect()
 }
 
+export async function getPhaseById(ctx: Ctx, phaseId: Id<"phases">) {
+  const phase = await ctx.db.get(phaseId)
+
+  if (!phase) {
+    throw new ConvexError({
+      code: "not_found",
+      message: "Phase not found.",
+    })
+  }
+
+  return phase
+}
+
 export async function getScenarioDependencyIds(
   ctx: Ctx,
   projectId: Id<"projects">
 ) {
-  const dependencies = await getProjectDependencies(ctx, projectId)
+  const [phases, scenarios, dependencies] = await Promise.all([
+    getProjectPhases(ctx, projectId),
+    getProjectScenarios(ctx, projectId),
+    getProjectDependencies(ctx, projectId),
+  ])
+  const phaseById = new Map(phases.map((phase) => [phase._id, phase]))
+  const scenarioNodes = scenarios.map((scenario) =>
+    toScenarioNode({
+      scenario,
+      phaseById,
+    })
+  )
+  const validDependencies = filterDependenciesForPhaseExecution(
+    scenarioNodes,
+    toDependencyEdges(dependencies)
+  )
   const idsByScenario = new Map<string, string[]>()
 
-  for (const dependency of dependencies) {
+  for (const dependency of validDependencies) {
     const current = idsByScenario.get(dependency.scenarioId) ?? []
     current.push(dependency.dependsOnScenarioId)
     idsByScenario.set(dependency.scenarioId, current)
   }
 
   return idsByScenario
+}
+
+export async function getExecutionPlan(
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  options?: {
+    activeOnly?: boolean
+    ascending?: boolean
+  }
+) {
+  const [phases, scenarios, dependencies] = await Promise.all([
+    getProjectPhases(ctx, projectId),
+    getProjectScenarios(ctx, projectId),
+    getProjectDependencies(ctx, projectId),
+  ])
+  const phaseById = new Map(phases.map((phase) => [phase._id, phase]))
+  const scenarioNodes = scenarios.map((scenario) =>
+    toScenarioNode({
+      scenario,
+      phaseById,
+    })
+  )
+  const dependencyEdges = toDependencyEdges(dependencies)
+
+  assertValidDependencies(scenarioNodes, dependencyEdges, {
+    strictPhaseBoundaries: true,
+  })
+
+  const phasesWithScenarios = buildPhaseExecutionPlan(
+    phases.map(toPhaseNode),
+    scenarioNodes,
+    filterDependenciesForPhaseExecution(scenarioNodes, dependencyEdges),
+    options
+  )
+  const dependencyIds = new Map<string, string[]>()
+
+  for (const dependency of filterDependenciesForPhaseExecution(
+    scenarioNodes,
+    dependencyEdges
+  )) {
+    const current = dependencyIds.get(dependency.scenarioId) ?? []
+    current.push(dependency.dependsOnScenarioId)
+    dependencyIds.set(dependency.scenarioId, current)
+  }
+  const unassignedScenarioCount = scenarios.filter(
+    (scenario) => normalizePhaseId(scenario.phaseId) === null
+  ).length
+
+  return {
+    phases: phasesWithScenarios.map(({ phase, scenarios: orderedScenarios }) => ({
+      id: phase.id,
+      name: phase.name,
+      order: phase.order,
+      scenarios: orderedScenarios.map((scenario) => ({
+        ...scenario,
+        dependencyIds: [...(dependencyIds.get(scenario.id) ?? [])].sort(),
+      })),
+    })),
+    unassignedScenarioCount,
+  }
 }
 
 export async function getOrderedScenarios(
@@ -201,31 +366,59 @@ export async function getOrderedScenarios(
     ascending?: boolean
   }
 ) {
-  const scenarios = await getProjectScenarios(ctx, projectId)
-  const dependencies = await getProjectDependencies(ctx, projectId)
-  const scenarioNodes = scenarios.map((scenario) => ({
-    id: scenario._id,
-    slug: scenario.slug,
-    name: scenario.name,
-    status: scenario.status,
-    instructions: scenario.instructions,
-    scoringPrompt: scenario.scoringPrompt,
-  }))
-  const dependencyEdges = dependencies.map((dependency) => ({
-    scenarioId: dependency.scenarioId,
-    dependsOnScenarioId: dependency.dependsOnScenarioId,
-  }))
+  const [phases, scenarios, dependencies] = await Promise.all([
+    getProjectPhases(ctx, projectId),
+    getProjectScenarios(ctx, projectId),
+    getProjectDependencies(ctx, projectId),
+  ])
+  const phaseById = new Map(phases.map((phase) => [phase._id, phase]))
+  const scenarioNodes = scenarios.map((scenario) =>
+    toScenarioNode({
+      scenario,
+      phaseById,
+    })
+  )
+  const dependencyEdges = toDependencyEdges(dependencies)
 
   assertValidDependencies(scenarioNodes, dependencyEdges)
+  const filteredDependencies = filterDependenciesForPhaseExecution(
+    scenarioNodes,
+    dependencyEdges
+  )
 
-  const ordered = buildExecutionOrder(scenarioNodes, dependencyEdges, options)
+  const executionPlan = buildPhaseExecutionPlan(
+    phases.map(toPhaseNode),
+    scenarioNodes,
+    filteredDependencies,
+    options
+  )
+  const dependencyIds = new Map<string, string[]>()
 
-  const dependencyIds = await getScenarioDependencyIds(ctx, projectId)
+  for (const dependency of filteredDependencies) {
+    const current = dependencyIds.get(dependency.scenarioId) ?? []
+    current.push(dependency.dependsOnScenarioId)
+    dependencyIds.set(dependency.scenarioId, current)
+  }
+  const orderedAssigned = executionPlan.flatMap((phase) =>
+    phase.scenarios.map((scenario) => ({
+      ...scenario,
+      dependencyIds: [...(dependencyIds.get(scenario.id) ?? [])].sort(),
+    }))
+  )
+  const assignedIds = new Set(orderedAssigned.map((scenario) => scenario.id))
+  const compareUnassigned = (left: ScenarioNode, right: ScenarioNode) =>
+    options?.ascending === false
+      ? right.slug.localeCompare(left.slug)
+      : left.slug.localeCompare(right.slug)
+  const unassigned = scenarioNodes
+    .filter((scenario) => !assignedIds.has(scenario.id))
+    .sort(compareUnassigned)
+    .map((scenario) => ({
+      ...scenario,
+      dependencyIds: [],
+    }))
 
-  return ordered.map((scenario) => ({
-    ...scenario,
-    dependencyIds: [...(dependencyIds.get(scenario.id) ?? [])].sort(),
-  }))
+  return [...orderedAssigned, ...unassigned]
 }
 
 export async function ensureUniqueProjectSlug(
@@ -260,6 +453,24 @@ export async function ensureUniqueScenarioSlug(
   return createUniqueSlug(normalizeSlug(desiredSlug), existingSlugs)
 }
 
+export async function ensureScenarioDependenciesReusable(
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  scenarioIds: Id<"scenarios">[]
+) {
+  const scenarios = await getProjectScenarios(ctx, projectId)
+  const scenarioIdSet = new Set(scenarios.map((scenario) => scenario._id))
+
+  for (const scenarioId of scenarioIds) {
+    if (!scenarioIdSet.has(scenarioId)) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Dependencies must reference scenarios in the same project.",
+      })
+    }
+  }
+}
+
 export async function replaceScenarioDependencies(
   ctx: MutationCtx,
   args: {
@@ -268,6 +479,12 @@ export async function replaceScenarioDependencies(
     dependsOnScenarioIds: Id<"scenarios">[]
   }
 ) {
+  await ensureScenarioDependenciesReusable(
+    ctx,
+    args.projectId,
+    args.dependsOnScenarioIds
+  )
+
   const existing = await ctx.db
     .query("scenarioDependencies")
     .withIndex("by_scenario", (query) =>
@@ -288,11 +505,47 @@ export async function replaceScenarioDependencies(
   }
 }
 
+export async function deleteDependenciesTouchingScenarioIds(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+  scenarioIds: Id<"scenarios">[]
+) {
+  const idSet = new Set(scenarioIds)
+  const dependencies = await getProjectDependencies(ctx, projectId)
+
+  for (const dependency of dependencies) {
+    if (
+      idSet.has(dependency.scenarioId) ||
+      idSet.has(dependency.dependsOnScenarioId)
+    ) {
+      await ctx.db.delete(dependency._id)
+    }
+  }
+}
+
+export async function normalizeProjectPhaseOrders(
+  ctx: MutationCtx,
+  projectId: Id<"projects">
+) {
+  const phases = await getProjectPhases(ctx, projectId)
+
+  for (const [index, phase] of phases.entries()) {
+    const nextOrder = index + 1
+
+    if (phase.order !== nextOrder) {
+      await ctx.db.patch(phase._id, {
+        order: nextOrder,
+        updatedAt: Date.now(),
+      })
+    }
+  }
+}
+
 export async function validateProjectDependencyGraph(
   ctx: Ctx,
   projectId: Id<"projects">
 ) {
-  await getOrderedScenarios(ctx, projectId)
+  await getExecutionPlan(ctx, projectId)
 }
 
 export async function getScenarioBySlug(
@@ -344,6 +597,13 @@ export async function ensureScenarioOwnership(
   return { project, scenario }
 }
 
+export async function ensurePhaseOwnership(ctx: Ctx, phaseId: Id<"phases">) {
+  const phase = await getPhaseById(ctx, phaseId)
+  const { project } = await requireProjectOwnerById(ctx, phase.projectId)
+
+  return { project, phase }
+}
+
 export async function ensureRunOwnership(ctx: Ctx, runId: Id<"runs">) {
   const run = await getRunById(ctx, runId)
   const { identity, project } = await requireProjectOwnerById(
@@ -382,12 +642,15 @@ export async function deleteProjectCascade(
   ctx: MutationCtx,
   projectId: Id<"projects">
 ) {
-  const dependencies = await getProjectDependencies(ctx, projectId)
-  const scenarios = await getProjectScenarios(ctx, projectId)
-  const runs = await ctx.db
-    .query("runs")
-    .withIndex("by_project", (query) => query.eq("projectId", projectId))
-    .collect()
+  const [dependencies, phases, scenarios, runs] = await Promise.all([
+    getProjectDependencies(ctx, projectId),
+    getProjectPhases(ctx, projectId),
+    getProjectScenarios(ctx, projectId),
+    ctx.db
+      .query("runs")
+      .withIndex("by_project", (query) => query.eq("projectId", projectId))
+      .collect(),
+  ])
 
   let deletedResultCount = 0
 
@@ -404,10 +667,15 @@ export async function deleteProjectCascade(
     await ctx.db.delete(scenario._id)
   }
 
+  for (const phase of phases) {
+    await ctx.db.delete(phase._id)
+  }
+
   await ctx.db.delete(projectId)
 
   return {
     deletedDependencyCount: dependencies.length,
+    deletedPhaseCount: phases.length,
     deletedProjectId: projectId,
     deletedResultCount,
     deletedRunCount: runs.length,

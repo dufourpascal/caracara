@@ -20,10 +20,20 @@ export default defineSchema({
     status: v.union(v.literal("draft"), v.literal("active")),
     instructions: v.string(),
     scoringPrompt: v.string(),
+    phaseId: v.optional(v.union(v.null(), v.id("phases"))),
     updatedAt: v.number(),
   })
     .index("by_project", ["projectId"])
     .index("by_project_slug", ["projectId", "slug"]),
+  phases: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_order", ["projectId", "order"]),
   scenarioDependencies: defineTable({
     projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
@@ -42,8 +52,14 @@ export default defineSchema({
       v.literal("failed"),
       v.literal("interrupted")
     ),
-    mode: v.union(v.literal("all"), v.literal("single")),
+    mode: v.union(
+      v.literal("all"),
+      v.literal("single"),
+      v.literal("phase"),
+      v.literal("through_phase")
+    ),
     requestedScenarioSlug: v.union(v.null(), v.string()),
+    requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     runnerType: v.union(v.null(), v.literal("codex"), v.literal("claude-code")),
     averageScore: v.union(v.null(), v.number()),
     startedAt: v.number(),
@@ -59,6 +75,9 @@ export default defineSchema({
     scenarioName: v.string(),
     executionInstructions: v.string(),
     scoringPrompt: v.string(),
+    phaseId: v.optional(v.union(v.null(), v.string())),
+    phaseName: v.optional(v.union(v.null(), v.string())),
+    phaseOrder: v.optional(v.union(v.null(), v.number())),
     sequenceIndex: v.number(),
     status: v.union(
       v.literal("running"),

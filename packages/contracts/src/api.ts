@@ -3,6 +3,7 @@ import { z } from "zod"
 import { API_VERSION, MIN_SUPPORTED_CLI_VERSION } from "./constants.js"
 import {
   nullableStringSchema,
+  phaseSchema,
   projectSchema,
   runModeSchema,
   runSchema,
@@ -78,23 +79,41 @@ export const orderedScenarioSchema = scenarioSchema
     status: true,
     instructions: true,
     scoringPrompt: true,
+    phaseId: true,
+    phaseName: true,
+    phaseOrder: true,
   })
   .extend({
     dependencyIds: z.array(z.string()),
+  })
+
+export const runnablePhaseSchema = phaseSchema
+  .pick({
+    id: true,
+    name: true,
+    order: true,
+  })
+  .extend({
+    scenarios: z.array(orderedScenarioSchema),
   })
 
 export const projectDetailResponseSchema = z.object({
   project: projectSchema,
 })
 
-export const orderedActiveScenariosResponseSchema = z.object({
+export const phaseListResponseSchema = z.object({
+  phases: z.array(phaseSchema),
+})
+
+export const executionPlanResponseSchema = z.object({
   project: projectSchema.pick({
     id: true,
     name: true,
     slug: true,
     projectPrompt: true,
   }),
-  scenarios: z.array(orderedScenarioSchema),
+  phases: z.array(runnablePhaseSchema),
+  unassignedScenarioCount: z.number().int().nonnegative(),
 })
 
 export const singleScenarioResponseSchema = z.object({
@@ -111,6 +130,7 @@ export const createRunRequestSchema = z.object({
   mode: runModeSchema,
   runnerType: runnerTypeSchema,
   requestedScenarioSlug: slugSchema.nullable().optional(),
+  requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   startedAt: z.number().int().positive(),
 })
 
@@ -122,6 +142,7 @@ export const createRunResponseSchema = z.object({
     mode: true,
     runnerType: true,
     requestedScenarioSlug: true,
+    requestedPhaseOrder: true,
     startedAt: true,
   }),
 })
@@ -225,3 +246,4 @@ export type ApiError = z.infer<typeof apiErrorSchema>
 export type CliConfig = z.infer<typeof cliConfigSchema>
 export type ProjectSummary = z.infer<typeof projectSummarySchema>
 export type OrderedScenario = z.infer<typeof orderedScenarioSchema>
+export type RunnablePhase = z.infer<typeof runnablePhaseSchema>

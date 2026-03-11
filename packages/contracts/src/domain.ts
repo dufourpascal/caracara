@@ -17,7 +17,12 @@ export const scenarioResultStatusSchema = z.enum([
   "interrupted",
 ])
 export const runnerTypeSchema = z.enum(["codex", "claude-code"])
-export const runModeSchema = z.enum(["all", "single"])
+export const runModeSchema = z.enum([
+  "all",
+  "single",
+  "phase",
+  "through_phase",
+])
 
 export const timestampSchema = z.number().int().nonnegative()
 export const slugSchema = z
@@ -38,6 +43,16 @@ export const projectSchema = z.object({
   updatedAt: timestampSchema,
 })
 
+export const phaseSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string().min(1).max(120),
+  order: z.number().int().positive(),
+  scenarioCount: z.number().int().nonnegative().optional(),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+})
+
 export const scenarioSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -46,6 +61,9 @@ export const scenarioSchema = z.object({
   status: scenarioStatusSchema,
   instructions: z.string().min(1).max(20_000),
   scoringPrompt: z.string().min(1).max(20_000),
+  phaseId: z.string().nullable().optional(),
+  phaseName: z.string().min(1).max(120).nullable().optional(),
+  phaseOrder: z.number().int().positive().nullable().optional(),
   updatedAt: timestampSchema,
 })
 
@@ -65,6 +83,7 @@ export const runSchema = z.object({
   status: runStatusSchema,
   mode: runModeSchema,
   requestedScenarioSlug: slugSchema.nullable(),
+  requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   runnerType: runnerTypeSchema.nullable(),
   averageScore: z.number().min(0).max(1).nullable(),
   startedAt: timestampSchema,
@@ -81,6 +100,9 @@ export const scenarioResultSchema = z.object({
   scenarioName: z.string().min(1).max(120),
   executionInstructions: z.string().min(1).max(20_000),
   scoringPrompt: z.string().min(1).max(20_000),
+  phaseId: z.string().nullable().optional(),
+  phaseName: z.string().min(1).max(120).nullable().optional(),
+  phaseOrder: z.number().int().positive().nullable().optional(),
   sequenceIndex: z.number().int().nonnegative(),
   status: scenarioResultStatusSchema,
   runnerType: runnerTypeSchema,
@@ -100,6 +122,7 @@ export type ScenarioResultStatus = z.infer<typeof scenarioResultStatusSchema>
 export type RunnerType = z.infer<typeof runnerTypeSchema>
 export type RunMode = z.infer<typeof runModeSchema>
 export type Project = z.infer<typeof projectSchema>
+export type Phase = z.infer<typeof phaseSchema>
 export type Scenario = z.infer<typeof scenarioSchema>
 export type ScenarioDependency = z.infer<typeof scenarioDependencySchema>
 export type Run = z.infer<typeof runSchema>

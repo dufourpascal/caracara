@@ -48,6 +48,7 @@ import {
   ResizablePanelGroup,
 } from "@workspace/ui/components/resizable"
 import { Textarea } from "@workspace/ui/components/textarea"
+import { SortableList } from "@workspace/ui/components/sortable-list"
 import {
   ToggleGroup,
   ToggleGroupItem,
@@ -62,7 +63,7 @@ import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
 
-type WorkspaceKind = "project" | "scenarios" | "runs"
+type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
 
 function getWorkspaceHref({
   mode,
@@ -78,6 +79,8 @@ function getWorkspaceHref({
       return `/projects/${projectSlug}/project`
     case "runs":
       return `/projects/${projectSlug}/runs`
+    case "phases":
+      return `/projects/${projectSlug}/phases`
     case "scenarios":
       return `/projects/${projectSlug}/scenarios?mode=${mode}`
   }
@@ -121,12 +124,19 @@ function createProjectFormState(project: {
   }
 }
 
+function createPhaseFormState(phase: { name: string }) {
+  return {
+    name: phase.name,
+  }
+}
+
 function createScenarioFormState(scenario: {
   name: string
   slug: string
   status: "draft" | "active"
   instructions: string
   scoringPrompt: string
+  phaseId?: string | null
   dependencyIds: string[]
 }) {
   return {
@@ -135,6 +145,7 @@ function createScenarioFormState(scenario: {
     status: scenario.status,
     instructions: scenario.instructions,
     scoringPrompt: scenario.scoringPrompt,
+    phaseId: scenario.phaseId ?? null,
     dependencyIds: scenario.dependencyIds,
   }
 }
@@ -581,10 +592,18 @@ function AuthenticatedProjectWorkspace({
   )
   const updateProject = useMutation(api.projects.update)
   const removeProject = useMutation(api.projects.remove)
+  const createPhase = useMutation(api.phases.create)
+  const updatePhase = useMutation(api.phases.update)
+  const reorderPhases = useMutation(api.phases.reorder)
+  const removePhase = useMutation(api.phases.remove)
   const createScenario = useMutation(api.scenarios.create)
   const updateScenario = useMutation(api.scenarios.update)
   const removeScenario = useMutation(api.scenarios.remove)
   const removeRun = useMutation(api.runs.remove)
+  const phases = useQuery(
+    api.phases.listForProject,
+    hasDeletedProject ? "skip" : { projectSlug }
+  )
   const scenarios = useQuery(
     api.scenarios.listForProject,
     hasDeletedProject
@@ -616,6 +635,7 @@ function AuthenticatedProjectWorkspace({
   const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
   const [runSortAscending, setRunSortAscending] = useState(false)
   const [isDeletingRun, setIsDeletingRun] = useState(false)
+  const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
   const scenarioListPanelId = getPanelLayoutToken({
     projectSlug,
     workspace: "scenarios",
@@ -680,6 +700,23 @@ function AuthenticatedProjectWorkspace({
     }
   )
 
+  useEffect(() => {
+    if (workspace !== "phases" || phases === undefined) {
+      return
+    }
+
+    if (phases.length === 0) {
+      if (selectedPhaseId !== null) {
+        setSelectedPhaseId(null)
+      }
+      return
+    }
+
+    if (!selectedPhaseId || !phases.some((phase) => phase.id === selectedPhaseId)) {
+      setSelectedPhaseId(phases[0]?.id ?? null)
+    }
+  }, [phases, selectedPhaseId, workspace])
+
   if (hasDeletedProject) {
     return (
       <main className="flex min-h-svh items-center justify-center bg-background px-5 py-6 text-sm text-muted-foreground sm:px-6">
@@ -700,11 +737,9 @@ function AuthenticatedProjectWorkspace({
     scenarios?.filter((scenario) =>
       scenario.name.toLowerCase().includes(scenarioSearch.toLowerCase())
     ) ?? []
-  const orderedScenarios = [...filteredScenarios].sort((left, right) =>
-    scenarioSortAscending
-      ? left.slug.localeCompare(right.slug)
-      : right.slug.localeCompare(left.slug)
-  )
+  const orderedScenarios = scenarioSortAscending
+    ? [...filteredScenarios]
+    : [...filteredScenarios].reverse()
   const orderedRuns = [...(runs ?? [])].sort((left, right) =>
     runSortAscending
       ? left.startedAt - right.startedAt
@@ -718,7 +753,7 @@ function AuthenticatedProjectWorkspace({
     }>
   >((groups, run) => {
     const dayKey = getLocalDayToken(run.startedAt)
-    const currentGroup = groups.at(-1)
+    const currentGroup = groups.length > 0 ? groups[groups.length - 1] : null
 
     if (!currentGroup || currentGroup.dayKey !== dayKey) {
       groups.push({
@@ -732,6 +767,8 @@ function AuthenticatedProjectWorkspace({
     currentGroup.runs.push(run)
     return groups
   }, [])
+  const selectedPhase =
+    phases?.find((phase) => phase.id === selectedPhaseId) ?? null
 
   return (
     <main className="flex min-h-svh flex-col bg-background">
@@ -791,7 +828,7 @@ function AuthenticatedProjectWorkspace({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                {(["scenarios", "runs", "project"] as const).map((item) => (
+                {(["scenarios", "phases", "runs", "project"] as const).map((item) => (
                   <DropdownMenuItem
                     key={item}
                     onSelect={() =>
@@ -919,6 +956,10 @@ function AuthenticatedProjectWorkspace({
                           instructions: "Describe the user flow to execute.",
                           scoringPrompt:
                             "Explain whether the outcome met expectations.",
+                          phaseId:
+                            phases && phases.length > 0
+                              ? phases[phases.length - 1]?.id ?? null
+                              : null,
                           dependsOnScenarioIds: [],
                         })
                         router.push(
@@ -970,6 +1011,10 @@ function AuthenticatedProjectWorkspace({
                                 "Describe the user flow to execute.",
                               scoringPrompt:
                                 "Explain whether the outcome met expectations.",
+                              phaseId:
+                                phases && phases.length > 0
+                                  ? phases[phases.length - 1]?.id ?? null
+                                  : null,
                               dependsOnScenarioIds: [],
                             })
                             router.push(
@@ -999,7 +1044,7 @@ function AuthenticatedProjectWorkspace({
                     <button
                       key={scenario.id}
                       className={cn(
-                        "grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors",
+                        "grid w-full grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors",
                         scenario.slug === selectedScenarioSlug
                           ? "bg-muted/40"
                           : "hover:bg-muted/20"
@@ -1015,6 +1060,18 @@ function AuthenticatedProjectWorkspace({
                         <span className="block truncate text-sm font-medium text-foreground">
                           {scenario.name}
                         </span>
+                        <span className="mt-1 flex items-center gap-2">
+                          {scenario.phaseId ? (
+                            <Badge className="px-1.5 py-0 text-[10px]" variant="outline">
+                              {scenario.phaseOrder}. {scenario.phaseName}
+                            </Badge>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                              <AlertCircle className="size-3.5" />
+                              Unassigned
+                            </span>
+                          )}
+                        </span>
                       </span>
                       {scenario.dependencyIds.length > 0 ? (
                         <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
@@ -1023,6 +1080,17 @@ function AuthenticatedProjectWorkspace({
                         </span>
                       ) : (
                         <span aria-hidden className="w-0" />
+                      )}
+                      {scenario.phaseId ? (
+                        <span aria-hidden className="w-0" />
+                      ) : (
+                        <span
+                          aria-label="Scenario will not run in phase execution"
+                          className="inline-flex items-center text-amber-700 dark:text-amber-300"
+                          title="This scenario has no phase and will not run in phase execution."
+                        >
+                          <AlertCircle className="size-4" />
+                        </span>
                       )}
                       <ScenarioStatusIcon status={scenario.status} />
                     </button>
@@ -1040,6 +1108,7 @@ function AuthenticatedProjectWorkspace({
             ) : selectedScenario ? (
               <ScenarioEditor
                 allScenarios={scenarios ?? []}
+                allPhases={phases ?? []}
                 key={`${selectedScenario.id}:${selectedScenario.updatedAt}`}
                 removeScenario={removeScenario}
                 projectSlug={projectSlug}
@@ -1051,6 +1120,130 @@ function AuthenticatedProjectWorkspace({
                 description="Choose a scenario from the library to edit instructions, scoring, and dependencies without leaving the current workspace."
                 icon={GitBranch}
                 title="Select a scenario"
+              />
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : workspace === "phases" ? (
+        <ResizablePanelGroup
+          className="flex-1"
+          defaultLayout={scenarioPanelLayout.defaultLayout}
+          onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
+          orientation="horizontal"
+        >
+          <ResizablePanel
+            defaultSize="28%"
+            id={scenarioListPanelId}
+            maxSize="38%"
+            minSize="20%"
+          >
+            <div className="flex h-full flex-col border-r border-border">
+              <div className="border-b border-border bg-muted/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                    Phase registry
+                  </p>
+                  <Button
+                    size="icon-sm"
+                    onClick={async () => {
+                      const created = await createPhase({
+                        projectId: project.id as never,
+                        name: `Phase ${(phases?.length ?? 0) + 1}`,
+                      })
+                      setSelectedPhaseId(created.id)
+                    }}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto px-3 py-3">
+                {phases === undefined ? (
+                  <div className="px-2 py-2 text-sm text-muted-foreground">
+                    Loading phases...
+                  </div>
+                ) : phases.length === 0 ? (
+                  <NavigationEmptyState
+                    description="Create the first phase to organize scenario execution into ordered stages."
+                    icon={Target}
+                    title="No phases yet"
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          const created = await createPhase({
+                            projectId: project.id as never,
+                            name: "Phase 1",
+                          })
+                          setSelectedPhaseId(created.id)
+                        }}
+                      >
+                        <Plus />
+                        Create phase
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <SortableList
+                    items={phases}
+                    onReorder={async (items) => {
+                      const updated = await reorderPhases({
+                        projectId: project.id as never,
+                        phaseIds: items.map((item) => item.id as never),
+                      })
+                      if (!selectedPhaseId) {
+                        setSelectedPhaseId(updated[0]?.id ?? null)
+                      }
+                    }}
+                    renderItem={({ dragHandle, isDragging, item }) => (
+                      <button
+                        className={cn(
+                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border border-border px-3 py-3 text-left transition-colors",
+                          item.id === selectedPhaseId
+                            ? "bg-muted/40"
+                            : "bg-background hover:bg-muted/20",
+                          isDragging && "opacity-80"
+                        )}
+                        onClick={() => setSelectedPhaseId(item.id)}
+                        type="button"
+                      >
+                        {dragHandle}
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            {item.name}
+                          </span>
+                          <span className="mt-1 block text-[11px] text-muted-foreground">
+                            Phase {item.order}
+                          </span>
+                        </span>
+                        <Badge className="font-mono" variant="outline">
+                          {item.scenarioCount ?? 0}
+                        </Badge>
+                      </button>
+                    )}
+                  />
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
+            {selectedPhase ? (
+              <PhaseEditor
+                allScenarios={scenarios ?? []}
+                key={`${selectedPhase.id}:${selectedPhase.updatedAt}`}
+                phase={selectedPhase}
+                removePhase={removePhase}
+                setSelectedPhaseId={setSelectedPhaseId}
+                updatePhase={updatePhase}
+              />
+            ) : (
+              <BlankDetailPanel
+                description="Choose a phase to rename it, inspect its assigned scenarios, or change the execution order by dragging phases in the list."
+                icon={Target}
+                title="Select a phase"
               />
             )}
           </ResizablePanel>
@@ -1558,6 +1751,7 @@ function ProjectSettingsPanel({
 function ScenarioEditor({
   scenario,
   allScenarios,
+  allPhases,
   projectSlug,
   removeScenario,
   updateScenario,
@@ -1569,12 +1763,21 @@ function ScenarioEditor({
     status: "draft" | "active"
     instructions: string
     scoringPrompt: string
+    phaseId?: string | null
+    phaseName?: string | null
+    phaseOrder?: number | null
     dependencyIds: string[]
   }
   allScenarios: Array<{
     id: string
     name: string
     slug: string
+    phaseId?: string | null
+  }>
+  allPhases: Array<{
+    id: string
+    name: string
+    order: number
   }>
   projectSlug: string
   removeScenario: ReturnType<typeof useMutation<typeof api.scenarios.remove>>
@@ -1592,8 +1795,11 @@ function ScenarioEditor({
   const visibleDependencies = allScenarios.filter(
     (candidate) =>
       candidate.id !== scenario.id &&
+      candidate.phaseId === form.phaseId &&
       candidate.name.toLowerCase().includes(dependencySearch.toLowerCase())
   )
+  const selectedPhase =
+    allPhases.find((phase) => phase.id === form.phaseId) ?? null
 
   return (
     <div className="grid h-full content-start gap-6 px-6 py-6">
@@ -1646,6 +1852,7 @@ function ScenarioEditor({
                 status: form.status,
                 instructions: form.instructions,
                 scoringPrompt: form.scoringPrompt,
+                phaseId: form.phaseId ? (form.phaseId as never) : null,
                 dependsOnScenarioIds: form.dependencyIds.map(
                   (dependencyId) => dependencyId as never
                 ),
@@ -1720,6 +1927,63 @@ function ScenarioEditor({
           />
         </Field>
 
+        <Field label="Phase">
+          <div className="grid gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button className="justify-between" variant="outline">
+                  <span>
+                    {selectedPhase
+                      ? `${selectedPhase.order}. ${selectedPhase.name}`
+                      : "Unassigned"}
+                  </span>
+                  <ChevronsUpDown className="size-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem
+                  onSelect={() =>
+                    setForm((current) => ({
+                      ...current,
+                      phaseId: null,
+                      dependencyIds: [],
+                    }))
+                  }
+                >
+                  Unassigned
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="my-1 h-px bg-border" />
+                {allPhases.map((phase) => (
+                  <DropdownMenuItem
+                    key={phase.id}
+                    onSelect={() =>
+                      setForm((current) => ({
+                        ...current,
+                        phaseId: phase.id,
+                        dependencyIds: current.dependencyIds.filter((dependencyId) =>
+                          allScenarios.some(
+                            (candidate) =>
+                              candidate.id === dependencyId &&
+                              candidate.phaseId === phase.id
+                          )
+                        ),
+                      }))
+                    }
+                  >
+                    {phase.order}. {phase.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {form.phaseId ? null : (
+              <p className="text-sm text-amber-700 dark:text-amber-300">
+                This scenario is not assigned to a phase. It will appear in the
+                library, but it will not run in normal phase execution.
+              </p>
+            )}
+          </div>
+        </Field>
+
         <Field label="Execution instructions">
           <Textarea
             className="min-h-48"
@@ -1759,7 +2023,15 @@ function ScenarioEditor({
               />
             </div>
             <div className="max-h-56 overflow-auto">
-              {visibleDependencies.map((dependency) => {
+              {!form.phaseId ? (
+                <div className="px-3 py-3 text-sm text-muted-foreground">
+                  Assign this scenario to a phase before selecting dependencies.
+                </div>
+              ) : visibleDependencies.length === 0 ? (
+                <div className="px-3 py-3 text-sm text-muted-foreground">
+                  No same-phase scenarios match the current filter.
+                </div>
+              ) : visibleDependencies.map((dependency) => {
                 const checked = form.dependencyIds.includes(dependency.id)
 
                 return (
@@ -1796,6 +2068,143 @@ function ScenarioEditor({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function PhaseEditor({
+  phase,
+  allScenarios,
+  removePhase,
+  setSelectedPhaseId,
+  updatePhase,
+}: {
+  phase: {
+    id: string
+    name: string
+    order: number
+    updatedAt: number
+  }
+  allScenarios: Array<{
+    id: string
+    name: string
+    slug: string
+    phaseId?: string | null
+  }>
+  removePhase: ReturnType<typeof useMutation<typeof api.phases.remove>>
+  setSelectedPhaseId: (value: string | null) => void
+  updatePhase: ReturnType<typeof useMutation<typeof api.phases.update>>
+}) {
+  const [savedForm, setSavedForm] = useState(() => createPhaseFormState(phase))
+  const [form, setForm] = useState(() => createPhaseFormState(phase))
+  const assignedScenarios = allScenarios.filter(
+    (scenario) => scenario.phaseId === phase.id
+  )
+  const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
+
+  return (
+    <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            Phase editor
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
+            {phase.name}
+          </h2>
+          <p className="mt-2 text-sm leading-7 text-muted-foreground">
+            Phase {phase.order} in the linear execution chain.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  `Delete phase "${phase.name}"? Scenarios in this phase will become unassigned and will not run in normal phase execution.`
+                )
+              ) {
+                return
+              }
+
+              await removePhase({ phaseId: phase.id as never })
+              setSelectedPhaseId(null)
+            }}
+          >
+            <Trash2 />
+            Delete
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!isDirty}
+            onClick={() => setForm(savedForm)}
+          >
+            <RotateCcw />
+            Revert
+          </Button>
+          <Button
+            size="sm"
+            disabled={!isDirty}
+            onClick={async () => {
+              const updated = await updatePhase({
+                phaseId: phase.id as never,
+                name: form.name,
+              })
+              const nextForm = createPhaseFormState(updated)
+              setSavedForm(nextForm)
+              setForm(nextForm)
+            }}
+          >
+            <Save />
+            Save
+          </Button>
+        </div>
+      </div>
+
+      <Field label="Name">
+        <Input
+          onChange={(event) =>
+            setForm((current) => ({ ...current, name: event.target.value }))
+          }
+          value={form.name}
+        />
+      </Field>
+
+      <section className="grid gap-3 border-t border-border pt-5">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            Assigned scenarios
+          </p>
+          <Badge className="font-mono" variant="outline">
+            {assignedScenarios.length}
+          </Badge>
+        </div>
+        <div className="border border-border">
+          {assignedScenarios.length === 0 ? (
+            <div className="px-4 py-4 text-sm text-muted-foreground">
+              No scenarios are assigned to this phase yet.
+            </div>
+          ) : (
+            assignedScenarios.map((scenario) => (
+              <div
+                className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0"
+                key={scenario.id}
+              >
+                <span>
+                  <span className="block text-foreground">{scenario.name}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {scenario.slug}
+                  </span>
+                </span>
+                <Badge variant="outline">Scenario</Badge>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
     </div>
   )
 }

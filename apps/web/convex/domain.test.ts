@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 
-import { assertValidDependencies, buildExecutionOrder } from "./domain"
+import {
+  assertValidDependencies,
+  buildExecutionOrder,
+  filterDependenciesForPhaseExecution,
+} from "./domain"
 
 const scenarios = [
   {
@@ -68,5 +72,25 @@ describe("convex domain helpers", () => {
         { scenarioId: "b", dependsOnScenarioId: "a" },
       ])
     ).toThrow(/cycle/i)
+  })
+
+  it("ignores unassigned dependencies for phase execution", () => {
+    const withPhases = scenarios.map((scenario, index) => ({
+      ...scenario,
+      phaseId: index === 0 ? null : "phase-1",
+    }))
+    const dependencies = [
+      { scenarioId: "b", dependsOnScenarioId: "a" },
+      { scenarioId: "c", dependsOnScenarioId: "b" },
+    ]
+
+    expect(() =>
+      assertValidDependencies(withPhases, dependencies, {
+        strictPhaseBoundaries: true,
+      })
+    ).not.toThrow()
+    expect(filterDependenciesForPhaseExecution(withPhases, dependencies)).toEqual([
+      { scenarioId: "c", dependsOnScenarioId: "b" },
+    ])
   })
 })

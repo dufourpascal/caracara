@@ -1,7 +1,7 @@
 import { fetchQuery } from "convex/nextjs"
 import { NextResponse } from "next/server"
 
-import { orderedActiveScenariosResponseSchema } from "@workspace/contracts"
+import { executionPlanResponseSchema } from "@workspace/contracts"
 
 import { api } from "@/convex/_generated/api"
 import {
@@ -22,21 +22,22 @@ export async function GET(
     const [projectResponse, scenariosResponse] = await Promise.all([
       getProjectBySlug(token, projectSlug),
       fetchQuery(
-        api.scenarios.orderedActiveForProject,
+        api.scenarios.executionPlanForProject,
         { projectSlug },
         { token }
       ),
     ])
 
     return NextResponse.json(
-      orderedActiveScenariosResponseSchema.parse({
+      executionPlanResponseSchema.parse({
         project: {
           id: projectResponse.project.id,
           name: projectResponse.project.name,
           slug: projectResponse.project.slug,
           projectPrompt: projectResponse.project.projectPrompt,
         },
-        scenarios: scenariosResponse.scenarios,
+        phases: scenariosResponse.phases,
+        unassignedScenarioCount: scenariosResponse.unassignedScenarioCount,
       })
     )
   } catch (error) {

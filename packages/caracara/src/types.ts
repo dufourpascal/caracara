@@ -18,4 +18,6 @@ export type RunCommandOptions = {
   project?: string
   runner?: RunnerType
   scenario?: string
+  phase?: string
+  throughPhase?: string
 }

@@ -1,12 +1,17 @@
 import process from "node:process"
 import { spawn } from "node:child_process"
 
-import { CONVEX_TOKEN_TEMPLATE, formatRunName } from "@workspace/contracts"
+import {
+  CONVEX_TOKEN_TEMPLATE,
+  formatRunName,
+  type OrderedScenario,
+  type RunnablePhase,
+} from "@workspace/contracts"
 
 import {
   createRun,
+  fetchExecutionPlan,
   finalizeRun,
-  fetchOrderedScenarios,
   fetchProjects,
   fetchSingleScenario,
   fetchWhoAmI,
@@ -143,6 +148,70 @@ export async function initCommand(options: InitCommandOptions) {
   process.stdout.write(`  runner: ${config.runner}\n`)
 }
 
+function parsePhaseOrder(value: string | undefined, flagName: string) {
+  if (value === undefined) {
+    return null
+  }
+
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flagName} must be a positive integer.`)
+  }
+
+  return parsed
+}
+
+function resolveRunMode(options: RunCommandOptions) {
+  const requestedPhaseOrder = parsePhaseOrder(options.phase, "--phase")
+  const requestedThroughPhaseOrder = parsePhaseOrder(
+    options.throughPhase,
+    "--through-phase"
+  )
+
+  if (options.scenario && requestedPhaseOrder !== null) {
+    throw new Error("`--scenario` cannot be combined with `--phase`.")
+  }
+
+  if (options.scenario && requestedThroughPhaseOrder !== null) {
+    throw new Error("`--scenario` cannot be combined with `--through-phase`.")
+  }
+
+  if (requestedPhaseOrder !== null && requestedThroughPhaseOrder !== null) {
+    throw new Error("`--phase` cannot be combined with `--through-phase`.")
+  }
+
+  if (options.scenario) {
+    return {
+      mode: "single" as const,
+      requestedScenarioSlug: options.scenario,
+      requestedPhaseOrder: null,
+    }
+  }
+
+  if (requestedPhaseOrder !== null) {
+    return {
+      mode: "phase" as const,
+      requestedScenarioSlug: null,
+      requestedPhaseOrder,
+    }
+  }
+
+  if (requestedThroughPhaseOrder !== null) {
+    return {
+      mode: "through_phase" as const,
+      requestedScenarioSlug: null,
+      requestedPhaseOrder: requestedThroughPhaseOrder,
+    }
+  }
+
+  return {
+    mode: "all" as const,
+    requestedScenarioSlug: null,
+    requestedPhaseOrder: null,
+  }
+}
+
 export async function runCommand(options: RunCommandOptions) {
   const cwd = process.cwd()
   const config = await readResolvedConfig(
@@ -164,23 +233,72 @@ export async function runCommand(options: RunCommandOptions) {
 
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
-  const ordered = options.scenario
-    ? await fetchSingleScenario({
+  const runSelection = resolveRunMode(options)
+  const executionSource =
+    runSelection.mode === "single"
+      ? await fetchSingleScenario({
         apiBaseUrl: config.apiBaseUrl,
         accessToken,
         version: CLI_VERSION,
         projectSlug,
-        scenarioSlug: options.scenario,
+        scenarioSlug: runSelection.requestedScenarioSlug,
       }).then((response) => ({
         project: response.project,
-        scenarios: [response.scenario],
+        phases: [] as RunnablePhase[],
+        unassignedScenarioCount: 0,
+        queue: [
+          {
+            phase: null as RunnablePhase | null,
+            scenario: response.scenario,
+          },
+        ],
       }))
-    : await fetchOrderedScenarios({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-      })
+      : await fetchExecutionPlan({
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
+        }).then((response) => {
+          const selectedPhases =
+            runSelection.mode === "phase"
+              ? response.phases.filter(
+                  (phase) => phase.order === runSelection.requestedPhaseOrder
+                )
+              : runSelection.mode === "through_phase"
+                ? response.phases.filter(
+                    (phase) => phase.order <= runSelection.requestedPhaseOrder
+                  )
+                : response.phases
+
+          if (
+            runSelection.mode !== "all" &&
+            !response.phases.some(
+              (phase) => phase.order === runSelection.requestedPhaseOrder
+            )
+          ) {
+            throw new Error(
+              `Phase ${runSelection.requestedPhaseOrder} does not exist in project ${projectSlug}.`
+            )
+          }
+
+          return {
+            ...response,
+            queue: selectedPhases.flatMap((phase) =>
+              phase.scenarios.map((scenario) => ({
+                phase,
+                scenario,
+              }))
+            ),
+          }
+        })
+
+  if (executionSource.queue.length === 0) {
+    throw new Error(
+      runSelection.mode === "phase"
+        ? `Phase ${runSelection.requestedPhaseOrder} has no active scenarios to run.`
+        : "No runnable scenarios found."
+    )
+  }
 
   const createRunResponse = await createRun({
     apiBaseUrl: config.apiBaseUrl,
@@ -188,8 +306,9 @@ export async function runCommand(options: RunCommandOptions) {
     version: CLI_VERSION,
     projectSlug,
     payload: {
-      mode: options.scenario ? "single" : "all",
-      requestedScenarioSlug: options.scenario ?? null,
+      mode: runSelection.mode,
+      requestedScenarioSlug: runSelection.requestedScenarioSlug,
+      requestedPhaseOrder: runSelection.requestedPhaseOrder,
       runnerType,
       startedAt: Date.now(),
     },
@@ -198,7 +317,8 @@ export async function runCommand(options: RunCommandOptions) {
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
 
   const buildScenarioSnapshot = (args: {
-    scenario: (typeof ordered.scenarios)[number]
+    phase: RunnablePhase | null
+    scenario: OrderedScenario
     sequenceIndex: number
     startedAt: number
   }) => ({
@@ -207,6 +327,9 @@ export async function runCommand(options: RunCommandOptions) {
     scenarioName: args.scenario.name,
     executionInstructions: args.scenario.instructions,
     scoringPrompt: args.scenario.scoringPrompt,
+    phaseId: args.phase?.id ?? args.scenario.phaseId ?? null,
+    phaseName: args.phase?.name ?? args.scenario.phaseName ?? null,
+    phaseOrder: args.phase?.order ?? args.scenario.phaseOrder ?? null,
     sequenceIndex: args.sequenceIndex,
     runnerType,
     startedAt: args.startedAt,
@@ -219,16 +342,26 @@ export async function runCommand(options: RunCommandOptions) {
   let runError: unknown = null
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
+  let lastPrintedPhaseId: string | null = null
 
   try {
-    for (const [sequenceIndex, scenario] of ordered.scenarios.entries()) {
+    for (const [sequenceIndex, item] of executionSource.queue.entries()) {
       const startedAt = Date.now()
       const scenarioSnapshot = buildScenarioSnapshot({
-        scenario,
+        phase: item.phase,
+        scenario: item.scenario,
         sequenceIndex,
         startedAt,
       })
-      process.stdout.write(`Executing ${scenario.slug} with ${runnerType}\n`)
+
+      if (item.phase && item.phase.id !== lastPrintedPhaseId) {
+        process.stdout.write(`\nPhase ${item.phase.order}: ${item.phase.name}\n`)
+        lastPrintedPhaseId = item.phase.id
+      }
+
+      process.stdout.write(
+        `Executing ${item.scenario.slug} with ${runnerType}\n`
+      )
 
       if (runFailed) {
         await submitScenarioResult({
@@ -273,8 +406,8 @@ export async function runCommand(options: RunCommandOptions) {
 
         const execution = await runSession.executeScenario({
           cwd,
-          projectPrompt: ordered.project.projectPrompt,
-          scenario,
+          projectPrompt: executionSource.project.projectPrompt,
+          scenario: item.scenario,
         })
         const finishedAt = Date.now()
 

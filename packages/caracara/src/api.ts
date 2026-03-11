@@ -3,9 +3,9 @@ import {
   API_VERSION_HEADER,
   createRunRequestSchema,
   createRunResponseSchema,
+  executionPlanResponseSchema,
   finalizeRunRequestSchema,
   finalizeRunResponseSchema,
-  orderedActiveScenariosResponseSchema,
   parseApiError,
   projectListResponseSchema,
   singleScenarioResponseSchema,
@@ -86,7 +86,7 @@ export async function fetchProjects(
   })
 }
 
-export async function fetchOrderedScenarios(args: {
+export async function fetchExecutionPlan(args: {
   apiBaseUrl: string
   accessToken: string
   version: string
@@ -96,7 +96,7 @@ export async function fetchOrderedScenarios(args: {
     url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/scenarios`,
     version: args.version,
     accessToken: args.accessToken,
-    schema: orderedActiveScenariosResponseSchema,
+    schema: executionPlanResponseSchema,
   })
 }
 

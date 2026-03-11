@@ -67,9 +67,15 @@ export const getDetail = query({
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
-    mode: v.union(v.literal("all"), v.literal("single")),
+    mode: v.union(
+      v.literal("all"),
+      v.literal("single"),
+      v.literal("phase"),
+      v.literal("through_phase")
+    ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
+    requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     startedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -85,6 +91,7 @@ export const create = mutation({
       status: "running",
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
+      requestedPhaseOrder: args.requestedPhaseOrder ?? null,
       runnerType: args.runnerType,
       averageScore: null,
       startedAt: args.startedAt,
@@ -111,6 +118,9 @@ export const submitScenarioResult = mutation({
       scenarioName: v.string(),
       executionInstructions: v.string(),
       scoringPrompt: v.string(),
+      phaseId: v.optional(v.union(v.null(), v.string())),
+      phaseName: v.optional(v.union(v.null(), v.string())),
+      phaseOrder: v.optional(v.union(v.null(), v.number())),
       sequenceIndex: v.number(),
       status: v.union(
         v.literal("success"),
@@ -210,6 +220,9 @@ export const startScenarioExecution = mutation({
       scenarioName: v.string(),
       executionInstructions: v.string(),
       scoringPrompt: v.string(),
+      phaseId: v.optional(v.union(v.null(), v.string())),
+      phaseName: v.optional(v.union(v.null(), v.string())),
+      phaseOrder: v.optional(v.union(v.null(), v.number())),
       sequenceIndex: v.number(),
       runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
       startedAt: v.number(),
@@ -278,6 +291,9 @@ export const startScenarioExecution = mutation({
       scenarioName: args.result.scenarioName,
       executionInstructions: args.result.executionInstructions,
       scoringPrompt: args.result.scoringPrompt,
+      phaseId: args.result.phaseId ?? null,
+      phaseName: args.result.phaseName ?? null,
+      phaseOrder: args.result.phaseOrder ?? null,
       sequenceIndex: args.result.sequenceIndex,
       status: "running" as const,
       runnerType: args.result.runnerType,

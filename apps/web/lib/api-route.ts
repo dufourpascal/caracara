@@ -279,6 +279,7 @@ export async function createRun(
       mode: payload.mode,
       runnerType: payload.runnerType,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
+      requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       startedAt: payload.startedAt,
     },
     { token }

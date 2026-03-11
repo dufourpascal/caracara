@@ -60,6 +60,32 @@ describe("project deletion helpers", () => {
             }
           }
 
+          if (table === "phases") {
+            return {
+              withIndex(
+                indexName: string,
+                buildQuery: (query: {
+                  eq: (field: string, value: string) => null
+                }) => null
+              ) {
+                expect(indexName).toBe("by_project_order")
+                buildQuery({
+                  eq(field, value) {
+                    expect(field).toBe("projectId")
+                    expect(value).toBe("project-1")
+                    return null
+                  },
+                })
+
+                return {
+                  async collect() {
+                    return [{ _id: "phase-1" }, { _id: "phase-2" }]
+                  },
+                }
+              },
+            }
+          }
+
           if (table === "runs") {
             return {
               withIndex(
@@ -128,6 +154,7 @@ describe("project deletion helpers", () => {
 
     expect(result).toEqual({
       deletedDependencyCount: 2,
+      deletedPhaseCount: 2,
       deletedProjectId: "project-1",
       deletedResultCount: 3,
       deletedRunCount: 2,
@@ -143,6 +170,8 @@ describe("project deletion helpers", () => {
       "dependency-2",
       "scenario-1",
       "scenario-2",
+      "phase-1",
+      "phase-2",
       "project-1",
     ])
   })

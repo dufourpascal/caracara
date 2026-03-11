@@ -7,13 +7,15 @@ import {
   MIN_SUPPORTED_CLI_VERSION,
   authTokenResponseSchema,
   cliConfigSchema,
+  executionPlanResponseSchema,
   finalizeRunResponseSchema,
   createUniqueSlug,
   formatRunName,
   isCliVersionSupported,
   normalizeSlug,
-  orderedActiveScenariosResponseSchema,
+  phaseListResponseSchema,
   projectSchema,
+  phaseSchema,
   runSchema,
   scenarioResultSchema,
   versionMismatchErrorSchema,
@@ -32,27 +34,58 @@ describe("contracts", () => {
       updatedAt: 2,
     })
 
-    const response = orderedActiveScenariosResponseSchema.parse({
+    const phase = phaseSchema.parse({
+      id: "phase_1",
+      projectId: project.id,
+      name: "Setup",
+      order: 1,
+      createdAt: 1,
+      updatedAt: 2,
+    })
+
+    const response = executionPlanResponseSchema.parse({
       project: {
         id: project.id,
         name: project.name,
         slug: project.slug,
         projectPrompt: project.projectPrompt,
       },
-      scenarios: [
+      phases: [
         {
-          id: "scenario_signup",
-          name: "Complete signup",
-          slug: "complete-signup",
-          status: "active",
-          instructions: "Create a new account in the app.",
-          scoringPrompt: "Return a score between 0 and 1.",
-          dependencyIds: [],
+          id: phase.id,
+          name: phase.name,
+          order: phase.order,
+          scenarios: [
+            {
+              id: "scenario_signup",
+              name: "Complete signup",
+              slug: "complete-signup",
+              status: "active",
+              instructions: "Create a new account in the app.",
+              scoringPrompt: "Return a score between 0 and 1.",
+              phaseId: phase.id,
+              phaseName: phase.name,
+              phaseOrder: phase.order,
+              dependencyIds: [],
+            },
+          ],
         },
       ],
+      unassignedScenarioCount: 0,
     })
 
     expect(response.project.slug).toBe("inbox-bot")
+    expect(response.phases[0]?.scenarios[0]?.phaseName).toBe("Setup")
+    expect(
+      phaseListResponseSchema.parse({
+        phases: [
+          {
+            ...phase,
+            scenarioCount: 3,
+          },
+        ],
+      }).phases[0]?.scenarioCount
+    ).toBe(3)
     expect(
       scenarioResultSchema.parse({
         id: "result_1",
@@ -62,6 +95,9 @@ describe("contracts", () => {
         scenarioName: "Complete signup",
         executionInstructions: "Create a new account in the app.",
         scoringPrompt: "Return a score between 0 and 1.",
+        phaseId: phase.id,
+        phaseName: phase.name,
+        phaseOrder: phase.order,
         sequenceIndex: 0,
         status: "success",
         runnerType: "codex",
@@ -85,6 +121,9 @@ describe("contracts", () => {
         scenarioName: "Setup session",
         executionInstructions: "Sign in to the app.",
         scoringPrompt: "Confirm sign-in completed.",
+        phaseId: null,
+        phaseName: null,
+        phaseOrder: null,
         sequenceIndex: 1,
         status: "running",
         runnerType: "codex",
@@ -108,6 +147,7 @@ describe("contracts", () => {
         status: "completed",
         mode: "all",
         requestedScenarioSlug: null,
+        requestedPhaseOrder: null,
         runnerType: "codex",
         averageScore: 0.9,
         startedAt: 1,

@@ -4,8 +4,11 @@ import { mutation, query } from "./_generated/server"
 import {
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
+  getExecutionPlan,
   getOrderedScenarios,
   getProjectDependencies,
+  getProjectPhases,
+  getScenarioDependencyIds,
   getScenarioBySlug,
   replaceScenarioDependencies,
   requireProjectOwnerById,
@@ -36,36 +39,35 @@ export const getBySlug = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const scenario = await getScenarioBySlug(
-      ctx,
-      project._id,
-      args.scenarioSlug
-    )
+    const [scenario, dependencyIdsByScenario, phases] = await Promise.all([
+      getScenarioBySlug(ctx, project._id, args.scenarioSlug),
+      getScenarioDependencyIds(ctx, project._id),
+      getProjectPhases(ctx, project._id),
+    ])
 
     if (!scenario) {
       return null
     }
 
-    const dependencies = await getProjectDependencies(ctx, project._id)
-    const dependencyIds = dependencies
-      .filter((dependency) => dependency.scenarioId === scenario._id)
-      .map((dependency) => dependency.dependsOnScenarioId)
-      .sort()
+    const dependencyIds = [...(dependencyIdsByScenario.get(scenario._id) ?? [])].sort()
+    const phase =
+      phases.find((candidate) => candidate._id === (scenario.phaseId ?? null)) ??
+      null
 
     return {
-      ...toScenario(scenario),
+      ...toScenario(scenario, phase),
       dependencyIds,
     }
   },
 })
 
-export const orderedActiveForProject = query({
+export const executionPlanForProject = query({
   args: {
     projectSlug: v.string(),
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const ordered = await getOrderedScenarios(ctx, project._id, {
+    const executionPlan = await getExecutionPlan(ctx, project._id, {
       activeOnly: true,
     })
 
@@ -76,7 +78,8 @@ export const orderedActiveForProject = query({
         name: project.name,
         slug: project.slug,
       },
-      scenarios: ordered,
+      phases: executionPlan.phases,
+      unassignedScenarioCount: executionPlan.unassignedScenarioCount,
     }
   },
 })
@@ -89,16 +92,30 @@ export const create = mutation({
     status: v.union(v.literal("draft"), v.literal("active")),
     instructions: v.string(),
     scoringPrompt: v.string(),
+    phaseId: v.optional(v.union(v.null(), v.id("phases"))),
     dependsOnScenarioIds: v.array(v.id("scenarios")),
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
+    const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const slug = await ensureUniqueScenarioSlug(
       ctx,
       project._id,
       args.slug ?? args.name
     )
+    const selectedPhaseId =
+      args.phaseId !== undefined
+        ? args.phaseId
+        : (phases.length > 0 ? phases[phases.length - 1]?._id ?? null : null)
+
+    if (
+      selectedPhaseId !== null &&
+      !phases.some((phase) => phase._id === selectedPhaseId)
+    ) {
+      throw new Error("Selected phase does not belong to this project")
+    }
+
     const scenarioId = await ctx.db.insert("scenarios", {
       projectId: project._id,
       name: args.name,
@@ -106,6 +123,7 @@ export const create = mutation({
       status: args.status,
       instructions: args.instructions,
       scoringPrompt: args.scoringPrompt,
+      phaseId: selectedPhaseId,
       updatedAt: timestamp,
     })
 
@@ -121,7 +139,11 @@ export const create = mutation({
       throw new Error("Failed to create scenario")
     }
 
-    return toScenario(scenario)
+    const phase =
+      phases.find((candidate) => candidate._id === (scenario.phaseId ?? null)) ??
+      null
+
+    return toScenario(scenario, phase)
   },
 })
 
@@ -133,6 +155,7 @@ export const update = mutation({
     status: v.union(v.literal("draft"), v.literal("active")),
     instructions: v.string(),
     scoringPrompt: v.string(),
+    phaseId: v.optional(v.union(v.null(), v.id("phases"))),
     dependsOnScenarioIds: v.array(v.id("scenarios")),
   },
   handler: async (ctx, args) => {
@@ -140,12 +163,22 @@ export const update = mutation({
       ctx,
       args.scenarioId
     )
+    const phases = await getProjectPhases(ctx, project._id)
     const slug = await ensureUniqueScenarioSlug(
       ctx,
       project._id,
       args.slug,
       scenario._id
     )
+    const selectedPhaseId =
+      args.phaseId !== undefined ? args.phaseId : (scenario.phaseId ?? null)
+
+    if (
+      selectedPhaseId !== null &&
+      !phases.some((phase) => phase._id === selectedPhaseId)
+    ) {
+      throw new Error("Selected phase does not belong to this project")
+    }
 
     await ctx.db.patch(scenario._id, {
       name: args.name,
@@ -153,6 +186,7 @@ export const update = mutation({
       status: args.status,
       instructions: args.instructions,
       scoringPrompt: args.scoringPrompt,
+      phaseId: selectedPhaseId,
       updatedAt: Date.now(),
     })
     await replaceScenarioDependencies(ctx, {
@@ -167,7 +201,12 @@ export const update = mutation({
       throw new Error("Failed to update scenario")
     }
 
-    return toScenario(updatedScenario)
+    const phase =
+      phases.find(
+        (candidate) => candidate._id === (updatedScenario.phaseId ?? null)
+      ) ?? null
+
+    return toScenario(updatedScenario, phase)
   },
 })
 

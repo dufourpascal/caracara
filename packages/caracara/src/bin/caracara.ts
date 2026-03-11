@@ -53,6 +53,8 @@ program
   .option("--project <slug>")
   .option("--runner <runner>", "codex or claude-code", "codex")
   .option("--scenario <slug>")
+  .option("--phase <number>")
+  .option("--through-phase <number>")
   .action(async (options) => {
     await runCommand(options)
   })

@@ -1,4 +1,4 @@
-import { ProjectWorkspace } from "@/components/project-workspace"
+import { redirect } from "next/navigation"
 
 export default async function ScenarioDetailPage({
   params,
@@ -10,12 +10,12 @@ export default async function ScenarioDetailPage({
   const { projectSlug, scenarioSlug } = await params
   const { mode } = await searchParams
 
-  return (
-    <ProjectWorkspace
-      mode={mode === "graph" ? "graph" : "edit"}
-      projectSlug={projectSlug}
-      selectedScenarioSlug={scenarioSlug}
-      workspace="scenarios"
-    />
-  )
+  const nextMode = mode === "graph" ? "graph" : "edit"
+  const nextSearchParams = new URLSearchParams({ mode: nextMode })
+
+  if (nextMode === "edit") {
+    nextSearchParams.set("scenario", scenarioSlug)
+  }
+
+  redirect(`/projects/${projectSlug}/scenarios?${nextSearchParams.toString()}`)
 }

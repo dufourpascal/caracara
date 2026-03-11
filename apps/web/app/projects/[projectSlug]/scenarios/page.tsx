@@ -5,10 +5,15 @@ export default async function ProjectScenariosPage({
   searchParams,
 }: {
   params: Promise<{ projectSlug: string }>
-  searchParams: Promise<{ draft?: string; mode?: string; phase?: string }>
+  searchParams: Promise<{
+    draft?: string
+    mode?: string
+    phase?: string
+    scenario?: string
+  }>
 }) {
   const { projectSlug } = await params
-  const { draft, mode, phase } = await searchParams
+  const { draft, mode, phase, scenario } = await searchParams
 
   return (
     <ProjectWorkspace
@@ -16,6 +21,7 @@ export default async function ProjectScenariosPage({
       initialScenarioPhaseFilter={phase ?? null}
       mode={mode === "graph" ? "graph" : "edit"}
       projectSlug={projectSlug}
+      selectedScenarioSlug={scenario}
       workspace="scenarios"
     />
   )

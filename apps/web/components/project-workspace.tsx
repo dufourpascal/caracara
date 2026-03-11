@@ -55,6 +55,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@workspace/ui/components/resizable"
+import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Textarea } from "@workspace/ui/components/textarea"
 import { SortableList } from "@workspace/ui/components/sortable-list"
 import {
@@ -116,11 +117,13 @@ function getScenarioModeHref({
   projectSlug: string
   selectedScenarioSlug?: string
 }) {
+  const searchParams = new URLSearchParams({ mode })
+
   if (mode === "edit" && selectedScenarioSlug) {
-    return `/projects/${projectSlug}/scenarios/${selectedScenarioSlug}?mode=edit`
+    searchParams.set("scenario", selectedScenarioSlug)
   }
 
-  return `/projects/${projectSlug}/scenarios?mode=${mode}`
+  return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
 }
 
 function getNewScenarioHref({
@@ -137,6 +140,24 @@ function getNewScenarioHref({
   }
 
   searchParams.set("draft", "new")
+
+  return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
+}
+
+function getScenarioSelectionHref({
+  mode,
+  projectSlug,
+  scenarioSlug,
+}: {
+  mode: "edit" | "graph"
+  projectSlug: string
+  scenarioSlug: string
+}) {
+  const searchParams = new URLSearchParams({ mode })
+
+  if (mode === "edit") {
+    searchParams.set("scenario", scenarioSlug)
+  }
 
   return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
 }
@@ -850,10 +871,7 @@ function AuthenticatedProjectWorkspace({
   const scenarioSummaries = useQuery(
     api.scenarios.listSummariesForProject,
     !hasDeletedProject &&
-      (workspace === "phases" ||
-        (workspace === "scenarios" &&
-          mode === "edit" &&
-          (creatingScenario || !!selectedScenarioSlug)))
+      (workspace === "phases" || (workspace === "scenarios" && mode === "edit"))
       ? { projectSlug }
       : "skip"
   )
@@ -1490,7 +1508,11 @@ function AuthenticatedProjectWorkspace({
                       )}
                       onClick={() =>
                         router.push(
-                          `/projects/${projectSlug}/scenarios/${scenario.slug}?mode=${mode}`
+                          getScenarioSelectionHref({
+                            mode,
+                            projectSlug,
+                            scenarioSlug: scenario.slug,
+                          })
                         )
                       }
                       type="button"
@@ -1575,6 +1597,8 @@ function AuthenticatedProjectWorkspace({
                 })}
                 updateScenario={updateScenario}
               />
+            ) : selectedScenarioSlug && selectedScenario === undefined ? (
+              <ScenarioEditorSkeleton />
             ) : selectedScenario ? (
               <ScenarioEditor
                 allScenarios={scenarioSummaries ?? []}
@@ -2346,7 +2370,11 @@ function ScenarioEditor({
                   ),
                 })
                 router.replace(
-                  `/projects/${projectSlug}/scenarios/${created.slug}?mode=edit`
+                  getScenarioSelectionHref({
+                    mode: "edit",
+                    projectSlug,
+                    scenarioSlug: created.slug,
+                  })
                 )
                 return
               }
@@ -2365,7 +2393,11 @@ function ScenarioEditor({
               })
               setSavedForm(form)
               router.replace(
-                `/projects/${projectSlug}/scenarios/${updated.slug}?mode=edit`
+                getScenarioSelectionHref({
+                  mode: "edit",
+                  projectSlug,
+                  scenarioSlug: updated.slug,
+                })
               )
             }}
           >
@@ -3025,6 +3057,65 @@ function BlankDetailPanel({
           {description ??
             "The surrounding navigation stays active so you can change the current selection without losing context."}
         </p>
+      </div>
+    </div>
+  )
+}
+
+function ScenarioEditorSkeleton() {
+  return (
+    <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
+      <div className="flex items-center justify-end gap-2">
+        <Skeleton className="h-7 w-20" />
+        <Skeleton className="h-7 w-20" />
+        <Skeleton className="h-7 w-24" />
+      </div>
+
+      <div className="grid gap-5">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_16rem]">
+          <div className="grid gap-2">
+            <Skeleton className="h-4 w-14" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+          <div className="grid gap-2">
+            <Skeleton className="h-4 w-12" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <Skeleton className="h-4 w-12" />
+          <Skeleton className="h-8 w-full" />
+        </div>
+
+        <div className="grid gap-2">
+          <Skeleton className="h-4 w-14" />
+          <Skeleton className="h-9 w-full" />
+        </div>
+
+        <div className="grid gap-2">
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="min-h-48 w-full" />
+        </div>
+
+        <div className="grid gap-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="min-h-48 w-full" />
+        </div>
+
+        <div className="grid gap-3">
+          <Skeleton className="h-4 w-24" />
+          <div className="border border-border">
+            <div className="border-b border-border px-3 py-2">
+              <Skeleton className="h-4 w-full" />
+            </div>
+            <div className="space-y-3 px-3 py-3">
+              <Skeleton className="h-11 w-full" />
+              <Skeleton className="h-11 w-full" />
+              <Skeleton className="h-11 w-full" />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

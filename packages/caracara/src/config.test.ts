@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  DEFAULT_API_BASE_URL,
   cliPaths,
   findLocalConfigPath,
   readLocalConfig,
@@ -65,6 +66,23 @@ describe("config", () => {
 
     expect(resolved.apiBaseUrl).toBe("https://local.example.com")
     expect(resolved.selectedProjectSlug).toBe("local-project")
+  })
+
+  it("falls back to the production API base URL by default", () => {
+    const resolved = resolveConfig(
+      {
+        accessToken: null,
+        apiBaseUrl: DEFAULT_API_BASE_URL,
+        expiresAt: null,
+        selectedProjectSlug: null,
+        userEmail: null,
+      },
+      {},
+      {},
+      {} as NodeJS.ProcessEnv,
+    )
+
+    expect(resolved.apiBaseUrl).toBe("https://caracara.renaissanceai.com")
   })
 
   it("writes and reads local config from a repo-local file", async () => {

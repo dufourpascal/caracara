@@ -15,6 +15,7 @@ const USER_CONFIG_DIR = join(homedir(), ".config", "caracara")
 const USER_CONFIG_PATH = join(USER_CONFIG_DIR, "config.json")
 const LOCAL_CONFIG_DIR_NAME = ".caracara"
 const LOCAL_CONFIG_FILE_NAME = "config.json"
+export const DEFAULT_API_BASE_URL = "https://caracara.renaissanceai.com"
 
 const localConfigSchema = z.object({
   apiBaseUrl: z.string().url().optional(),
@@ -24,7 +25,7 @@ const localConfigSchema = z.object({
 
 const defaultConfig: CliConfig = {
   accessToken: null,
-  apiBaseUrl: "http://localhost:3000",
+  apiBaseUrl: DEFAULT_API_BASE_URL,
   expiresAt: null,
   selectedProjectSlug: null,
   userEmail: null,

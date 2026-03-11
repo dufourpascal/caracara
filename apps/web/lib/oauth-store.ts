@@ -32,6 +32,46 @@ function toBase64Url(buffer: Buffer) {
     .replace(/=+$/g, "")
 }
 
+function isLoopbackHostname(hostname: string) {
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]"
+}
+
+function normalizeLoopbackPathname(pathname: string) {
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    return pathname.slice(0, -1)
+  }
+
+  return pathname
+}
+
+function loopbackRedirectUrisMatch(recordRedirectUri: string, inputRedirectUri: string) {
+  if (recordRedirectUri === inputRedirectUri) {
+    return true
+  }
+
+  try {
+    const recordUrl = new URL(recordRedirectUri)
+    const inputUrl = new URL(inputRedirectUri)
+
+    if (
+      !isLoopbackHostname(recordUrl.hostname) ||
+      !isLoopbackHostname(inputUrl.hostname)
+    ) {
+      return false
+    }
+
+    return (
+      recordUrl.protocol === inputUrl.protocol &&
+      recordUrl.port === inputUrl.port &&
+      normalizeLoopbackPathname(recordUrl.pathname) ===
+        normalizeLoopbackPathname(inputUrl.pathname) &&
+      recordUrl.search === inputUrl.search
+    )
+  } catch {
+    return false
+  }
+}
+
 export function issueAuthorizationCode(input: {
   clientId: string
   codeChallenge: string
@@ -70,7 +110,7 @@ export function consumeAuthorizationCode(input: {
 
   if (
     record.clientId !== input.clientId ||
-    record.redirectUri !== input.redirectUri
+    !loopbackRedirectUrisMatch(record.redirectUri, input.redirectUri)
   ) {
     throw new Error(
       "Authorization code does not match the client or redirect URI"

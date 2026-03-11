@@ -5,6 +5,8 @@ import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react"
 import type { ReactNode } from "react"
 import { useCallback, useMemo } from "react"
 
+import { CONVEX_TOKEN_TEMPLATE } from "@workspace/contracts"
+
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
 
 if (!convexUrl) {
@@ -23,6 +25,7 @@ export function ConvexClientProvider({
     async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
       try {
         return await getToken({
+          template: CONVEX_TOKEN_TEMPLATE,
           skipCache: forceRefreshToken,
         })
       } catch {

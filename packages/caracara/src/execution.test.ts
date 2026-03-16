@@ -80,7 +80,7 @@ describe("Codex runner args", () => {
       outputPath: "/tmp/output.txt",
       outputSchemaPath: "/tmp/schema.json",
       prompt: "Score the scenario",
-      browserUrl: "http://127.0.0.1:9222",
+      wsEndpoint: "ws://127.0.0.1:9222/devtools/browser/test",
       chromeDevtoolsLogPath: "/tmp/chrome-devtools-mcp.log",
     })
 
@@ -92,7 +92,7 @@ describe("Codex runner args", () => {
       "-c",
       'mcp_servers.chrome-devtools.command="npx"',
       "-c",
-      'mcp_servers.chrome-devtools.args=["chrome-devtools-mcp@latest","--browserUrl","http://127.0.0.1:9222","--logFile","/tmp/chrome-devtools-mcp.log"]',
+      'mcp_servers.chrome-devtools.args=["-y","chrome-devtools-mcp@latest","--wsEndpoint","ws://127.0.0.1:9222/devtools/browser/test","--logFile","/tmp/chrome-devtools-mcp.log"]',
       "--sandbox",
       "read-only",
       "--cd",
@@ -108,13 +108,14 @@ describe("Codex runner args", () => {
   it("builds chrome devtools args that attach to the shared browser", () => {
     expect(
       buildCodexChromeMcpArgs({
-        browserUrl: "http://127.0.0.1:9222",
+        wsEndpoint: "ws://127.0.0.1:9222/devtools/browser/test",
         logFilePath: "/tmp/chrome-devtools.log",
       })
     ).toEqual([
+      "-y",
       "chrome-devtools-mcp@latest",
-      "--browserUrl",
-      "http://127.0.0.1:9222",
+      "--wsEndpoint",
+      "ws://127.0.0.1:9222/devtools/browser/test",
       "--logFile",
       "/tmp/chrome-devtools.log",
     ])
@@ -164,7 +165,7 @@ describe("Codex runner args", () => {
         scenario,
       })
     ).toContain(
-      '"improvementInstruction": null when the score is exactly 1'
+      '"improvementInstruction": null when the score is exactly 1. Otherwise, write a concise, human-readable instruction'
     )
 
     expect(
@@ -172,15 +173,20 @@ describe("Codex runner args", () => {
         projectPrompt: "Use the seeded demo account.",
         scenario,
       })
-    ).toContain("where in the app the issue happened")
+    ).toContain("Location: [view/page/flow]")
 
     expect(
       buildRunnerPrompt({
         projectPrompt: "Use the seeded demo account.",
         scenario,
       })
-    ).toContain(
-      'Format it like: "In the application [view/page/flow], when I [action], I expected [expected outcome], but instead [actual outcome]. Fix this by [specific implementation instruction]."'
-    )
+    ).toContain("Fix next: [specific implementation change]")
+
+    expect(
+      buildRunnerPrompt({
+        projectPrompt: "Use the seeded demo account.",
+        scenario,
+      })
+    ).toContain("- Do not mention the score.")
   })
 })

@@ -98,8 +98,17 @@ export function buildRunnerPrompt(input: {
     '- "executionSummary": a concise factual summary of what you did and observed, including the evidence needed for review and scoring',
     '- "score": a number from 0 to 1',
     '- "rationale": null when the score is exactly 1, otherwise a short explanation of the quality issues that prevented a perfect score',
-    '- "improvementInstruction": null when the score is exactly 1, otherwise a direct instruction for the application team that includes the full problem context: where in the app the issue happened, what you did, what you expected, what happened instead, and the concrete implementation changes needed next',
-    '  Format it like: "In the application [view/page/flow], when I [action], I expected [expected outcome], but instead [actual outcome]. Fix this by [specific implementation instruction]."',
+    '- "improvementInstruction": null when the score is exactly 1. Otherwise, write a concise, human-readable instruction for the application team using this exact structure:',
+    "  Location: [view/page/flow]",
+    "  Action taken: [what you did]",
+    "  Expected: [expected outcome]",
+    "  Actual: [actual outcome]",
+    "  Fix next: [specific implementation change]",
+    "  Requirements:",
+    "  - Be concrete and implementation-oriented.",
+    "  - Mention routes, UI elements, fields, or components when known.",
+    "  - Do not mention the score.",
+    "  - Do not add filler, hedging, or generic advice.",
   ].join("\n")
 }
 
@@ -120,21 +129,29 @@ function encodeTomlValue(value: boolean | string | string[]) {
 }
 
 export function buildCodexChromeMcpArgs(input: {
-  browserUrl: string
   logFilePath: string
+  wsEndpoint?: string
+  browserUrl?: string
 }) {
-  return [
-    "chrome-devtools-mcp@latest",
-    "--browserUrl",
-    input.browserUrl,
-    "--logFile",
-    input.logFilePath,
-  ]
+  const args = ["-y", "chrome-devtools-mcp@latest"]
+
+  if (input.wsEndpoint) {
+    args.push("--wsEndpoint", input.wsEndpoint)
+  } else if (input.browserUrl) {
+    args.push("--browserUrl", input.browserUrl)
+  } else {
+    throw new Error("Either wsEndpoint or browserUrl must be provided.")
+  }
+
+  args.push("--logFile", input.logFilePath)
+
+  return args
 }
 
 function buildCodexConfigOverrides(input?: {
-  browserUrl: string
   logFilePath: string
+  wsEndpoint?: string
+  browserUrl?: string
 }) {
   if (!input) {
     return []
@@ -155,6 +172,7 @@ export function buildCodexExecArgs(input: {
   prompt: string
   outputPath: string
   outputSchemaPath?: string
+  wsEndpoint?: string
   browserUrl?: string
   chromeDevtoolsLogPath?: string
 }) {
@@ -164,10 +182,11 @@ export function buildCodexExecArgs(input: {
     "exec",
     "--skip-git-repo-check",
     ...buildCodexConfigOverrides(
-      input.browserUrl && input.chromeDevtoolsLogPath
+      input.chromeDevtoolsLogPath && (input.wsEndpoint || input.browserUrl)
         ? {
-            browserUrl: input.browserUrl,
             logFilePath: input.chromeDevtoolsLogPath,
+            wsEndpoint: input.wsEndpoint,
+            browserUrl: input.browserUrl,
           }
         : undefined
     ),
@@ -272,10 +291,13 @@ async function waitForDevToolsActivePort(input: {
 
     try {
       const raw = await readFile(devToolsActivePortPath, "utf8")
-      const [port] = raw.trim().split(/\r?\n/)
+      const [port, path] = raw.trim().split(/\r?\n/)
 
-      if (port) {
-        return port
+      if (port && path) {
+        return {
+          port,
+          wsPath: path,
+        }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -349,7 +371,7 @@ async function launchSharedChromium(input: { cwd: string }) {
   })
 
   try {
-    const port = await Promise.race([
+    const { port, wsPath } = await Promise.race([
       waitForDevToolsActivePort({
         userDataDir,
         browser,
@@ -359,6 +381,7 @@ async function launchSharedChromium(input: { cwd: string }) {
 
     return {
       browserUrl: `http://127.0.0.1:${port}`,
+      wsEndpoint: `ws://127.0.0.1:${port}${wsPath}`,
       chromeDevtoolsLogPath,
       async close() {
         await terminateBrowserProcess(browser)
@@ -398,6 +421,7 @@ class CodexRunner implements RunnerAdapter {
               outputPath: executionOutputPath,
               outputSchemaPath: resultSchemaPath,
               prompt: buildRunnerPrompt(scenarioInput),
+              wsEndpoint: sharedBrowser.wsEndpoint,
               browserUrl: sharedBrowser.browserUrl,
               chromeDevtoolsLogPath: sharedBrowser.chromeDevtoolsLogPath,
             }),

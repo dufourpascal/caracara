@@ -1770,16 +1770,24 @@ function AuthenticatedProjectWorkspace({
                       }
                     }}
                     renderItem={({ dragHandle, isDragging, item }) => (
-                      <button
+                      <div
+                        aria-pressed={item.id === selectedPhaseId}
                         className={cn(
-                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border border-border px-3 py-3 text-left transition-colors",
+                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border border-border px-3 py-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                           item.id === selectedPhaseId
                             ? "bg-muted/40"
                             : "bg-background hover:bg-muted/20",
                           isDragging && "opacity-80"
                         )}
                         onClick={() => setSelectedPhaseId(item.id)}
-                        type="button"
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault()
+                            setSelectedPhaseId(item.id)
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                       >
                         {dragHandle}
                         <span className="min-w-0">
@@ -1793,7 +1801,7 @@ function AuthenticatedProjectWorkspace({
                         <Badge className="font-mono" variant="outline">
                           {item.scenarioCount ?? 0}
                         </Badge>
-                      </button>
+                      </div>
                     )}
                   />
                 )}

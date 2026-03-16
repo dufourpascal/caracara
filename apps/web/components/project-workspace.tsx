@@ -15,15 +15,19 @@ import {
   CircleDashed,
   CircleHelp,
   Copy,
+  FolderCode,
   GitBranch,
   History,
   LoaderCircle,
   PauseCircle,
+  Pencil,
   Plus,
+  Rocket,
   RotateCcw,
   Save,
   Search,
   Settings2,
+  TableOfContents,
   Target,
   Trash2,
   Wrench,
@@ -106,6 +110,19 @@ function getWorkspaceHref({
 
 function formatWorkspaceLabel(workspace: WorkspaceKind) {
   return workspace.charAt(0).toUpperCase() + workspace.slice(1)
+}
+
+function getWorkspaceIcon(workspace: WorkspaceKind) {
+  switch (workspace) {
+    case "project":
+      return FolderCode
+    case "phases":
+      return TableOfContents
+    case "scenarios":
+      return Pencil
+    case "runs":
+      return Rocket
+  }
 }
 
 function getScenarioModeHref({
@@ -1234,6 +1251,16 @@ function AuthenticatedProjectWorkspace({
                   size="sm"
                   variant="ghost"
                 >
+                  {(() => {
+                    const WorkspaceIcon = getWorkspaceIcon(workspace)
+
+                    return (
+                      <WorkspaceIcon
+                        aria-hidden
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
+                    )
+                  })()}
                   <span>{formatWorkspaceLabel(workspace)}</span>
                   <ChevronsUpDown
                     aria-hidden
@@ -1242,22 +1269,30 @@ function AuthenticatedProjectWorkspace({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                {WORKSPACE_NAVIGATION_ORDER.map((item) => (
-                  <DropdownMenuItem
-                    key={item}
-                    onSelect={() =>
-                      router.push(
-                        getWorkspaceHref({
-                          mode,
-                          projectSlug,
-                          workspace: item,
-                        })
-                      )
-                    }
-                  >
-                    {formatWorkspaceLabel(item)}
-                  </DropdownMenuItem>
-                ))}
+                {WORKSPACE_NAVIGATION_ORDER.map((item) => {
+                  const WorkspaceIcon = getWorkspaceIcon(item)
+
+                  return (
+                    <DropdownMenuItem
+                      key={item}
+                      onSelect={() =>
+                        router.push(
+                          getWorkspaceHref({
+                            mode,
+                            projectSlug,
+                            workspace: item,
+                          })
+                        )
+                      }
+                    >
+                      <WorkspaceIcon
+                        aria-hidden
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      {formatWorkspaceLabel(item)}
+                    </DropdownMenuItem>
+                  )
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
             {workspace === "scenarios" ? (

@@ -6,6 +6,7 @@ import { UserButton, useAuth } from "@clerk/nextjs"
 import {
   ArrowRight,
   CheckCircle2,
+  Copy,
   FileText,
   LockKeyhole,
   RefreshCw,
@@ -14,7 +15,6 @@ import {
 } from "lucide-react"
 
 import { AppBrand } from "@/components/app-brand"
-import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 
 const loopSteps = [
@@ -94,11 +94,21 @@ const fitItems = [
   "Do not treat it as a hosted runner, infrastructure provisioner, or replacement for human-authored scenarios in v1.",
 ] as const
 
+const accentBlue = "#00B0FF"
+const accentOrange = "#F57C00"
+const exampleScore = 0.82 as const
+
 const exampleScenario = [
   ["Project", "dev-storefront"],
   ["Scenario", "checkout-cart-recovery"],
-  ["Instruction", "Recover an expired checkout without losing the cart."],
-  ["Scoring", "Full credit if retry works and items remain intact."],
+  [
+    "Instruction",
+    "Act as a user completing checkout. If the session is expired, recover the flow and confirm the cart is preserved.",
+  ],
+  [
+    "Scoring",
+    "Score for cart preservation, successful retry, clarity of recovery copy, and how little friction the user experiences.",
+  ],
 ] as const
 
 const exampleEvaluation = [
@@ -158,26 +168,43 @@ export function HomeScreen() {
             </aside>
           </div>
 
-          <aside className="mt-10 border border-border">
-            <div className="border-b border-border px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                Example run
-              </p>
-            </div>
-            <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <section className="bg-background lg:border-r lg:border-border">
-                <div className="border-b border-border px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    Definition
+          <aside className="mt-10">
+            <div className="relative lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="absolute inset-y-0 left-[calc(50%+3px)] z-10 hidden -translate-x-1/2 lg:flex">
+                <div className="flex w-10 items-center justify-center">
+                  <span
+                    className="flex size-12 items-center justify-center rounded-full"
+                    style={{ backgroundColor: accentOrange }}
+                  >
+                    <ArrowRight className="size-6 text-background" strokeWidth={2.5} />
+                  </span>
+                </div>
+              </div>
+
+              <section className="relative bg-muted/10 pl-4 lg:border-r lg:border-border sm:pl-5">
+                <span
+                  aria-hidden
+                  className="absolute inset-y-0 left-0 block w-1.5"
+                  style={{ backgroundColor: accentBlue }}
+                />
+                <div className="border-b border-border px-4 py-3 sm:px-5">
+                  <p
+                    className="text-xs uppercase tracking-[0.2em]"
+                    style={{ color: accentBlue }}
+                  >
+                    Scenario Definition
                   </p>
                 </div>
-                <dl className="grid gap-px bg-border">
+                <dl className="divide-y divide-border">
                   {exampleScenario.map(([label, value]) => (
-                    <div key={label} className="bg-background px-4 py-3 text-sm">
-                      <dt className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                    <div key={label} className="px-4 py-4 text-sm sm:px-5">
+                      <dt
+                        className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                        style={{ color: accentBlue }}
+                      >
                         {label}
                       </dt>
-                      <dd className="mt-1 min-w-0 text-pretty text-sm leading-6 text-foreground">
+                      <dd className="mt-2 min-w-0 text-pretty text-sm leading-6 text-foreground/90">
                         {value}
                       </dd>
                     </div>
@@ -185,67 +212,102 @@ export function HomeScreen() {
                 </dl>
               </section>
 
-              <section className="bg-background">
-                <div className="border-t border-border px-4 py-3 lg:border-t-0 lg:border-b lg:border-border">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    Result
+              <section className="relative pl-4 bg-background sm:pl-5">
+                <span
+                  aria-hidden
+                  className="absolute inset-y-0 left-0 block w-1.5"
+                  style={{ backgroundColor: accentOrange }}
+                />
+                <div className="border-t border-border px-4 py-3 sm:px-5 lg:border-t-0 lg:border-b lg:border-border">
+                  <p
+                    className="text-xs uppercase tracking-[0.2em]"
+                    style={{ color: accentOrange }}
+                  >
+                    Run Results
                   </p>
                 </div>
-                <div className="grid gap-px bg-border sm:grid-cols-[8rem_minmax(0,1fr)_minmax(0,1fr)]">
-                  <div className="bg-background px-4 py-4">
-                    <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                      Score
-                    </p>
-                    <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
-                      82
-                    </p>
+                <div className="grid gap-px bg-border sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="bg-background px-4 py-5 sm:px-5">
+                    <ScoreRing value={exampleScore} />
                   </div>
                   <dl className="contents">
                     {exampleEvaluation.map(([label, value]) => (
-                      <div key={label} className="bg-background px-4 py-3 text-sm">
-                        <dt className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                          {label}
-                        </dt>
-                        <dd className="mt-1 min-w-0 text-pretty font-mono text-[12px] text-foreground">
-                          {value}
-                        </dd>
+                      <div
+                        key={label}
+                        className="flex min-h-0 items-center bg-background px-4 py-5 text-sm sm:px-5"
+                      >
+                        <div>
+                          <dt
+                            className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                            style={{ color: accentOrange }}
+                          >
+                            {label}
+                          </dt>
+                          <dd className="mt-2 min-w-0 text-pretty font-mono text-[13px] text-foreground">
+                            {value}
+                          </dd>
+                        </div>
                       </div>
                     ))}
                   </dl>
                 </div>
 
-                <div className="border-t border-border px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                <div className="border-t border-border px-4 py-3 sm:px-5">
+                  <p
+                    className="text-xs uppercase tracking-[0.2em]"
+                    style={{ color: accentOrange }}
+                  >
                     Observed behavior
                   </p>
                 </div>
-                <div className="border-t border-border px-4 py-3">
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    Worked well: {exampleObservations.workedWell}
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                    Issue found: {exampleObservations.issueFound}
-                  </p>
+                <div className="border-t border-border px-4 py-4 sm:px-5">
+                  <div className="grid gap-2 text-sm leading-6 text-muted-foreground">
+                    <p>{exampleObservations.workedWell}</p>
+                    <p>{exampleObservations.issueFound}</p>
+                  </div>
                 </div>
 
-                <div className="border-t border-border px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                <div className="border-t border-border px-4 py-3 sm:px-5">
+                  <p
+                    className="text-xs uppercase tracking-[0.2em]"
+                    style={{ color: accentOrange }}
+                  >
                     Feedback for coding agent
                   </p>
                 </div>
-                <div className="border-t border-border px-4 py-3">
-                  <p className="text-sm leading-6 text-foreground">
-                    {exampleAgentFeedback}
-                  </p>
+                <div className="border-t border-border bg-muted/5 px-4 py-4 sm:px-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm leading-6 text-foreground">
+                      {exampleAgentFeedback}
+                    </p>
+                    <Button
+                      aria-label="Copy feedback for coding agent"
+                      onClick={() => navigator.clipboard.writeText(exampleAgentFeedback)}
+                      size="icon-sm"
+                      variant="ghost"
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </div>
                 </div>
               </section>
             </div>
           </aside>
 
-          <div className="mt-12 grid gap-px border border-border bg-border md:grid-cols-3">
+          <div className="mt-12 grid gap-px md:grid-cols-3">
             {loopSteps.map((item, index) => (
               <div key={item.step} className="bg-background px-4 py-5 sm:px-5">
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                <p
+                  className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                  style={{
+                    color:
+                      index === 0
+                        ? accentBlue
+                        : index === 1
+                          ? accentOrange
+                          : "hsl(var(--foreground))",
+                  }}
+                >
                   0{index + 1}
                 </p>
                 <h2 className="mt-2 text-sm font-semibold text-foreground">
@@ -276,7 +338,7 @@ export function HomeScreen() {
             </p>
           </div>
 
-          <ol className="grid gap-px border border-border bg-border md:grid-cols-2">
+          <ol className="grid gap-px md:grid-cols-2">
             {flowSteps.map((item, index) => {
               const Icon = item.icon
 
@@ -287,7 +349,17 @@ export function HomeScreen() {
                       <span className="flex size-8 items-center justify-center border border-border">
                         <Icon className="size-4 text-muted-foreground" />
                       </span>
-                      <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                      <p
+                        className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                        style={{
+                          color:
+                            index === 0
+                              ? accentBlue
+                              : index === 1
+                                ? accentOrange
+                                : "hsl(var(--muted-foreground))",
+                        }}
+                      >
                         0{index + 1} / {item.label}
                       </p>
                     </div>
@@ -306,7 +378,7 @@ export function HomeScreen() {
       </section>
 
       <section className="border-b border-border">
-        <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 py-12 sm:px-6 sm:py-16 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="mx-auto w-full max-w-5xl px-5 py-12 sm:px-6 sm:py-16">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               What a scenario contains
@@ -318,7 +390,10 @@ export function HomeScreen() {
             <div className="mt-8 grid gap-px border border-border bg-border sm:grid-cols-2">
               {scenarioFields.map(([label, body]) => (
                 <div key={label} className="bg-background p-4">
-                  <h3 className="text-sm font-semibold text-foreground">
+                  <h3
+                    className="text-sm font-semibold"
+                    style={{ color: accentBlue }}
+                  >
                     {label}
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -328,37 +403,6 @@ export function HomeScreen() {
               ))}
             </div>
           </div>
-
-          <aside className="border border-border">
-            <div className="border-b border-border px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                Scenario shape
-              </p>
-            </div>
-            <div className="space-y-4 p-4">
-              <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                  instructions
-                </p>
-                <p className="mt-1 text-sm leading-6 text-foreground">
-                  Recover from an expired checkout session and keep the cart
-                  intact.
-                </p>
-              </div>
-              <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                  scoring
-                </p>
-                <p className="mt-1 text-sm leading-6 text-foreground">
-                  Award full credit only if the user can retry without losing
-                  selected items.
-                </p>
-              </div>
-              <div className="border-t border-border pt-4">
-                <Badge variant="outline">depends on signed-in-checkout</Badge>
-              </div>
-            </div>
-          </aside>
         </div>
       </section>
 
@@ -381,7 +425,10 @@ export function HomeScreen() {
             <div className="grid gap-px border border-border bg-border sm:grid-cols-4">
               {resultFields.map((item) => (
                 <div key={item.label} className="bg-background p-4">
-                  <h3 className="text-sm font-semibold text-foreground">
+                  <h3
+                    className="text-sm font-semibold"
+                    style={{ color: accentOrange }}
+                  >
                     {item.label}
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -392,19 +439,17 @@ export function HomeScreen() {
             </div>
 
             <div className="border border-border">
-              <div className="grid gap-px bg-border md:grid-cols-[9rem_minmax(0,1fr)]">
+              <div className="grid gap-px bg-border md:grid-cols-[16rem_minmax(0,1fr)]">
                 <div className="bg-background p-4">
-                  <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                    improvement
-                  </p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
-                    82
-                  </p>
+                  <ScoreRing value={exampleScore} accentColor={accentOrange} />
                 </div>
                 <div className="bg-background p-4">
                   <div className="flex items-center gap-2">
-                    <Wrench className="size-4 text-muted-foreground" />
-                    <h3 className="text-sm font-semibold text-foreground">
+                    <Wrench className="size-4" style={{ color: accentOrange }} />
+                    <h3
+                      className="text-sm font-semibold"
+                      style={{ color: accentOrange }}
+                    >
                       Suggested next change
                     </h3>
                   </div>
@@ -446,6 +491,63 @@ export function HomeScreen() {
         </div>
       </section>
     </main>
+  )
+}
+
+function ScoreRing({
+  value,
+  accentColor = accentBlue,
+}: {
+  value: number
+  accentColor?: string
+}) {
+  const radius = 54
+  const circumference = 2 * Math.PI * radius
+  const dashOffset = circumference * (1 - value)
+
+  return (
+    <div className="mt-4 flex justify-center sm:justify-start">
+      <div className="relative flex size-40 items-center justify-center sm:size-44">
+        <svg
+          aria-hidden
+          className="-rotate-90 size-full overflow-visible"
+          viewBox="0 0 140 140"
+        >
+          <circle
+            className="text-border"
+            cx="70"
+            cy="70"
+            fill="none"
+            opacity="0.4"
+            r={radius}
+            stroke="currentColor"
+            strokeWidth="8"
+          />
+          <circle
+            cx="70"
+            cy="70"
+            fill="none"
+            r={radius}
+            stroke={accentColor}
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            strokeWidth="8"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <p className="text-4xl font-semibold tracking-tight text-foreground">
+            {value.toFixed(2)}
+          </p>
+          <p
+            className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em]"
+            style={{ color: accentColor }}
+          >
+            Score
+          </p>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -3139,6 +3139,7 @@ function RunResultDetail({
                   <CheckScreenshotEvidence
                     evidenceId={screenshot.id}
                     checkName={check.name}
+                    key={screenshot.id}
                   />
                 ) : null}
               </article>

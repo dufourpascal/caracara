@@ -32,15 +32,21 @@ const evaluationCheckValidator = v.object({
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function validateEvaluationChecks(
+export function validateEvaluationChecks(
   status: "draft" | "active",
   checks: Array<{ id: string; name: string; expectation: string }>
 ) {
   if (checks.length > 20 || (status === "active" && checks.length === 0)) {
-    throw new Error("Active scenarios require 1 to 20 evaluation checks.")
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Active scenarios require 1 to 20 evaluation checks.",
+    })
   }
   if (new Set(checks.map((check) => check.id)).size !== checks.length) {
-    throw new Error("Evaluation check IDs must be unique.")
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Evaluation check IDs must be unique.",
+    })
   }
   for (const check of checks) {
     if (
@@ -50,9 +56,11 @@ function validateEvaluationChecks(
       check.expectation.trim() === "" ||
       check.expectation.length > 2_000
     ) {
-      throw new Error(
-        "Evaluation checks must have a valid ID, name, and expectation."
-      )
+      throw new ConvexError({
+        code: "validation_error",
+        message:
+          "Evaluation checks must have a valid ID, name, and expectation.",
+      })
     }
   }
 }
@@ -425,6 +433,7 @@ export const update = mutation({
 
 export const updateDetails = mutation({
   args: {
+    projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
     name: v.optional(v.string()),
     slug: v.optional(v.string()),
@@ -450,7 +459,8 @@ export const updateDetails = mutation({
 
     const { project, scenario } = await ensureScenarioOwnership(
       ctx,
-      args.scenarioId
+      args.scenarioId,
+      args.projectId
     )
     await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
@@ -521,13 +531,15 @@ export const updateDetails = mutation({
 
 export const addCheck = mutation({
   args: {
+    projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
     check: evaluationCheckValidator,
   },
   handler: async (ctx, args) => {
     const { project, scenario } = await ensureScenarioOwnership(
       ctx,
-      args.scenarioId
+      args.scenarioId,
+      args.projectId
     )
     await assertProjectAuthoringUnlocked(ctx, project._id)
     const evaluationChecks = [...scenario.evaluationChecks, args.check]
@@ -555,13 +567,15 @@ export const addCheck = mutation({
 
 export const removeCheck = mutation({
   args: {
+    projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
     checkId: v.string(),
   },
   handler: async (ctx, args) => {
     const { project, scenario } = await ensureScenarioOwnership(
       ctx,
-      args.scenarioId
+      args.scenarioId,
+      args.projectId
     )
     await assertProjectAuthoringUnlocked(ctx, project._id)
 
@@ -599,6 +613,7 @@ export const removeCheck = mutation({
 
 export const updateCheck = mutation({
   args: {
+    projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
     checkId: v.string(),
     name: v.optional(v.string()),
@@ -614,7 +629,8 @@ export const updateCheck = mutation({
 
     const { project, scenario } = await ensureScenarioOwnership(
       ctx,
-      args.scenarioId
+      args.scenarioId,
+      args.projectId
     )
     await assertProjectAuthoringUnlocked(ctx, project._id)
     let found = false

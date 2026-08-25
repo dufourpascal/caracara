@@ -28,9 +28,12 @@ describe("api-route helpers", () => {
     ],
     [
       { operation: "editPhase", phaseId: "phase-1", name: "Prepare" },
-      { phaseId: "phase-1", name: "Prepare" },
+      { projectId: "project-1", phaseId: "phase-1", name: "Prepare" },
     ],
-    [{ operation: "removePhase", phaseId: "phase-1" }, { phaseId: "phase-1" }],
+    [
+      { operation: "removePhase", phaseId: "phase-1" },
+      { projectId: "project-1", phaseId: "phase-1" },
+    ],
     [
       {
         operation: "createScenario",
@@ -58,6 +61,7 @@ describe("api-route helpers", () => {
         dependsOnScenarioIds: [],
       },
       {
+        projectId: "project-1",
         scenarioId: "scenario-2",
         status: "active",
         phaseId: null,
@@ -75,6 +79,7 @@ describe("api-route helpers", () => {
         },
       },
       {
+        projectId: "project-1",
         scenarioId: "scenario-2",
         check: {
           id: "00000000-0000-4000-8000-000000000001",
@@ -90,6 +95,7 @@ describe("api-route helpers", () => {
         checkId: "00000000-0000-4000-8000-000000000001",
       },
       {
+        projectId: "project-1",
         scenarioId: "scenario-2",
         checkId: "00000000-0000-4000-8000-000000000001",
       },
@@ -102,6 +108,7 @@ describe("api-route helpers", () => {
         expectation: "The final receipt is visible.",
       },
       {
+        projectId: "project-1",
         scenarioId: "scenario-2",
         checkId: "00000000-0000-4000-8000-000000000001",
         expectation: "The final receipt is visible.",

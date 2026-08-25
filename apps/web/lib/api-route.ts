@@ -288,14 +288,21 @@ export async function authorProject(args: {
     case "editPhase":
       result = await fetchMutation(
         api.phases.update,
-        { phaseId: payload.phaseId as never, name: payload.name },
+        {
+          projectId: project.id as never,
+          phaseId: payload.phaseId as never,
+          name: payload.name,
+        },
         { token: args.token }
       )
       break
     case "removePhase":
       result = await fetchMutation(
         api.phases.remove,
-        { phaseId: payload.phaseId as never },
+        {
+          projectId: project.id as never,
+          phaseId: payload.phaseId as never,
+        },
         { token: args.token }
       )
       break
@@ -323,6 +330,7 @@ export async function authorProject(args: {
       result = await fetchMutation(
         api.scenarios.updateDetails,
         {
+          projectId: project.id as never,
           scenarioId: payload.scenarioId as never,
           ...(payload.name === undefined ? {} : { name: payload.name }),
           ...(payload.slug === undefined ? {} : { slug: payload.slug }),
@@ -348,6 +356,7 @@ export async function authorProject(args: {
       result = await fetchMutation(
         api.scenarios.addCheck,
         {
+          projectId: project.id as never,
           scenarioId: payload.scenarioId as never,
           check: payload.check,
         },
@@ -358,6 +367,7 @@ export async function authorProject(args: {
       result = await fetchMutation(
         api.scenarios.removeCheck,
         {
+          projectId: project.id as never,
           scenarioId: payload.scenarioId as never,
           checkId: payload.checkId,
         },
@@ -368,6 +378,7 @@ export async function authorProject(args: {
       result = await fetchMutation(
         api.scenarios.updateCheck,
         {
+          projectId: project.id as never,
           scenarioId: payload.scenarioId as never,
           checkId: payload.checkId,
           ...(payload.name === undefined ? {} : { name: payload.name }),

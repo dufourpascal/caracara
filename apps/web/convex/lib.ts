@@ -747,17 +747,36 @@ export async function getRunById(ctx: Ctx, runId: Id<"runs">) {
 
 export async function ensureScenarioOwnership(
   ctx: Ctx,
-  scenarioId: Id<"scenarios">
+  scenarioId: Id<"scenarios">,
+  expectedProjectId?: Id<"projects">
 ) {
   const scenario = await getScenarioById(ctx, scenarioId)
   const { project } = await requireProjectOwnerById(ctx, scenario.projectId)
 
+  if (expectedProjectId !== undefined && project._id !== expectedProjectId) {
+    throw new ConvexError({
+      code: "unauthorized",
+      message: "Scenario does not belong to this project.",
+    })
+  }
+
   return { project, scenario }
 }
 
-export async function ensurePhaseOwnership(ctx: Ctx, phaseId: Id<"phases">) {
+export async function ensurePhaseOwnership(
+  ctx: Ctx,
+  phaseId: Id<"phases">,
+  expectedProjectId?: Id<"projects">
+) {
   const phase = await getPhaseById(ctx, phaseId)
   const { project } = await requireProjectOwnerById(ctx, phase.projectId)
+
+  if (expectedProjectId !== undefined && project._id !== expectedProjectId) {
+    throw new ConvexError({
+      code: "unauthorized",
+      message: "Phase does not belong to this project.",
+    })
+  }
 
   return { project, phase }
 }

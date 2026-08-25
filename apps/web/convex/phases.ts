@@ -64,11 +64,16 @@ export const create = mutation({
 
 export const update = mutation({
   args: {
+    projectId: v.optional(v.id("projects")),
     phaseId: v.id("phases"),
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const { project, phase } = await ensurePhaseOwnership(ctx, args.phaseId)
+    const { project, phase } = await ensurePhaseOwnership(
+      ctx,
+      args.phaseId,
+      args.projectId
+    )
     await assertProjectAuthoringUnlocked(ctx, project._id)
     await ctx.db.patch(phase._id, {
       name: args.name,
@@ -136,10 +141,15 @@ export const reorder = mutation({
 
 export const remove = mutation({
   args: {
+    projectId: v.optional(v.id("projects")),
     phaseId: v.id("phases"),
   },
   handler: async (ctx, args) => {
-    const { project, phase } = await ensurePhaseOwnership(ctx, args.phaseId)
+    const { project, phase } = await ensurePhaseOwnership(
+      ctx,
+      args.phaseId,
+      args.projectId
+    )
     await assertProjectAuthoringUnlocked(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
     const affectedScenarios = scenarios.filter(

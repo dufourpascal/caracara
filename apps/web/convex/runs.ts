@@ -452,10 +452,7 @@ export const finalize = mutation({
       })
     }
 
-    const counts =
-      args.status === "completed"
-        ? await computeRunCheckCounts(ctx, run._id)
-        : { passedCheckCount: 0, totalCheckCount: 0 }
+    const counts = await computeRunCheckCounts(ctx, run._id)
 
     await ctx.db.patch(run._id, {
       status: args.status,

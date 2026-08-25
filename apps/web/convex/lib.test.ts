@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  computeRunCheckCounts,
   deriveScenarioNavigationMetadata,
   toRun,
   toScenarioResult,
@@ -10,6 +11,45 @@ import {
 } from "./lib"
 
 describe("convex response mappers", () => {
+  it("retains completed check counts when a later scenario fails", async () => {
+    const ctx = {
+      db: {
+        query() {
+          return {
+            withIndex() {
+              return {
+                async collect() {
+                  return [
+                    {
+                      status: "completed",
+                      evaluationChecks: [{ id: "a" }, { id: "b" }],
+                      checkResults: [
+                        { checkId: "a", verdict: "passed" },
+                        { checkId: "b", verdict: "failed" },
+                      ],
+                    },
+                    {
+                      status: "runner_failed",
+                      evaluationChecks: [{ id: "c" }],
+                      checkResults: [],
+                    },
+                  ]
+                },
+              }
+            },
+          }
+        },
+      },
+    } as never
+
+    await expect(computeRunCheckCounts(ctx, "run-id" as never)).resolves.toEqual(
+      {
+        passedCheckCount: 1,
+        totalCheckCount: 2,
+      }
+    )
+  })
+
   it("requires one evidenced result for every snapshotted check", () => {
     expect(() =>
       validateCompletedCheckResults(

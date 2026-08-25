@@ -20,7 +20,7 @@ type UploadTargetArgs = {
   checkId: string
 }
 
-async function requireUploadTarget(
+export async function requireUploadTarget(
   ctx: QueryCtx | MutationCtx,
   args: UploadTargetArgs
 ) {
@@ -43,8 +43,8 @@ async function requireUploadTarget(
     result.runId !== run._id
   ) {
     throw new ConvexError({
-      code: "unauthorized",
-      message: "You do not have access to this run result.",
+      code: "not_found",
+      message: "Run result not found.",
     })
   }
   if (

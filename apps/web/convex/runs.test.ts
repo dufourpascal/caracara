@@ -3,13 +3,12 @@ import { describe, expect, it } from "vitest"
 import { deleteRunAndResults } from "./lib"
 
 describe("run deletion helpers", () => {
-  it("deletes scenario results before deleting the run", async () => {
+  it("deletes screenshot storage and rows before results and the run", async () => {
     const deletedIds: string[] = []
+    const deletedStorageIds: string[] = []
     const ctx = {
       db: {
         query(table: string) {
-          expect(table).toBe("scenarioResults")
-
           return {
             withIndex(
               indexName: string,
@@ -28,7 +27,12 @@ describe("run deletion helpers", () => {
 
               return {
                 async collect() {
-                  return [{ _id: "result-1" }, { _id: "result-2" }]
+                  return table === "runEvidence"
+                    ? [
+                        { _id: "evidence-1", storageId: "storage-1" },
+                        { _id: "evidence-2", storageId: "storage-2" },
+                      ]
+                    : [{ _id: "result-1" }, { _id: "result-2" }]
                 },
               }
             },
@@ -38,11 +42,23 @@ describe("run deletion helpers", () => {
           deletedIds.push(id)
         },
       },
+      storage: {
+        async delete(id: string) {
+          deletedStorageIds.push(id)
+        },
+      },
     } as never
 
     const result = await deleteRunAndResults(ctx, "run-1" as never)
 
-    expect(result).toEqual({ deletedResultCount: 2 })
-    expect(deletedIds).toEqual(["result-1", "result-2", "run-1"])
+    expect(result).toEqual({ deletedEvidenceCount: 2, deletedResultCount: 2 })
+    expect(deletedStorageIds).toEqual(["storage-1", "storage-2"])
+    expect(deletedIds).toEqual([
+      "evidence-1",
+      "evidence-2",
+      "result-1",
+      "result-2",
+      "run-1",
+    ])
   })
 })

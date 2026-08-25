@@ -268,9 +268,30 @@ export async function getProjectList(token: string) {
 
 export async function createRun(
   token: string,
-  args: { projectSlug: string; body: unknown }
+  args: {
+    projectSlug: string
+    body: unknown
+    evidencePolicy: "text_only" | "failed_check_screenshot"
+  }
 ) {
   const payload = createRunRequestSchema.parse(args.body)
+  const configuredSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL
+  const deploymentUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+  const evidenceUploadBaseUrl =
+    configuredSiteUrl ??
+    (deploymentUrl?.endsWith(".convex.cloud")
+      ? deploymentUrl.replace(/\.convex\.cloud$/, ".convex.site")
+      : null)
+  if (
+    args.evidencePolicy === "failed_check_screenshot" &&
+    !evidenceUploadBaseUrl
+  ) {
+    throw new ApiRouteError(
+      500,
+      "internal_error",
+      "Evidence upload service is not configured."
+    )
+  }
   const { project } = await getProjectBySlug(token, args.projectSlug)
   const run = await fetchMutation(
     api.runs.create,
@@ -278,6 +299,7 @@ export async function createRun(
       projectId: project.id as never,
       mode: payload.mode,
       runnerType: payload.runnerType,
+      evidencePolicy: args.evidencePolicy,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       startedAt: payload.startedAt,
@@ -285,7 +307,14 @@ export async function createRun(
     { token }
   )
 
-  return { run }
+  return {
+    run,
+    ...(evidenceUploadBaseUrl
+      ? {
+          evidenceUploadUrl: `${evidenceUploadBaseUrl.replace(/\/$/, "")}/run-evidence`,
+        }
+      : {}),
+  }
 }
 
 export async function submitScenarioResult(args: {
@@ -312,7 +341,6 @@ export async function submitScenarioResult(args: {
       result: {
         ...payload.result,
         scenarioId: payload.result.scenarioId as never,
-        improvementInstruction: payload.result.improvementInstruction,
       },
     },
     { token: args.token }

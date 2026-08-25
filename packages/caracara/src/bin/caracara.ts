@@ -21,6 +21,8 @@ program
   .option("--api-base-url <url>")
   .option("--project <slug>")
   .option("--runner <runner>", "codex or claude-code")
+  .option("--model <model>", "Codex model")
+  .option("--model-reasoning-effort <effort>", "Codex reasoning effort")
   .action(async (options) => {
     await initCommand(options)
   })

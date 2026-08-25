@@ -8,11 +8,14 @@
  * @module
  */
 
+import type * as crons from "../crons.js";
 import type * as domain from "../domain.js";
+import type * as http from "../http.js";
 import type * as lib from "../lib.js";
 import type * as migrations from "../migrations.js";
 import type * as phases from "../phases.js";
 import type * as projects from "../projects.js";
+import type * as runEvidence from "../runEvidence.js";
 import type * as runs from "../runs.js";
 import type * as scenarios from "../scenarios.js";
 import type * as users from "../users.js";
@@ -24,11 +27,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  crons: typeof crons;
   domain: typeof domain;
+  http: typeof http;
   lib: typeof lib;
   migrations: typeof migrations;
   phases: typeof phases;
   projects: typeof projects;
+  runEvidence: typeof runEvidence;
   runs: typeof runs;
   scenarios: typeof scenarios;
   users: typeof users;

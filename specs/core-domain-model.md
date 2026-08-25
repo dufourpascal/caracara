@@ -21,9 +21,9 @@ A scenario is the primary authored object.
 A scenario represents one reusable evaluation task definition inside a project. It is the main object users create, edit, and execute.
 
 ### DOMAIN_05
-A scenario contains separate execution and scoring content.
+A scenario contains execution instructions and evaluation checks.
 
-Each scenario includes instructions that tell the agent runner what to do and a scoring prompt that defines how the outcome should be evaluated.
+Each check has a stable ID, name, and observable expectation. Array order is execution and display order.
 
 ### DOMAIN_06
 A scenario may depend on other scenarios in the same project.
@@ -48,4 +48,4 @@ A run captures the execution of one scenario or a group of scenarios against the
 ### DOMAIN_10
 Execution results are separate from scenario definitions.
 
-Scenario definitions describe what should happen, while run results describe what did happen, including per-scenario outcomes, runner used, timestamps, execution summaries, scores, and any scoring rationale.
+Scenario definitions describe what should happen. Results store the exact check snapshot, runner, timestamps, execution summary, and an evidenced verdict for each check. Caracara derives the run pass rate from those verdicts.

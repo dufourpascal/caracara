@@ -1,5 +1,6 @@
 import {
   type ApiError,
+  API_NAMESPACE,
   API_VERSION_HEADER,
   createRunRequestSchema,
   createRunResponseSchema,
@@ -8,6 +9,7 @@ import {
   finalizeRunResponseSchema,
   parseApiError,
   projectListResponseSchema,
+  runEvidenceUploadResponseSchema,
   singleScenarioResponseSchema,
   startScenarioExecutionRequestSchema,
   startScenarioExecutionResponseSchema,
@@ -24,14 +26,49 @@ function formatApiError(error: ApiError) {
   return `${error.code}: ${error.message}\n${JSON.stringify(error.details, null, 2)}`
 }
 
+const TRANSIENT_RETRY_DELAYS_MS = [250, 1_000]
+
+function isRetryableStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500
+}
+
+async function fetchWithTransientRetries(
+  input: string,
+  init: RequestInit
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(input, init)
+      if (
+        isRetryableStatus(response.status) &&
+        attempt < TRANSIENT_RETRY_DELAYS_MS.length
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
+        )
+        continue
+      }
+      return response
+    } catch (error) {
+      if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
+        throw error
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
+      )
+    }
+  }
+}
+
 async function request<T>(args: {
   url: string
   version: string
   accessToken: string
   init?: RequestInit
+  retryTransient?: boolean
   schema: { parse: (value: unknown) => T }
 }) {
-  const response = await fetch(args.url, {
+  const init = {
     ...args.init,
     headers: new Headers({
       authorization: `Bearer ${args.accessToken}`,
@@ -43,7 +80,10 @@ async function request<T>(args: {
           ? Object.fromEntries(args.init.headers)
           : (args.init?.headers ?? {})),
     }),
-  })
+  }
+  const response = args.retryTransient
+    ? await fetchWithTransientRetries(args.url, init)
+    : await fetch(args.url, init)
   const json = await response.json()
 
   if (!response.ok) {
@@ -66,7 +106,7 @@ export async function fetchWhoAmI(
   version: string
 ) {
   return request({
-    url: `${apiBaseUrl}/api/v1/whoami`,
+    url: `${apiBaseUrl}/api/${API_NAMESPACE}/whoami`,
     version,
     accessToken,
     schema: whoAmIResponseSchema,
@@ -79,7 +119,7 @@ export async function fetchProjects(
   version: string
 ) {
   return request({
-    url: `${apiBaseUrl}/api/v1/projects`,
+    url: `${apiBaseUrl}/api/${API_NAMESPACE}/projects`,
     version,
     accessToken,
     schema: projectListResponseSchema,
@@ -93,7 +133,7 @@ export async function fetchExecutionPlan(args: {
   projectSlug: string
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/scenarios`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios`,
     version: args.version,
     accessToken: args.accessToken,
     schema: executionPlanResponseSchema,
@@ -108,7 +148,7 @@ export async function fetchSingleScenario(args: {
   scenarioSlug: string
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
     version: args.version,
     accessToken: args.accessToken,
     schema: singleScenarioResponseSchema,
@@ -123,7 +163,7 @@ export async function createRun(args: {
   payload: Parameters<typeof createRunRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -143,7 +183,7 @@ export async function startScenarioExecution(args: {
   payload: Parameters<typeof startScenarioExecutionRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -165,7 +205,7 @@ export async function submitScenarioResult(args: {
   payload: Parameters<typeof submitScenarioResultRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/results`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -174,6 +214,7 @@ export async function submitScenarioResult(args: {
         submitScenarioResultRequestSchema.parse(args.payload)
       ),
     },
+    retryTransient: true,
     schema: submitScenarioResultResponseSchema,
   })
 }
@@ -187,7 +228,7 @@ export async function finalizeRun(args: {
   payload: Parameters<typeof finalizeRunRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -196,4 +237,39 @@ export async function finalizeRun(args: {
     },
     schema: finalizeRunResponseSchema,
   })
+}
+
+export async function uploadRunEvidence(args: {
+  uploadUrl: string
+  accessToken: string
+  runId: string
+  scenarioResultId: string
+  checkId: string
+  sha256: string
+  bytes: Uint8Array
+}) {
+  const response = await fetchWithTransientRetries(args.uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.accessToken}`,
+      "content-type": "image/webp",
+      "x-caracara-run-id": args.runId,
+      "x-caracara-result-id": args.scenarioResultId,
+      "x-caracara-check-id": args.checkId,
+      "x-caracara-byte-size": String(args.bytes.byteLength),
+      "x-caracara-sha256": args.sha256,
+    },
+    body: args.bytes as BodyInit,
+  })
+  const json = await response.json()
+  if (!response.ok) {
+    const error = parseApiError(json)
+    throw new Error(
+      error.success
+        ? formatApiError(error.data)
+        : `Unexpected evidence upload error (${response.status} ${response.statusText}).`
+    )
+  }
+
+  return runEvidenceUploadResponseSchema.parse(json)
 }

@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'">
+  <title>Evaluation Checks Cutover Plan</title>
+  <style>
+    :root {
+      --paper: #fff;
+      --ink: #111827;
+      --ink-soft: #4b5563;
+      --line: #d1d5db;
+      --line-strong: #9ca3af;
+      --accent: #2563eb;
+      --accent-dark: #1d4ed8;
+      --accent-soft: #eff6ff;
+      --success: #047857;
+      --error: #b91c1c;
+      --space-sm: 0.5rem;
+      --space-md: 1rem;
+      --space-lg: 1.5rem;
+      --space-xl: 2rem;
+      --measure: 65ch;
+      --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #fff;
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 1rem;
+      line-height: 1.6;
+      font-kerning: normal;
+    }
+
+    button, textarea { font: inherit; }
+
+    a { color: var(--accent-dark); }
+
+    .skip-link {
+      position: fixed;
+      top: var(--space-md);
+      left: var(--space-md);
+      z-index: 10;
+      padding: 0.65rem 1rem;
+      background: var(--ink);
+      color: var(--paper);
+      transform: translateY(-200%);
+      transition: transform 180ms var(--ease-out);
+    }
+
+    .skip-link:focus { transform: translateY(0); }
+
+    .shell {
+      width: min(100% - 2rem, 68rem);
+      margin-inline: auto;
+      padding: clamp(2rem, 5vw, 4rem) 0 5rem;
+    }
+
+    .plan-header {
+      display: grid;
+      gap: var(--space-md);
+      max-width: 48rem;
+      margin-bottom: clamp(3rem, 6vw, 5rem);
+    }
+
+    .eyebrow, .phase-index, .requirement-kind, .status {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1.3;
+      text-transform: uppercase;
+    }
+
+    .eyebrow { color: var(--ink-soft); }
+
+    h1, h2, h3 {
+      margin: 0;
+      font-family: inherit;
+      font-weight: 700;
+      line-height: 1.2;
+      text-wrap: balance;
+    }
+
+    h1 {
+      max-width: 18ch;
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      letter-spacing: -0.04em;
+    }
+
+    h2 { font-size: clamp(1.75rem, 3vw, 2.5rem); letter-spacing: -0.03em; }
+    h3 { font-size: 1.25rem; letter-spacing: -0.015em; }
+
+    .lead {
+      max-width: 56ch;
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 1.125rem;
+    }
+
+    .plan-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-md) var(--space-lg);
+      align-items: center;
+      padding-top: var(--space-md);
+      border-top: 1px solid var(--line);
+      color: var(--ink-soft);
+      font-size: 0.875rem;
+    }
+
+    .status { color: var(--ink-soft); }
+    [data-plan-status="complete"] .status { color: var(--success); }
+
+    .plan-section { scroll-margin-top: 2rem; }
+
+    .overview, .requirements {
+      max-width: 62rem;
+      margin-bottom: clamp(3rem, 6vw, 5rem);
+    }
+
+    .section-heading {
+      display: grid;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-lg);
+    }
+
+    .section-copy, .phase-copy {
+      max-width: var(--measure);
+      color: var(--ink-soft);
+    }
+
+    .section-copy > :first-child, .phase-copy > :first-child { margin-top: 0; }
+    .section-copy > :last-child, .phase-copy > :last-child { margin-bottom: 0; }
+
+    .requirement-list { border-top: 1px solid var(--line-strong); }
+
+    .requirement {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-sm);
+      padding: var(--space-lg) 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .requirement-kind { color: var(--ink-soft); }
+    .requirement p { max-width: 58ch; margin: 0; color: var(--ink-soft); }
+
+    .phases { display: grid; gap: clamp(3rem, 6vw, 5rem); }
+
+    .phase {
+      position: relative;
+      display: grid;
+      gap: var(--space-lg);
+      padding-top: var(--space-lg);
+      border-top: 1px solid var(--line-strong);
+    }
+
+    .phase-index {
+      color: var(--ink-soft);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .phase-description {
+      max-width: 52ch;
+      margin: var(--space-sm) 0 0;
+      color: var(--ink-soft);
+      font-size: 1rem;
+    }
+
+    .phase-requirements { margin-top: var(--space-md); }
+
+    .phase-requirements > h3 {
+      margin-bottom: var(--space-lg);
+      font-family: inherit;
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .feedback {
+      align-self: start;
+      margin-top: var(--space-md);
+    }
+
+    .feedback-toggle, .feedback-actions button {
+      min-height: 2.75rem;
+      border: 1px solid var(--line);
+      border-radius: 0.25rem;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+      transition: background-color 120ms linear, border-color 120ms linear, color 120ms linear;
+    }
+
+    .feedback-toggle { padding: 0.55rem 0.85rem; }
+    .feedback-toggle.has-feedback { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark); }
+
+    @media (hover: hover) {
+      .feedback-toggle:hover, .feedback-actions button:hover {
+        border-color: var(--line-strong);
+        background: #f9fafb;
+      }
+    }
+
+    button:active { background: #f3f4f6; }
+
+    button:focus-visible, textarea:focus-visible, a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .feedback-form {
+      max-width: 42rem;
+      margin-top: var(--space-md);
+      padding: var(--space-md);
+      border: 1px solid var(--line);
+      border-radius: 0.25rem;
+      background: #f9fafb;
+    }
+
+    .feedback-form[hidden] { display: none; }
+
+    .feedback-form label {
+      display: block;
+      margin-bottom: var(--space-sm);
+      font-size: 0.875rem;
+      font-weight: 700;
+    }
+
+    .feedback-form textarea {
+      display: block;
+      width: 100%;
+      min-height: 8rem;
+      resize: vertical;
+      padding: 0.8rem;
+      border: 1px solid var(--line-strong);
+      border-radius: 0.25rem;
+      background: #fff;
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    .feedback-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-sm);
+      margin-top: var(--space-md);
+    }
+
+    .feedback-actions button { padding: 0.55rem 0.9rem; }
+    .feedback-actions .save-feedback { border-color: var(--accent-dark); background: var(--accent-dark); color: #fff; }
+    .feedback-actions .save-feedback:hover { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .feedback-actions button:disabled { cursor: wait; opacity: 0.65; transform: none; }
+
+    .feedback-status {
+      min-height: 1.5em;
+      margin: var(--space-sm) 0 0;
+      color: var(--ink-soft);
+      font-size: 0.875rem;
+    }
+
+    .feedback-status[data-state="error"] { color: var(--error); }
+    .feedback-status[data-state="success"] { color: var(--success); }
+
+    @media (min-width: 48rem) {
+      .phase {
+        grid-template-columns: 12rem minmax(0, 1fr);
+        column-gap: clamp(2rem, 5vw, 4rem);
+      }
+
+      .phase-heading { grid-column: 1; }
+      .phase-body { grid-column: 2; }
+
+      .requirement {
+        grid-template-columns: 12rem minmax(0, 1fr);
+        gap: var(--space-lg);
+        align-items: start;
+      }
+
+      .requirement > p, .requirement > .feedback { grid-column: 2; }
+      .requirement > .feedback { margin-top: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .shell { width: 100%; padding: 0; }
+      .feedback, .skip-link { display: none !important; }
+      .phase { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to plan</a>
+
+  <main class="shell" id="main-content" data-plan-status="draft" data-plan-revision="1">
+    <header class="plan-header plan-section" data-plan-section="overview">
+      <span class="eyebrow">Implementation plan</span>
+      <h1>Replace LLM scores with evaluation checks</h1>
+      <p class="lead">Make the agent collect browser evidence for explicit checks while Caracara—not the model—computes the final pass rate.</p>
+      <div class="plan-meta" aria-label="Plan metadata">
+        <span class="status">Draft</span>
+        <span class="revision">Revision 1</span>
+      </div>
+      <div class="feedback">
+        <button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-overview">Give feedback</button>
+        <form class="feedback-form" id="feedback-overview" hidden>
+          <label for="feedback-text-overview">Feedback on the plan overview</label>
+          <textarea id="feedback-text-overview" maxlength="10000" placeholder="What should change?"></textarea>
+          <div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div>
+          <p class="feedback-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </header>
+
+    <section class="overview plan-section" data-plan-section="plan-context">
+      <div class="section-heading"><span class="eyebrow">Context</span><h2>Why this work matters</h2></div>
+      <div class="section-copy">
+        <p>Today each scenario gives an LLM a scoring prompt and accepts a model-generated number from 0 to 1. That produces compressed, flattering scores around 0.8–0.9 and makes regressions hard to interpret.</p>
+        <p>The replacement is a clean break: each scenario owns an ordered list of concrete evaluation checks. The agent uses the existing Chrome DevTools browser control to perform the flow and returns one verdict plus browser evidence for every check. Caracara validates completeness and calculates <strong>passed checks / total checks</strong> as the final percentage. The model never emits a number.</p>
+        <p>This plan intentionally excludes Playwright, compatibility adapters, score migration, weights, fuzzy rubrics, and a separate improvements backlog. Per-check evidence supplies the first useful defect record; exploratory findings can be designed later.</p>
+      </div>
+      <div class="feedback">
+        <button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-plan-context">Give feedback</button>
+        <form class="feedback-form" id="feedback-plan-context" hidden>
+          <label for="feedback-text-plan-context">Feedback on the plan context</label>
+          <textarea id="feedback-text-plan-context" maxlength="10000" placeholder="What should change?"></textarea>
+          <div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div>
+          <p class="feedback-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+
+    <section class="requirements" aria-labelledby="global-requirements-title">
+      <div class="section-heading"><span class="eyebrow">Across the cutover</span><h2 id="global-requirements-title">Global requirements</h2></div>
+      <div class="requirement-list">
+        <article class="requirement plan-section" data-plan-section="requirement-no-model-score">
+          <div><span class="requirement-kind">Scoring</span><h3>No model-generated score</h3></div>
+          <p>The runner output contains only an execution summary and check verdicts. A completed run’s pass rate is derived as <code>round(100 × passedCheckCount / totalCheckCount)</code>. <code>failed</code> and <code>not_observed</code> both remain in the denominator; an infrastructure-failed or interrupted run has no final pass rate.</p>
+          <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-requirement-no-model-score">Give feedback</button><form class="feedback-form" id="feedback-requirement-no-model-score" hidden><label for="feedback-text-requirement-no-model-score">Feedback on scoring</label><textarea id="feedback-text-requirement-no-model-score" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+        </article>
+        <article class="requirement plan-section" data-plan-section="requirement-verdict-semantics">
+          <div><span class="requirement-kind">Contract</span><h3>Three explicit verdicts</h3></div>
+          <p><code>passed</code> means browser evidence confirms the expectation; <code>failed</code> means observed behavior contradicts it; <code>not_observed</code> means the agent could not reach or inspect it. Every verdict requires concise concrete evidence. Missing, duplicate, or unknown check IDs invalidate the entire scenario result as <code>runner_failed</code>.</p>
+          <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-requirement-verdict-semantics">Give feedback</button><form class="feedback-form" id="feedback-requirement-verdict-semantics" hidden><label for="feedback-text-requirement-verdict-semantics">Feedback on verdict semantics</label><textarea id="feedback-text-requirement-verdict-semantics" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+        </article>
+        <article class="requirement plan-section" data-plan-section="requirement-chrome-only">
+          <div><span class="requirement-kind">Browser</span><h3>Chrome control only</h3></div>
+          <p>Keep the current run-scoped Chromium process, CDP endpoint, and <code>chrome-devtools-mcp</code> integration. Both Codex and Claude adapters receive that same Chrome MCP configuration. Do not add Playwright, browser assertions, screenshots-as-scores, or a second browser lifecycle.</p>
+          <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-requirement-chrome-only">Give feedback</button><form class="feedback-form" id="feedback-requirement-chrome-only" hidden><label for="feedback-text-requirement-chrome-only">Feedback on Chrome control</label><textarea id="feedback-text-requirement-chrome-only" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+        </article>
+        <article class="requirement plan-section" data-plan-section="requirement-clean-break">
+          <div><span class="requirement-kind">Cutover</span><h3>Destructive, versioned replacement</h3></div>
+          <p>Delete existing scenario dependencies, scenarios, scenario results, and runs; preserve projects and phases. Remove all old fields and compatibility code, bump the HTTP namespace/API version to v2, and publish CLI 0.2.0 so old clients fail clearly instead of submitting legacy payloads.</p>
+          <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-requirement-clean-break">Give feedback</button><form class="feedback-form" id="feedback-requirement-clean-break" hidden><label for="feedback-text-requirement-clean-break">Feedback on the clean break</label><textarea id="feedback-text-requirement-clean-break" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="phases" aria-label="Plan phases">
+      <article class="phase plan-section" data-plan-section="phase-1-check-evaluation-cutover" data-phase-index="1">
+        <header class="phase-heading">
+          <span class="phase-index">Phase 01</span>
+          <h2>Ship the check-based evaluation loop</h2>
+          <p class="phase-description">One atomic vertical slice replaces authoring, contracts, execution, persistence, aggregation, and result presentation together.</p>
+          <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-phase-1-check-evaluation-cutover">Give feedback</button><form class="feedback-form" id="feedback-phase-1-check-evaluation-cutover" hidden><label for="feedback-text-phase-1-check-evaluation-cutover">Feedback on Phase 1</label><textarea id="feedback-text-phase-1-check-evaluation-cutover" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+        </header>
+
+        <div class="phase-body">
+          <div class="phase-copy">
+            <h3>Target Convex schema</h3>
+            <p>Embed checks because they have no lifecycle outside their scenario. Snapshot the authored checks on each result, then store a separate verdict array keyed to that snapshot. Array position is the authoring order; the stable string ID survives reordering.</p>
+            <pre style="overflow:auto;padding:1rem;border:1px solid var(--border);background:var(--surface-subtle);font-size:.78rem;line-height:1.55"><code>const evaluationCheck = v.object({
+  id: v.string(),          // generated once; opaque UUID
+  name: v.string(),        // short UI label
+  expectation: v.string(), // observable pass condition
+})
+
+const checkResult = v.object({
+  checkId: v.string(),
+  verdict: v.union(
+    v.literal("passed"),
+    v.literal("failed"),
+    v.literal("not_observed")
+  ),
+  evidence: v.string(),
+})
+
+scenarios: defineTable({
+  projectId: v.id("projects"),
+  name: v.string(),
+  slug: v.string(),
+  status: v.union(v.literal("draft"), v.literal("active")),
+  instructions: v.string(),
+  evaluationChecks: v.array(evaluationCheck),
+  phaseId: v.optional(v.union(v.null(), v.id("phases"))),
+  navigationOrder: v.optional(v.number()),
+  phaseNavigationOrder: v.optional(v.number()),
+  phaseFilterKey: v.optional(v.string()),
+  dependencyCount: v.optional(v.number()),
+  searchText: v.optional(v.string()),
+  updatedAt: v.number(),
+})
+// keep current scenario indexes unchanged
+
+runs: defineTable({
+  projectId: v.id("projects"),
+  ownerUserId: v.string(),
+  name: v.string(),
+  status: v.union(
+    v.literal("pending"), v.literal("running"),
+    v.literal("completed"), v.literal("failed"),
+    v.literal("interrupted")
+  ),
+  mode: v.union(
+    v.literal("all"), v.literal("single"),
+    v.literal("phase"), v.literal("through_phase")
+  ),
+  requestedScenarioSlug: v.union(v.null(), v.string()),
+  requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+  runnerType: v.union(v.null(), v.literal("codex"), v.literal("claude-code")),
+  passedCheckCount: v.number(),
+  totalCheckCount: v.number(),
+  startedAt: v.number(),
+  finishedAt: v.union(v.null(), v.number()),
+  updatedAt: v.number(),
+})
+// keep current run indexes unchanged
+
+scenarioResults: defineTable({
+  runId: v.id("runs"),
+  scenarioId: v.id("scenarios"),
+  scenarioSlug: v.string(),
+  scenarioName: v.string(),
+  executionInstructions: v.string(),
+  evaluationChecks: v.array(evaluationCheck), // immutable run snapshot
+  checkResults: v.array(checkResult),
+  phaseId: v.optional(v.union(v.null(), v.string())),
+  phaseName: v.optional(v.union(v.null(), v.string())),
+  phaseOrder: v.optional(v.union(v.null(), v.number())),
+  sequenceIndex: v.number(),
+  status: v.union(
+    v.literal("running"), v.literal("completed"),
+    v.literal("runner_failed"), v.literal("dependency_failed"),
+    v.literal("interrupted")
+  ),
+  runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
+  executionSummary: v.union(v.null(), v.string()),
+  failureDetail: v.union(v.null(), v.string()),
+  startedAt: v.number(),
+  finishedAt: v.union(v.null(), v.number()),
+})
+// keep current result indexes unchanged</code></pre>
+            <p><strong>Removed:</strong> <code>scenarios.scoringPrompt</code>, <code>runs.averageScore</code>, and <code>scenarioResults.scoringPrompt</code>, <code>score</code>, <code>rationale</code>, <code>improvementInstruction</code>, plus the <code>success</code>/<code>scoring_failed</code> result statuses.</p>
+
+            <h3>End-to-end implementation</h3>
+            <ul>
+              <li><strong>Authoring:</strong> replace the scoring-prompt textarea with an ordered check editor using shared shadcn primitives. A check has name and expectation; add, edit, delete, and move controls preserve stable IDs. Drafts may have zero checks, but activating a scenario requires 1–20 checks, unique IDs, non-empty names (≤120 chars), and expectations (≤2,000 chars).</li>
+              <li><strong>Contracts and API:</strong> update domain and HTTP Zod schemas, generated Convex-facing mappers, route tests, and API documentation. Start-execution stores the exact check snapshot. Submit-result accepts only result status, check results, summary/failure details, and timestamps; the server rejects any check set that does not exactly match the snapshot.</li>
+              <li><strong>Runner prompt:</strong> list checks by stable ID and expectation. Tell the agent to use Chrome tools, perform the scenario once, evaluate only what it can support with browser evidence, and never calculate a score. Build a per-scenario JSON Schema for <code>executionSummary</code> plus <code>checkResults[]</code>; follow parsing with exact set and non-empty evidence validation.</li>
+              <li><strong>Browser session:</strong> move shared Chromium/CDP startup to runner-session infrastructure. Retain Codex’s current <code>chrome-devtools-mcp</code> arguments; generate an equivalent temporary MCP JSON file for Claude’s verified <code>--mcp-config</code> and <code>--strict-mcp-config</code> flags. One run reuses one Chrome profile/session and closes it in the existing <code>finally</code> path.</li>
+              <li><strong>Execution semantics:</strong> a completed scenario may contain failed checks without failing the run or stopping dependencies. Only malformed output, runner/browser failure, dependency failure, or interruption changes infrastructure status. The CLI prints <code>7/9 checks passed</code>, not a decimal score.</li>
+              <li><strong>Aggregation:</strong> finalize the run server-side by reading completed scenario results and atomically writing passed/total counts. The API exposes a nullable derived <code>passRate</code> integer (0–100) only when run status is completed; persisted source-of-truth remains the two counts.</li>
+              <li><strong>Results UI:</strong> replace score cards and improvement blocks with check totals and an ordered result list. Use neutral/success/destructive tokens for passed/failed/not-observed, show evidence inline, and keep execution failures visually separate from product-check failures.</li>
+              <li><strong>Specs:</strong> revise product scope, domain model, scenario authoring, execution/scoring, API contracts, storage, frontend, and CLI specs so “score” means only the derived final pass rate and every legacy scoring-prompt example is removed.</li>
+            </ul>
+
+            <h3>Destructive deployment sequence</h3>
+            <ol>
+              <li>Deploy a temporary internal mutation against the old schema that deletes, in dependency order, <code>scenarioResults</code>, <code>runs</code>, <code>scenarioDependencies</code>, and <code>scenarios</code>. Invoke it in development and production; verify all four counts are zero. Preserve projects and phases.</li>
+              <li>Deploy the final schema/API/UI and remove the temporary mutation in the same cutover branch. Because no legacy documents remain, all new fields can be required immediately; do not add optional dual-read/dual-write paths.</li>
+              <li>Publish CLI 0.2.0 after the web API v2 deployment. Verify CLI 0.1.x receives a version mismatch and cannot create runs.</li>
+            </ol>
+
+            <h3>Verification</h3>
+            <ul>
+              <li>Unit tests cover check validation, stable reorder IDs, runner prompt/schema generation, exact returned-ID matching, verdict counting, nullable pass-rate rules, and Codex/Claude Chrome MCP arguments.</li>
+              <li>Convex tests cover ownership, snapshot immutability, rejected missing/duplicate/unknown check results, completed scenarios with failed checks, run finalization counts, and cascade deletion.</li>
+              <li>API route and CLI integration tests replace all score fixtures and prove that malformed LLM output becomes <code>runner_failed</code> without partial check persistence.</li>
+              <li>Manual acceptance: author three checks, run against a deliberately broken local UI through Chrome control, confirm one pass/one fail/one not-observed with concrete evidence, see 33%, and confirm no Playwright package/process/config or model-generated numeric score exists.</li>
+              <li>Run <code>pnpm lint</code>, <code>pnpm typecheck</code>, package/web tests, and <code>pnpm build</code>.</li>
+            </ul>
+          </div>
+
+          <section class="phase-requirements" aria-labelledby="phase-1-requirements-title">
+            <h3 id="phase-1-requirements-title">Acceptance requirements</h3>
+            <div class="requirement-list">
+              <article class="requirement plan-section" data-plan-section="phase-1-requirement-result-integrity">
+                <div><span class="requirement-kind">Integrity</span><h3>Every authored check is accounted for</h3></div>
+                <p>A completed result has exactly one verdict for every snapshotted check, no extras, and non-empty evidence. Validation occurs in both CLI and Convex so a modified client cannot bypass it.</p>
+                <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-phase-1-requirement-result-integrity">Give feedback</button><form class="feedback-form" id="feedback-phase-1-requirement-result-integrity" hidden><label for="feedback-text-phase-1-requirement-result-integrity">Feedback on result integrity</label><textarea id="feedback-text-phase-1-requirement-result-integrity" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+              </article>
+              <article class="requirement plan-section" data-plan-section="phase-1-requirement-regression-score">
+                <div><span class="requirement-kind">Regression signal</span><h3>The final percentage is reproducible</h3></div>
+                <p>The same stored verdicts always produce the same counts and percentage. No rationale, confidence, model preference, or hidden weighting changes the number.</p>
+                <div class="feedback"><button class="feedback-toggle" type="button" aria-expanded="false" aria-controls="feedback-phase-1-requirement-regression-score">Give feedback</button><form class="feedback-form" id="feedback-phase-1-requirement-regression-score" hidden><label for="feedback-text-phase-1-requirement-regression-score">Feedback on regression scoring</label><textarea id="feedback-text-phase-1-requirement-regression-score" maxlength="10000" placeholder="What should change?"></textarea><div class="feedback-actions"><button class="save-feedback" type="submit">Save feedback</button><button class="close-feedback" type="button">Close editor</button></div><p class="feedback-status" role="status" aria-live="polite"></p></form></div>
+              </article>
+            </div>
+          </section>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script id="plan-feedback" type="application/json">{}</script>
+  <script>
+    (() => {
+      const feedbackElement = document.getElementById("plan-feedback");
+      let feedback;
+
+      try {
+        feedback = JSON.parse(feedbackElement.textContent || "{}");
+      } catch {
+        feedback = {};
+      }
+
+      document.querySelectorAll("[data-plan-section]").forEach((section) => {
+        const sectionId = section.dataset.planSection;
+        const feedbackRoot = Array.from(section.children)
+          .flatMap((child) => child.matches(".feedback") ? [child] : Array.from(child.children).filter((nested) => nested.matches(".feedback")))[0];
+
+        if (!feedbackRoot) return;
+
+        const toggle = feedbackRoot.querySelector(".feedback-toggle");
+        const form = feedbackRoot.querySelector(".feedback-form");
+        const textarea = feedbackRoot.querySelector("textarea");
+        const close = feedbackRoot.querySelector(".close-feedback");
+        const status = feedbackRoot.querySelector(".feedback-status");
+        const save = feedbackRoot.querySelector(".save-feedback");
+
+        const renderPendingState = () => {
+          const hasFeedback = Object.hasOwn(feedback, sectionId) && feedback[sectionId].length > 0;
+          toggle.classList.toggle("has-feedback", hasFeedback);
+          toggle.textContent = hasFeedback ? "Edit pending feedback" : "Give feedback";
+          textarea.value = feedback[sectionId] || "";
+        };
+
+        const closeEditor = () => {
+          form.hidden = true;
+          toggle.setAttribute("aria-expanded", "false");
+          toggle.focus();
+        };
+
+        toggle.addEventListener("click", () => {
+          const willOpen = form.hidden;
+          form.hidden = !willOpen;
+          toggle.setAttribute("aria-expanded", String(willOpen));
+          if (willOpen) textarea.focus();
+        });
+
+        close.addEventListener("click", closeEditor);
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          save.disabled = true;
+          status.dataset.state = "";
+          status.textContent = "Saving feedback…";
+
+          try {
+            const response = await fetch("/api/feedback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sectionId, text: textarea.value })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "The server rejected the feedback.");
+
+            const text = textarea.value.trim();
+            if (text) feedback[sectionId] = text;
+            else delete feedback[sectionId];
+            renderPendingState();
+            status.dataset.state = "success";
+            status.textContent = text ? "Feedback saved." : "Feedback cleared.";
+            window.setTimeout(closeEditor, 450);
+          } catch (error) {
+            status.dataset.state = "error";
+            status.textContent = `Feedback was not saved. ${error.message}`;
+          } finally {
+            save.disabled = false;
+          }
+        });
+
+        renderPendingState();
+      });
+    })();
+  </script>
+</body>
+</html>

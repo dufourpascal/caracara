@@ -18,7 +18,9 @@ import {
   FolderCode,
   GitBranch,
   History,
+  ImageIcon,
   LoaderCircle,
+  Maximize2,
   PauseCircle,
   Pencil,
   Plus,
@@ -46,6 +48,14 @@ import {
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
 import { Input } from "@workspace/ui/components/input"
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@workspace/ui/components/dialog"
 import { Label } from "@workspace/ui/components/label"
 import {
   Pagination,
@@ -213,11 +223,14 @@ function formatScenarioModeLabel(mode: "edit" | "graph") {
   return mode === "edit" ? "Edit" : "Graph"
 }
 
-function getScenarioPhaseFilterLabel(filter: string | null, phases: Array<{
-  id: Id<"phases">
-  order: number
-  name: string
-}>) {
+function getScenarioPhaseFilterLabel(
+  filter: string | null,
+  phases: Array<{
+    id: Id<"phases">
+    order: number
+    name: string
+  }>
+) {
   if (filter === UNASSIGNED_SCENARIO_PHASE_FILTER) {
     return "Unassigned"
   }
@@ -251,7 +264,7 @@ function normalizeScenarioPhaseFilter({
 
 function getDefaultScenarioPhaseFilter(phases: Array<{ id: Id<"phases"> }>) {
   return phases.length > 0
-    ? phases[0]?.id ?? null
+    ? (phases[0]?.id ?? null)
     : UNASSIGNED_SCENARIO_PHASE_FILTER
 }
 
@@ -268,14 +281,14 @@ function getScenarioPhaseIdForCreation({
 
   const selectedPhase =
     selectedFilter !== null
-      ? phases.find((phase) => phase.id === selectedFilter) ?? null
+      ? (phases.find((phase) => phase.id === selectedFilter) ?? null)
       : null
 
   if (selectedPhase) {
     return selectedPhase.id
   }
 
-  return phases.length > 0 ? phases[phases.length - 1]?.id ?? null : null
+  return phases.length > 0 ? (phases[phases.length - 1]?.id ?? null) : null
 }
 
 function createProjectFormState(project: {
@@ -303,14 +316,18 @@ function createScenarioFormState(scenario: {
   slug: string
   status: "draft" | "active"
   instructions: string
-  scoringPrompt: string
+  evaluationChecks: Array<{
+    id: string
+    name: string
+    expectation: string
+  }>
   phaseId?: string | null
   dependencyIds: string[]
 }) {
   const shouldHideGeneratedSlug =
     scenario.name.trim() === "" &&
     scenario.instructions.trim() === "" &&
-    scenario.scoringPrompt.trim() === "" &&
+    scenario.evaluationChecks.length === 0 &&
     UNTITLED_SCENARIO_SLUG_PATTERN.test(scenario.slug)
 
   return {
@@ -318,19 +335,23 @@ function createScenarioFormState(scenario: {
     slug: shouldHideGeneratedSlug ? "" : scenario.slug,
     status: scenario.status,
     instructions: scenario.instructions,
-    scoringPrompt: scenario.scoringPrompt,
+    evaluationChecks: scenario.evaluationChecks.map((check) => ({ ...check })),
     phaseId: scenario.phaseId ?? null,
     dependencyIds: scenario.dependencyIds,
   }
 }
 
-function createEmptyScenarioDraft({ phaseId }: { phaseId: Id<"phases"> | null }) {
+function createEmptyScenarioDraft({
+  phaseId,
+}: {
+  phaseId: Id<"phases"> | null
+}) {
   return {
     name: "",
     slug: "",
     status: "draft" as const,
     instructions: "",
-    scoringPrompt: "",
+    evaluationChecks: [],
     phaseId,
     dependencyIds: [],
   }
@@ -384,8 +405,8 @@ function getLocalDayToken(value: number) {
   return `${year}-${month}-${day}`
 }
 
-function formatScore(value: number | null) {
-  return value === null ? "n/a" : value.toFixed(2)
+function formatPassRate(value: number | null) {
+  return value === null ? "n/a" : `${value}%`
 }
 
 function useCursorPager(resetKey: string) {
@@ -397,7 +418,9 @@ function useCursorPager(resetKey: string) {
     starts: [null],
   })
   const pageStarts =
-    pageState.key === resetKey ? pageState.starts : ([null] as Array<string | null>)
+    pageState.key === resetKey
+      ? pageState.starts
+      : ([null] as Array<string | null>)
 
   return {
     canGoPrevious: pageStarts.length > 1,
@@ -445,14 +468,21 @@ function SidebarPaginationControls({
         </p>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button className="h-7 px-2.5 font-mono text-[11px]" size="sm" variant="outline">
+            <Button
+              className="h-7 px-2.5 font-mono text-[11px]"
+              size="sm"
+              variant="outline"
+            >
               {pageSize} / page
               <ChevronsUpDown className="size-3.5 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {SIDEBAR_PAGE_SIZES.map((size) => (
-              <DropdownMenuItem key={size} onSelect={() => onPageSizeChange(size)}>
+              <DropdownMenuItem
+                key={size}
+                onSelect={() => onPageSizeChange(size)}
+              >
                 <span className="font-mono">{size}</span>
                 {size === pageSize ? <Check className="ml-2 size-3.5" /> : null}
               </DropdownMenuItem>
@@ -463,7 +493,10 @@ function SidebarPaginationControls({
       <Pagination className="mt-3 justify-start">
         <PaginationContent>
           <PaginationItem>
-            <PaginationPrevious disabled={!canGoPrevious} onClick={onPrevious} />
+            <PaginationPrevious
+              disabled={!canGoPrevious}
+              onClick={onPrevious}
+            />
           </PaginationItem>
           <PaginationItem>
             <Button
@@ -484,12 +517,8 @@ function SidebarPaginationControls({
   )
 }
 
-type ScoreStyle = CSSProperties & {
-  "--score-color"?: string
-}
-
-function getScoreColor(value: number) {
-  const clampedValue = Math.max(0, Math.min(1, value))
+function getPassRateColor(value: number) {
+  const clampedValue = Math.max(0, Math.min(1, value / 100))
 
   if (clampedValue >= 0.5) {
     const highPercent = Math.round(((clampedValue - 0.5) / 0.5) * 100)
@@ -504,31 +533,17 @@ function getScoreColor(value: number) {
   return `color-mix(in oklch, var(--score-low) ${lowPercent}%, var(--score-mid) ${midPercent}%)`
 }
 
-function getScoreTextStyle(value: number | null): CSSProperties | undefined {
+function getPassRateTextStyle(value: number | null): CSSProperties | undefined {
   if (value === null) {
     return undefined
   }
 
   return {
-    color: getScoreColor(value),
+    color: getPassRateColor(value),
   }
 }
 
-function getScoreBadgeStyle(value: number | null): ScoreStyle | undefined {
-  if (value === null) {
-    return undefined
-  }
-
-  return {
-    "--score-color": getScoreColor(value),
-    backgroundColor:
-      "color-mix(in oklch, var(--score-color) 12%, var(--background))",
-    borderColor: "color-mix(in oklch, var(--score-color) 28%, var(--border))",
-    color: "var(--score-color)",
-  }
-}
-
-function ScoreText({
+function PassRateText({
   className,
   value,
 }: {
@@ -536,27 +551,9 @@ function ScoreText({
   value: number | null
 }) {
   return (
-    <span className={cn(className)} style={getScoreTextStyle(value)}>
-      {formatScore(value)}
+    <span className={cn(className)} style={getPassRateTextStyle(value)}>
+      {formatPassRate(value)}
     </span>
-  )
-}
-
-function ScoreBadge({
-  className,
-  value,
-}: {
-  className?: string
-  value: number | null
-}) {
-  return (
-    <Badge
-      className={cn("font-mono", className)}
-      style={getScoreBadgeStyle(value)}
-      variant="outline"
-    >
-      {formatScore(value)}
-    </Badge>
   )
 }
 
@@ -565,7 +562,7 @@ function formatStatusLabel(status: string) {
 }
 
 function getScenarioResultBadgeVariant(status: string) {
-  if (status === "success") {
+  if (status === "completed") {
     return "success" as const
   }
 
@@ -632,11 +629,11 @@ function getScenarioResultStatusIcon(status: string) {
         iconClassName: "text-foreground motion-safe:animate-spin",
         label: "Running",
       }
-    case "success":
+    case "completed":
       return {
         icon: CheckCircle2,
         iconClassName: "text-primary",
-        label: "Success",
+        label: "Completed",
       }
     case "interrupted":
       return {
@@ -656,12 +653,11 @@ function getScenarioResultStatusIcon(status: string) {
         iconClassName: "text-destructive",
         label: "Runner failed",
       }
-    case "scoring_failed":
     default:
       return {
         icon: AlertCircle,
         iconClassName: "text-destructive",
-        label: "Scoring failed",
+        label: "Failed",
       }
   }
 }
@@ -670,7 +666,6 @@ function isScenarioResultFailure(status: string) {
   return (
     status === "dependency_failed" ||
     status === "runner_failed" ||
-    status === "scoring_failed" ||
     status === "interrupted"
   )
 }
@@ -724,17 +719,26 @@ function ScenarioResultStatusIcon({ status }: { status: string }) {
 }
 
 function ScenarioResultValue({
-  score,
+  checkResults,
+  totalCheckCount,
   status,
 }: {
-  score: number | null
+  checkResults: Array<{ verdict: string }>
+  totalCheckCount: number
   status: string
 }) {
   if (status === "running" || isScenarioResultFailure(status)) {
     return <ScenarioResultStatusIcon status={status} />
   }
 
-  return <ScoreText className="font-mono text-xs" value={score} />
+  const passed = checkResults.filter(
+    (result) => result.verdict === "passed"
+  ).length
+  return (
+    <span className="font-mono text-xs">
+      {passed}/{totalCheckCount}
+    </span>
+  )
 }
 
 type PanelLayout = Record<string, number>
@@ -1064,13 +1068,20 @@ function AuthenticatedProjectWorkspace({
       return
     }
 
-    if (!selectedPhaseId || !phases.some((phase) => phase.id === selectedPhaseId)) {
+    if (
+      !selectedPhaseId ||
+      !phases.some((phase) => phase.id === selectedPhaseId)
+    ) {
       setSelectedPhaseId(phases[0]?.id ?? null)
     }
   }, [phases, selectedPhaseId, workspace])
 
   useEffect(() => {
-    if (workspace !== "scenarios" || creatingScenario || !selectedScenarioSlug) {
+    if (
+      workspace !== "scenarios" ||
+      creatingScenario ||
+      !selectedScenarioSlug
+    ) {
       return
     }
 
@@ -1419,9 +1430,10 @@ function AuthenticatedProjectWorkspace({
                         UNASSIGNED_SCENARIO_PHASE_FILTER
                           ? unassignedScenarioCount
                           : selectedScenarioPhaseFilter
-                            ? (phases ?? []).find(
-                                (phase) => phase.id === selectedScenarioPhaseFilter
-                              )?.scenarioCount ?? 0
+                            ? ((phases ?? []).find(
+                                (phase) =>
+                                  phase.id === selectedScenarioPhaseFilter
+                              )?.scenarioCount ?? 0)
                             : "All"}
                       </span>
                     </div>
@@ -1468,7 +1480,9 @@ function AuthenticatedProjectWorkspace({
                               {phase.order}. {phase.name}
                             </span>
                             <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <span className="font-mono">{phase.scenarioCount ?? 0}</span>
+                              <span className="font-mono">
+                                {phase.scenarioCount ?? 0}
+                              </span>
                               {selectedScenarioPhaseFilter === phase.id ? (
                                 <Check className="size-3.5 text-foreground" />
                               ) : null}
@@ -1501,7 +1515,9 @@ function AuthenticatedProjectWorkspace({
                             Unassigned
                           </span>
                           <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span className="font-mono">{unassignedScenarioCount}</span>
+                            <span className="font-mono">
+                              {unassignedScenarioCount}
+                            </span>
                             {selectedScenarioPhaseFilter ===
                             UNASSIGNED_SCENARIO_PHASE_FILTER ? (
                               <Check className="size-3.5 text-foreground" />
@@ -1515,14 +1531,17 @@ function AuthenticatedProjectWorkspace({
                     <Search className="size-4 text-muted-foreground" />
                     <input
                       className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                      onChange={(event) => setScenarioSearch(event.target.value)}
+                      onChange={(event) =>
+                        setScenarioSearch(event.target.value)
+                      }
                       placeholder="Search scenarios"
                       value={scenarioSearch}
                     />
                   </div>
                   {isScenarioSearchActive ? (
                     <p className="text-[11px] text-muted-foreground">
-                      Search uses relevance order. Phase filtering and paging still run on Convex.
+                      Search uses relevance order. Phase filtering and paging
+                      still run on Convex.
                     </p>
                   ) : null}
                 </div>
@@ -1587,7 +1606,8 @@ function AuthenticatedProjectWorkspace({
                           getScenarioSelectionHref({
                             mode,
                             phaseFilter:
-                              scenario.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
+                              scenario.phaseId ??
+                              UNASSIGNED_SCENARIO_PHASE_FILTER,
                             projectSlug,
                             scenarioSlug: scenario.slug,
                           })
@@ -1601,7 +1621,10 @@ function AuthenticatedProjectWorkspace({
                         </span>
                         <span className="mt-1 flex items-center gap-2">
                           {scenario.phaseId ? (
-                            <Badge className="px-1.5 py-0 text-[10px]" variant="outline">
+                            <Badge
+                              className="px-1.5 py-0 text-[10px]"
+                              variant="outline"
+                            >
                               {scenario.phaseOrder}. {scenario.phaseName}
                             </Badge>
                           ) : (
@@ -1691,7 +1714,7 @@ function AuthenticatedProjectWorkspace({
               />
             ) : (
               <BlankDetailPanel
-                description="Choose a scenario from the library to edit instructions, scoring, and dependencies without leaving the current workspace."
+                description="Choose a scenario to edit its instructions, evaluation checks, and dependencies."
                 icon={GitBranch}
                 title="Select a scenario"
               />
@@ -1933,9 +1956,9 @@ function AuthenticatedProjectWorkspace({
                               <span className="font-mono text-[11px] text-muted-foreground">
                                 {formatTimeLabel(run.startedAt)}
                               </span>
-                              <ScoreText
+                              <PassRateText
                                 className="font-mono text-xs"
-                                value={run.averageScore}
+                                value={run.passRate}
                               />
                             </span>
                             <span className="mt-1 block text-sm font-medium text-foreground capitalize">
@@ -2016,7 +2039,7 @@ function AuthenticatedProjectWorkspace({
                           onClick={async () => {
                             if (
                               !window.confirm(
-                                `Delete run "${formatRunDisplayName(runDetail.run.name)}"? This will permanently delete the run and all associated scenario results.`
+                                `Delete run "${formatRunDisplayName(runDetail.run.name)}"? This will permanently delete the run, scenario results, and screenshots.`
                               )
                             ) {
                               return
@@ -2049,11 +2072,11 @@ function AuthenticatedProjectWorkspace({
                         </div>
                         <div className="bg-background px-3 py-2">
                           <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-                            Score
+                            Pass rate
                           </p>
-                          <ScoreText
+                          <PassRateText
                             className="mt-1 font-mono text-sm"
-                            value={runDetail.run.averageScore}
+                            value={runDetail.run.passRate}
                           />
                         </div>
                       </div>
@@ -2076,13 +2099,15 @@ function AuthenticatedProjectWorkspace({
                           type="button"
                         >
                           <div className="flex size-5 items-center justify-center text-muted-foreground">
-                            {result.improvementInstruction ? (
+                            {result.checkResults.some(
+                              (check) => check.verdict !== "passed"
+                            ) ? (
                               <span
-                                aria-label="Improvement instruction available"
+                                aria-label="Check needs attention"
                                 className="inline-flex size-5 shrink-0 items-center justify-center"
-                                title="Improvement instruction available"
+                                title="Check needs attention"
                               >
-                                <Wrench aria-hidden className="size-4" />
+                                <AlertCircle aria-hidden className="size-4" />
                               </span>
                             ) : (
                               <span aria-hidden className="size-5 shrink-0" />
@@ -2093,7 +2118,8 @@ function AuthenticatedProjectWorkspace({
                           </span>
                           <div className="flex justify-end">
                             <ScenarioResultValue
-                              score={result.score}
+                              checkResults={result.checkResults}
+                              totalCheckCount={result.evaluationChecks.length}
                               status={result.status}
                             />
                           </div>
@@ -2117,7 +2143,7 @@ function AuthenticatedProjectWorkspace({
                     />
                   ) : (
                     <BlankDetailPanel
-                      description="Choose a scenario result from this run to inspect rationale, summary, stored prompts, and failure details."
+                      description="Choose a scenario result to inspect each check verdict, its browser evidence, and execution details."
                       icon={Wrench}
                       title="Select an executed scenario"
                     />
@@ -2126,7 +2152,7 @@ function AuthenticatedProjectWorkspace({
               </ResizablePanelGroup>
             ) : (
               <BlankDetailPanel
-                description="Pick a run from the log to inspect aggregate status, average score, and scenario-by-scenario execution results."
+                description="Pick a run to inspect its pass rate and scenario-by-scenario check results."
                 icon={History}
                 title="Select a run"
               />
@@ -2362,7 +2388,11 @@ function ScenarioEditor({
     slug: string
     status: "draft" | "active"
     instructions: string
-    scoringPrompt: string
+    evaluationChecks: Array<{
+      id: string
+      name: string
+      expectation: string
+    }>
     phaseId?: string | null
     phaseName?: string | null
     phaseOrder?: number | null
@@ -2394,6 +2424,11 @@ function ScenarioEditor({
   const isDraftScenario = !scenario.id
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
+  const hasInvalidEvaluationChecks =
+    (form.status === "active" && form.evaluationChecks.length === 0) ||
+    form.evaluationChecks.some(
+      (check) => check.name.trim() === "" || check.expectation.trim() === ""
+    )
 
   const visibleDependencies = allScenarios.filter(
     (candidate) =>
@@ -2440,7 +2475,7 @@ function ScenarioEditor({
           </Button>
           <Button
             size="sm"
-            disabled={!isDirty}
+            disabled={!isDirty || hasInvalidEvaluationChecks}
             onClick={async () => {
               if (isDraftScenario) {
                 const created = await createScenario({
@@ -2449,7 +2484,7 @@ function ScenarioEditor({
                   slug: form.slug.trim() === "" ? undefined : form.slug,
                   status: form.status,
                   instructions: form.instructions,
-                  scoringPrompt: form.scoringPrompt,
+                  evaluationChecks: form.evaluationChecks,
                   phaseId: form.phaseId ? (form.phaseId as never) : null,
                   dependsOnScenarioIds: form.dependencyIds.map(
                     (dependencyId) => dependencyId as never
@@ -2473,7 +2508,7 @@ function ScenarioEditor({
                 slug: form.slug,
                 status: form.status,
                 instructions: form.instructions,
-                scoringPrompt: form.scoringPrompt,
+                evaluationChecks: form.evaluationChecks,
                 phaseId: form.phaseId ? (form.phaseId as never) : null,
                 dependsOnScenarioIds: form.dependencyIds.map(
                   (dependencyId) => dependencyId as never
@@ -2598,12 +2633,13 @@ function ScenarioEditor({
                       setForm((current) => ({
                         ...current,
                         phaseId: phase.id,
-                        dependencyIds: current.dependencyIds.filter((dependencyId) =>
-                          allScenarios.some(
-                            (candidate) =>
-                              candidate.id === dependencyId &&
-                              candidate.phaseId === phase.id
-                          )
+                        dependencyIds: current.dependencyIds.filter(
+                          (dependencyId) =>
+                            allScenarios.some(
+                              (candidate) =>
+                                candidate.id === dependencyId &&
+                                candidate.phaseId === phase.id
+                            )
                         ),
                       }))
                     }
@@ -2636,19 +2672,141 @@ function ScenarioEditor({
           />
         </Field>
 
-        <Field label="Scoring prompt">
-          <Textarea
-            className="min-h-48"
-            onChange={(event) =>
+        <div className="grid gap-3">
+          <div>
+            <Label>Evaluation checks</Label>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Each check needs one observable expectation. Caracara calculates
+              the pass rate from these verdicts.
+            </p>
+          </div>
+          {form.evaluationChecks.length === 0 ? (
+            <p className="py-2 text-sm text-muted-foreground">
+              Add at least one check before activating this scenario.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {form.evaluationChecks.map((check, index) => (
+                <div
+                  className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-2 py-3"
+                  key={check.id}
+                >
+                  <span className="pt-2 font-mono text-xs text-muted-foreground">
+                    {index + 1}
+                  </span>
+                  <Input
+                    aria-label={`Evaluation check ${index + 1} name`}
+                    maxLength={120}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        evaluationChecks: current.evaluationChecks.map(
+                          (item) =>
+                            item.id === check.id
+                              ? { ...item, name: event.target.value }
+                              : item
+                        ),
+                      }))
+                    }
+                    placeholder="Check name"
+                    value={check.name}
+                  />
+                  <div className="flex items-center">
+                    <Button
+                      aria-label="Move check up"
+                      disabled={index === 0}
+                      onClick={() =>
+                        setForm((current) => {
+                          const evaluationChecks = [...current.evaluationChecks]
+                          const [moved] = evaluationChecks.splice(index, 1)
+                          if (moved)
+                            evaluationChecks.splice(index - 1, 0, moved)
+                          return { ...current, evaluationChecks }
+                        })
+                      }
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <ArrowUp />
+                    </Button>
+                    <Button
+                      aria-label="Move check down"
+                      disabled={index === form.evaluationChecks.length - 1}
+                      onClick={() =>
+                        setForm((current) => {
+                          const evaluationChecks = [...current.evaluationChecks]
+                          const [moved] = evaluationChecks.splice(index, 1)
+                          if (moved)
+                            evaluationChecks.splice(index + 1, 0, moved)
+                          return { ...current, evaluationChecks }
+                        })
+                      }
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <ArrowDown />
+                    </Button>
+                    <Button
+                      aria-label="Delete check"
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          evaluationChecks: current.evaluationChecks.filter(
+                            (item) => item.id !== check.id
+                          ),
+                        }))
+                      }
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                  <Textarea
+                    aria-label={`Evaluation check ${index + 1} expectation`}
+                    className="col-start-2 col-end-4 [field-sizing:content] max-h-[4.75rem] min-h-9 resize-none overflow-y-auto"
+                    maxLength={2000}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        evaluationChecks: current.evaluationChecks.map(
+                          (item) =>
+                            item.id === check.id
+                              ? { ...item, expectation: event.target.value }
+                              : item
+                        ),
+                      }))
+                    }
+                    placeholder="Describe the observable condition that must be true."
+                    value={check.expectation}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          <Button
+            className="justify-self-start"
+            disabled={form.evaluationChecks.length >= 20}
+            onClick={() =>
               setForm((current) => ({
                 ...current,
-                scoringPrompt: event.target.value,
+                evaluationChecks: [
+                  ...current.evaluationChecks,
+                  { id: crypto.randomUUID(), name: "", expectation: "" },
+                ],
               }))
             }
-            placeholder="Explain how the outcome should be judged."
-            value={form.scoringPrompt}
-          />
-        </Field>
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Plus />
+            Add check
+          </Button>
+        </div>
 
         <div className="grid gap-3">
           <Label>Dependencies</Label>
@@ -2671,39 +2829,42 @@ function ScenarioEditor({
                 <div className="px-3 py-3 text-sm text-muted-foreground">
                   No same-phase scenarios match the current filter.
                 </div>
-              ) : visibleDependencies.map((dependency) => {
-                const checked = form.dependencyIds.includes(dependency.id)
+              ) : (
+                visibleDependencies.map((dependency) => {
+                  const checked = form.dependencyIds.includes(dependency.id)
 
-                return (
-                  <label
-                    key={dependency.id}
-                    className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
-                  >
-                    <span>
-                      <span className="block text-foreground">
-                        {dependency.name}
+                  return (
+                    <label
+                      key={dependency.id}
+                      className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
+                    >
+                      <span>
+                        <span className="block text-foreground">
+                          {dependency.name}
+                        </span>
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {dependency.slug}
+                        </span>
                       </span>
-                      <span className="font-mono text-[11px] text-muted-foreground">
-                        {dependency.slug}
-                      </span>
-                    </span>
-                    <input
-                      checked={checked}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          dependencyIds: event.target.checked
-                            ? [...current.dependencyIds, dependency.id]
-                            : current.dependencyIds.filter(
-                                (dependencyId) => dependencyId !== dependency.id
-                              ),
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                  </label>
-                )
-              })}
+                      <input
+                        checked={checked}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            dependencyIds: event.target.checked
+                              ? [...current.dependencyIds, dependency.id]
+                              : current.dependencyIds.filter(
+                                  (dependencyId) =>
+                                    dependencyId !== dependency.id
+                                ),
+                          }))
+                        }
+                        type="checkbox"
+                      />
+                    </label>
+                  )
+                })
+              )}
             </div>
           </div>
         </div>
@@ -2845,9 +3006,25 @@ function RunResultDetail({
     scenarioName: string
     scenarioSlug: string
     status: string
-    score: number | null
-    rationale: string | null
-    improvementInstruction: string | null
+    evaluationChecks: Array<{
+      id: string
+      name: string
+      expectation: string
+    }>
+    checkResults: Array<{
+      checkId: string
+      verdict: "passed" | "failed" | "not_observed"
+      evidence: string
+    }>
+    evidence: Array<{
+      id: string
+      checkId: string
+      kind: "screenshot"
+      contentType: "image/webp"
+      byteSize: number
+      sha256: string
+      createdAt: number
+    }>
     executionSummary: string | null
     failureDetail: string | null
     runnerType: string
@@ -2855,20 +3032,21 @@ function RunResultDetail({
     finishedAt: number | null
     submittedAt: number
     executionInstructions: string
-    scoringPrompt: string
   } | null
 }) {
   if (!result) {
     return (
       <BlankDetailPanel
-        description="Choose a scenario result from this run to inspect rationale, summary, stored prompts, and failure details."
+        description="Choose a scenario result to inspect each check verdict and its browser evidence."
         icon={Wrench}
         title="Select an executed scenario"
       />
     )
   }
 
-  const rationale = result.rationale ?? result.failureDetail
+  const passedCheckCount = result.checkResults.filter(
+    (check) => check.verdict === "passed"
+  ).length
 
   return (
     <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
@@ -2886,7 +3064,11 @@ function RunResultDetail({
           <Badge variant={getScenarioResultBadgeVariant(result.status)}>
             {formatStatusLabel(result.status)}
           </Badge>
-          <ScoreBadge value={result.score} />
+          {result.status === "completed" ? (
+            <Badge className="font-mono" variant="outline">
+              {passedCheckCount}/{result.evaluationChecks.length} passed
+            </Badge>
+          ) : null}
         </div>
         <dl className="mt-5 flex flex-wrap items-start gap-x-8 gap-y-3 border-t border-border pt-4">
           <RunHeaderMeta label="Runner" value={result.runnerType} />
@@ -2905,21 +3087,66 @@ function RunResultDetail({
         </dl>
       </div>
 
-      {result.improvementInstruction ? (
-        <RunInsightPanel
-          description="Most actionable follow-up instruction based on this result."
-          title="Improvement instruction"
-          value={result.improvementInstruction}
-        />
-      ) : null}
-
-      {rationale ? (
-        <RunInsightPanel
-          description="Most relevant explanation for the scenario score."
-          title="Rationale"
-          value={rationale}
-        />
-      ) : null}
+      <section className="grid gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <Label>Evaluation checks</Label>
+          <span className="font-mono text-xs text-muted-foreground">
+            {passedCheckCount}/{result.evaluationChecks.length}
+          </span>
+        </div>
+        <div className="border border-border">
+          {result.evaluationChecks.map((check) => {
+            const checkResult = result.checkResults.find(
+              (candidate) => candidate.checkId === check.id
+            )
+            const screenshot = result.evidence.find(
+              (candidate) => candidate.checkId === check.id
+            )
+            return (
+              <article
+                className="grid gap-2 border-b border-border px-4 py-4 last:border-b-0"
+                key={check.id}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {check.name}
+                    </h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {check.expectation}
+                    </p>
+                  </div>
+                  <Badge
+                    variant={
+                      checkResult?.verdict === "passed"
+                        ? "success"
+                        : checkResult
+                          ? "warning"
+                          : "outline"
+                    }
+                  >
+                    {checkResult
+                      ? formatStatusLabel(checkResult.verdict)
+                      : "pending"}
+                  </Badge>
+                </div>
+                {checkResult ? (
+                  <p className="border-l-2 border-border pl-3 text-sm text-foreground">
+                    {checkResult.evidence}
+                  </p>
+                ) : null}
+                {checkResult?.verdict === "failed" && screenshot ? (
+                  <CheckScreenshotEvidence
+                    evidenceId={screenshot.id}
+                    checkName={check.name}
+                    key={screenshot.id}
+                  />
+                ) : null}
+              </article>
+            )
+          })}
+        </div>
+      </section>
 
       <Field label="Execution summary">
         <CopyableTextBlock
@@ -2941,14 +3168,78 @@ function RunResultDetail({
         >
           <CopyableTextBlock value={result.executionInstructions} />
         </Field>
-        <Field
-          description="Scoring prompt captured from the scenario when this run started."
-          label="Scoring prompt"
-        >
-          <CopyableTextBlock value={result.scoringPrompt} />
-        </Field>
       </div>
     </div>
+  )
+}
+
+function CheckScreenshotEvidence({
+  evidenceId,
+  checkName,
+}: {
+  evidenceId: string
+  checkName: string
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading")
+  const src = `/api/run-evidence/${encodeURIComponent(evidenceId)}`
+
+  if (state === "error") {
+    return (
+      <div className="flex h-36 w-60 items-center justify-center gap-2 border border-border bg-muted/20 px-4 text-sm text-muted-foreground">
+        <ImageIcon aria-hidden className="size-4" />
+        Screenshot unavailable
+      </div>
+    )
+  }
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          aria-label={`Open screenshot for ${checkName}`}
+          className="group relative h-36 w-60 overflow-hidden border border-border bg-muted/20 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          type="button"
+        >
+          {state === "loading" ? (
+            <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+              Loading screenshot
+            </span>
+          ) : null}
+          {/* The authenticated route cannot be used by the Next image optimizer. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            alt={`Screenshot evidence for ${checkName}`}
+            className="size-full object-contain"
+            loading="lazy"
+            onError={() => setState("error")}
+            onLoad={() => setState("ready")}
+            src={src}
+          />
+          {state === "ready" ? (
+            <span className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 border-t border-border bg-background/95 px-3 py-2 text-xs text-foreground">
+              Open screenshot
+              <Maximize2 aria-hidden className="size-3.5" />
+            </span>
+          ) : null}
+        </button>
+      </DialogTrigger>
+      <DialogContent aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle className="text-sm font-medium text-foreground">
+            {checkName}
+          </DialogTitle>
+          <DialogCloseButton />
+        </DialogHeader>
+        <div className="min-h-0 bg-muted/20 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            alt={`Screenshot evidence for ${checkName}`}
+            className="size-full object-contain"
+            src={src}
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -3013,50 +3304,6 @@ function CopyableTextBlock({
       <pre className="overflow-auto px-4 py-4 pr-14 text-sm whitespace-pre-wrap text-foreground">
         {text}
       </pre>
-    </div>
-  )
-}
-
-function RunInsightPanel({
-  title,
-  description,
-  value,
-}: {
-  title: string
-  description: string
-  value: string
-}) {
-  return (
-    <div className="border border-primary/40 bg-primary/5">
-      <RunSectionHeader
-        className="border-b border-primary/30 px-4 py-3"
-        description={description}
-        title={title}
-      />
-      <CopyableTextBlock className="border-0 bg-transparent" value={value} />
-    </div>
-  )
-}
-
-function RunSectionHeader({
-  title,
-  description,
-  className,
-}: {
-  title: string
-  description: string
-  className?: string
-}) {
-  return (
-    <div className={cn("flex items-start justify-between gap-3", className)}>
-      <p className="pt-1 text-xs tracking-[0.2em] text-muted-foreground uppercase">
-        {title}
-      </p>
-      <HelpHintButton
-        className="-mt-1 -mr-2"
-        description={description}
-        title={title}
-      />
     </div>
   )
 }

@@ -13,7 +13,7 @@ Each project persists its name, slug, description, project-level prompt, ownersh
 ### DATA_03
 Scenarios are stored as first-class records under a project.
 
-Each scenario persists its name, slug, status, instructions, scoring prompt, and project association as durable authored data.
+Each scenario persists its name, slug, status, instructions, ordered embedded evaluation checks, and project association.
 
 ### DATA_04
 Scenario dependencies are stored as explicit relationship records.
@@ -28,7 +28,7 @@ When the CLI submits a scenario result, the backend stores the scenario data tha
 ### DATA_06
 Runs and per-scenario results are stored separately.
 
-A run record represents the overall execution event, while individual scenario result records capture each scenario's status, score, optional failure detail, and timing within that run. The run record must persist the generated human-readable run name alongside its durable identifier so the UI and CLI can refer to the same execution consistently.
+A run stores overall execution state plus passed and total check counts. Each scenario result stores its status, check snapshot, evidenced verdicts, optional failure detail, and timing. The run also persists its generated human-readable name.
 
 ### DATA_07
 Scenario result records are written incrementally.
@@ -43,9 +43,16 @@ Because v1 projects are single-user only, each project should persist a single o
 ### DATA_09
 Stored execution data is intentionally compact.
 
-The primary durable execution output is the scenario score, plus optional explanatory detail when the score is not perfect and the system needs to record what failed or did not meet quality expectations.
+The primary durable execution output is the ordered check snapshot and one verdict plus evidence for every check. The run-level percentage is derived from persisted passed and total counts.
+
+Failed-check screenshots live in Convex File Storage. A separate run-evidence record attaches each storage object to one owned project, run, scenario result, and check. It stores the content type, byte size, SHA-256 digest, and creation time, but never a reusable storage URL.
+
+### DATA_11
+Screenshot evidence follows the run lifecycle.
+
+Run and project deletion remove screenshot objects before their attachment and result records. Restarted, interrupted, and failed scenario executions remove unused attachments. A daily paginated cleanup removes storage objects older than 24 hours that have no run-evidence record. Future file-storage features must register their storage IDs before sharing this cleanup job.
 
 ### DATA_10
-The storage model should stay compatible with future expansion.
+Checks remain embedded in their parent documents.
 
-Even though v1 is single-user and relatively simple, the schema should avoid painting the product into a corner if later versions add collaboration, richer versioning, or more detailed evaluation artifacts.
+Authored checks have no independent lifecycle, so scenarios store them as an array. Scenario results store an immutable copy and a result array keyed by check ID.

@@ -1,6 +1,14 @@
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises"
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { parseEnv } from "node:util"
 
 import {
   cliConfigSchema,
@@ -15,13 +23,36 @@ const USER_CONFIG_DIR = join(homedir(), ".config", "caracara")
 const USER_CONFIG_PATH = join(USER_CONFIG_DIR, "config.json")
 const LOCAL_CONFIG_DIR_NAME = ".caracara"
 const LOCAL_CONFIG_FILE_NAME = "config.json"
+const LOCAL_SECRETS_FILE_NAME = "secrets.env"
+const LOCAL_GITIGNORE_FILE_NAME = ".gitignore"
+const LOCAL_SECRETS_STUB = [
+  "# Local secrets available to Caracara scenario runs.",
+  "# Never commit this file or put these values in project or scenario prompts.",
+  "# CARACARA_SECRET_USERNAME=",
+  "# CARACARA_SECRET_PASSWORD=",
+  "",
+].join("\n")
 export const DEFAULT_API_BASE_URL = "https://caracara.renaissanceai.com"
 
-const localConfigSchema = z.object({
-  apiBaseUrl: z.string().url().optional(),
-  selectedProjectSlug: slugSchema.nullable().optional(),
-  runner: runnerTypeSchema.optional(),
-})
+const modelReasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+])
+
+const localConfigSchema = z
+  .object({
+    apiBaseUrl: z.string().url().optional(),
+    selectedProjectSlug: slugSchema.nullable().optional(),
+    runner: runnerTypeSchema.optional(),
+    model: z.string().trim().min(1).optional(),
+    model_reasoning_effort: modelReasoningEffortSchema.optional(),
+  })
+  .strict()
 
 const defaultConfig: CliConfig = {
   accessToken: null,
@@ -34,8 +65,13 @@ const defaultConfig: CliConfig = {
 const defaultLocalConfig: LocalConfig = {}
 
 export type LocalConfig = z.infer<typeof localConfigSchema>
+export type ModelReasoningEffort = z.infer<
+  typeof modelReasoningEffortSchema
+>
 export type ResolvedConfig = CliConfig & {
   runner: RunnerType
+  model?: string
+  model_reasoning_effort?: ModelReasoningEffort
 }
 
 export async function ensureConfigDir() {
@@ -139,6 +175,64 @@ export function getDefaultLocalConfigPath(startDir = process.cwd()) {
   return join(startDir, LOCAL_CONFIG_DIR_NAME, LOCAL_CONFIG_FILE_NAME)
 }
 
+export function getLocalSecretsPath(configPath: string) {
+  return join(dirname(configPath), LOCAL_SECRETS_FILE_NAME)
+}
+
+async function assertPrivateFile(filePath: string) {
+  if (process.platform === "win32") {
+    return
+  }
+
+  const fileMode = (await stat(filePath)).mode & 0o777
+  if ((fileMode & 0o077) !== 0) {
+    throw new Error(
+      `${filePath} must only be readable and writable by its owner. Run \`chmod 600 ${filePath}\`.`,
+    )
+  }
+}
+
+async function ensureLocalSecretsFiles(configPath: string) {
+  const configDir = dirname(configPath)
+  const secretsPath = getLocalSecretsPath(configPath)
+  const ignorePath = join(configDir, LOCAL_GITIGNORE_FILE_NAME)
+
+  try {
+    await writeFile(secretsPath, LOCAL_SECRETS_STUB, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw error
+    }
+  }
+
+  await assertPrivateFile(secretsPath)
+
+  let ignoreContents = ""
+  try {
+    ignoreContents = await readFile(ignorePath, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error
+    }
+  }
+
+  if (!ignoreContents.split(/\r?\n/).includes(LOCAL_SECRETS_FILE_NAME)) {
+    const prefix =
+      ignoreContents !== "" && !ignoreContents.endsWith("\n") ? "\n" : ""
+    await writeFile(
+      ignorePath,
+      `${ignoreContents}${prefix}${LOCAL_SECRETS_FILE_NAME}\n`,
+      "utf8",
+    )
+  }
+
+  return secretsPath
+}
+
 export async function readLocalConfig(startDir = process.cwd()) {
   const configPath = await findLocalConfigPath(startDir)
 
@@ -148,6 +242,43 @@ export async function readLocalConfig(startDir = process.cwd()) {
 
   const raw = await readFile(configPath, "utf8")
   return localConfigSchema.parse(JSON.parse(raw))
+}
+
+export async function readLocalSecrets(startDir = process.cwd()) {
+  const configPath = await findLocalConfigPath(startDir)
+
+  if (!configPath) {
+    return {}
+  }
+
+  const secretsPath = getLocalSecretsPath(configPath)
+  let raw: string
+  try {
+    raw = await readFile(secretsPath, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {}
+    }
+
+    throw error
+  }
+
+  await assertPrivateFile(secretsPath)
+
+  const secrets: Record<string, string> = {}
+  for (const [key, value] of Object.entries(parseEnv(raw))) {
+    if (!/^CARACARA_SECRET_[A-Z0-9_]+$/.test(key)) {
+      throw new Error(
+        `${secretsPath} contains invalid key ${key}. Secret names must start with CARACARA_SECRET_.`,
+      )
+    }
+    if (!value) {
+      throw new Error(`${secretsPath} contains an empty value for ${key}.`)
+    }
+    secrets[key] = value
+  }
+
+  return secrets
 }
 
 export async function writeLocalConfig(
@@ -164,6 +295,7 @@ export async function writeLocalConfig(
     `${JSON.stringify(localConfigSchema.parse(config), null, 2)}\n`,
     "utf8",
   )
+  await ensureLocalSecretsFiles(configPath)
   return configPath
 }
 
@@ -182,6 +314,9 @@ export async function readResolvedConfig(
   return {
     ...config,
     runner: resolveRunner(localConfig, { runner: overrides.runner }, env),
+    model: overrides.model ?? localConfig.model,
+    model_reasoning_effort:
+      overrides.model_reasoning_effort ?? localConfig.model_reasoning_effort,
   }
 }
 
@@ -190,4 +325,5 @@ export const cliPaths = {
   configPath: USER_CONFIG_PATH,
   localConfigDirName: LOCAL_CONFIG_DIR_NAME,
   localConfigFileName: LOCAL_CONFIG_FILE_NAME,
+  localSecretsFileName: LOCAL_SECRETS_FILE_NAME,
 }

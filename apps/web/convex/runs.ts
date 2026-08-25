@@ -3,16 +3,38 @@ import { paginationOptsValidator } from "convex/server"
 
 import { mutation, query } from "./_generated/server"
 import {
-  computeRunAverageScore,
+  computeRunCheckCounts,
   createRunName,
+  deleteScenarioResultEvidence,
   deleteRunAndResults,
   ensureRunOwnership,
   getScenarioById,
+  matchesTerminalScenarioResult,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
   toRun,
+  toRunEvidence,
   toScenarioResult,
+  validateCompletedCheckResults,
+  validateFailedCheckEvidence,
+  validateRunnerMatch,
 } from "./lib"
+
+const evaluationCheckValidator = v.object({
+  id: v.string(),
+  name: v.string(),
+  expectation: v.string(),
+})
+
+const checkResultValidator = v.object({
+  checkId: v.string(),
+  verdict: v.union(
+    v.literal("passed"),
+    v.literal("failed"),
+    v.literal("not_observed")
+  ),
+  evidence: v.string(),
+})
 
 export const listForProject = query({
   args: {
@@ -74,16 +96,27 @@ export const getDetail = query({
       return null
     }
 
-    const results = await ctx.db
-      .query("scenarioResults")
-      .withIndex("by_run_sequence", (query) => query.eq("runId", run._id))
-      .collect()
+    const [evidence, results] = await Promise.all([
+      ctx.db
+        .query("runEvidence")
+        .withIndex("by_run", (query) => query.eq("runId", run._id))
+        .collect(),
+      ctx.db
+        .query("scenarioResults")
+        .withIndex("by_run_sequence", (query) => query.eq("runId", run._id))
+        .collect(),
+    ])
 
     return {
       run: toRun(run),
       results: results
         .sort((left, right) => left.sequenceIndex - right.sequenceIndex)
-        .map(toScenarioResult),
+        .map((result) => ({
+          ...toScenarioResult(result),
+          evidence: evidence
+            .filter((item) => item.scenarioResultId === result._id)
+            .map(toRunEvidence),
+        })),
     }
   },
 })
@@ -98,6 +131,9 @@ export const create = mutation({
       v.literal("through_phase")
     ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
+    evidencePolicy: v.optional(
+      v.union(v.literal("text_only"), v.literal("failed_check_screenshot"))
+    ),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     startedAt: v.number(),
@@ -117,7 +153,9 @@ export const create = mutation({
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
       runnerType: args.runnerType,
-      averageScore: null,
+      evidencePolicy: args.evidencePolicy ?? "text_only",
+      passedCheckCount: 0,
+      totalCheckCount: 0,
       startedAt: args.startedAt,
       finishedAt: null,
       updatedAt: timestamp,
@@ -138,28 +176,15 @@ export const submitScenarioResult = mutation({
     runId: v.id("runs"),
     result: v.object({
       scenarioId: v.id("scenarios"),
-      scenarioSlug: v.string(),
-      scenarioName: v.string(),
-      executionInstructions: v.string(),
-      scoringPrompt: v.string(),
-      phaseId: v.optional(v.union(v.null(), v.string())),
-      phaseName: v.optional(v.union(v.null(), v.string())),
-      phaseOrder: v.optional(v.union(v.null(), v.number())),
-      sequenceIndex: v.number(),
       status: v.union(
-        v.literal("success"),
-        v.literal("scoring_failed"),
+        v.literal("completed"),
         v.literal("runner_failed"),
         v.literal("dependency_failed"),
         v.literal("interrupted")
       ),
-      runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
-      score: v.union(v.null(), v.number()),
-      rationale: v.union(v.null(), v.string()),
-      improvementInstruction: v.union(v.null(), v.string()),
+      checkResults: v.array(checkResultValidator),
       executionSummary: v.union(v.null(), v.string()),
       failureDetail: v.union(v.null(), v.string()),
-      startedAt: v.number(),
       finishedAt: v.number(),
     }),
   },
@@ -202,26 +227,71 @@ export const submitScenarioResult = mutation({
         query.eq("runId", args.runId).eq("scenarioId", args.result.scenarioId)
       )
       .unique()
-    const values = {
-      runId: args.runId,
-      ...args.result,
+    if (!existing) {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Scenario execution has not started or is already complete.",
+      })
+    }
+    if (existing.status !== "running") {
+      if (matchesTerminalScenarioResult(existing, args.result)) {
+        return {
+          run: toRun(run),
+          result: toScenarioResult(existing),
+        }
+      }
+      throw new ConvexError({
+        code: "conflict",
+        message: "Scenario execution has already completed with other data.",
+      })
     }
 
-    let resultId = existing?._id ?? null
-
-    if (existing) {
-      await ctx.db.patch(existing._id, values)
-      resultId = existing._id
+    if (args.result.status === "completed") {
+      validateCompletedCheckResults(
+        existing.evaluationChecks,
+        args.result.checkResults
+      )
+      const failedCheckIds = new Set(
+        args.result.checkResults
+          .filter((check) => check.verdict === "failed")
+          .map((check) => check.checkId)
+      )
+      await deleteScenarioResultEvidence(ctx, existing._id, failedCheckIds)
+      if (
+        (run.evidencePolicy ?? "text_only") === "failed_check_screenshot" &&
+        existing.runnerType === "codex"
+      ) {
+        const evidence = await ctx.db
+          .query("runEvidence")
+          .withIndex("by_result", (query) =>
+            query.eq("scenarioResultId", existing._id)
+          )
+          .collect()
+        validateFailedCheckEvidence(args.result.checkResults, evidence)
+      }
+    } else if (args.result.checkResults.length > 0) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Incomplete scenario executions cannot contain check results.",
+      })
     } else {
-      resultId = await ctx.db.insert("scenarioResults", values)
+      await deleteScenarioResultEvidence(ctx, existing._id)
     }
+
+    await ctx.db.patch(existing._id, {
+      status: args.result.status,
+      checkResults: args.result.checkResults,
+      executionSummary: args.result.executionSummary,
+      failureDetail: args.result.failureDetail,
+      finishedAt: args.result.finishedAt,
+    })
 
     await ctx.db.patch(run._id, {
       updatedAt: Date.now(),
     })
 
     const updatedRun = await ctx.db.get(run._id)
-    const storedResult = resultId ? await ctx.db.get(resultId) : null
+    const storedResult = await ctx.db.get(existing._id)
 
     if (!updatedRun || !storedResult) {
       throw new Error("Failed to persist scenario result")
@@ -243,7 +313,7 @@ export const startScenarioExecution = mutation({
       scenarioSlug: v.string(),
       scenarioName: v.string(),
       executionInstructions: v.string(),
-      scoringPrompt: v.string(),
+      evaluationChecks: v.array(evaluationCheckValidator),
       phaseId: v.optional(v.union(v.null(), v.string())),
       phaseName: v.optional(v.union(v.null(), v.string())),
       phaseOrder: v.optional(v.union(v.null(), v.number())),
@@ -280,6 +350,8 @@ export const startScenarioExecution = mutation({
       })
     }
 
+    validateRunnerMatch(run.runnerType, args.result.runnerType)
+
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 
     if (
@@ -314,16 +386,14 @@ export const startScenarioExecution = mutation({
       scenarioSlug: args.result.scenarioSlug,
       scenarioName: args.result.scenarioName,
       executionInstructions: args.result.executionInstructions,
-      scoringPrompt: args.result.scoringPrompt,
+      evaluationChecks: args.result.evaluationChecks,
+      checkResults: [],
       phaseId: args.result.phaseId ?? null,
       phaseName: args.result.phaseName ?? null,
       phaseOrder: args.result.phaseOrder ?? null,
       sequenceIndex: args.result.sequenceIndex,
       status: "running" as const,
       runnerType: args.result.runnerType,
-      score: null,
-      rationale: null,
-      improvementInstruction: null,
       executionSummary: null,
       failureDetail: null,
       startedAt: args.result.startedAt,
@@ -331,6 +401,7 @@ export const startScenarioExecution = mutation({
     }
 
     if (existing) {
+      await deleteScenarioResultEvidence(ctx, existing._id)
       await ctx.db.patch(existing._id, values)
       resultId = existing._id
     } else {
@@ -394,14 +465,11 @@ export const finalize = mutation({
       })
     }
 
-    const averageScore =
-      args.status === "completed"
-        ? await computeRunAverageScore(ctx, run._id)
-        : null
+    const counts = await computeRunCheckCounts(ctx, run._id)
 
     await ctx.db.patch(run._id, {
       status: args.status,
-      averageScore,
+      ...counts,
       finishedAt: args.finishedAt,
       updatedAt: Date.now(),
     })

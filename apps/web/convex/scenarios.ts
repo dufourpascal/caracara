@@ -1,7 +1,6 @@
 import { v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import type { Id } from "./_generated/dataModel"
-
 import { mutation, query } from "./_generated/server"
 import {
   deleteDependenciesTouchingScenarioIds,
@@ -23,6 +22,39 @@ import {
   UNASSIGNED_SCENARIO_PHASE_KEY,
   validateProjectDependencyGraph,
 } from "./lib"
+
+const evaluationCheckValidator = v.object({
+  id: v.string(),
+  name: v.string(),
+  expectation: v.string(),
+})
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function validateEvaluationChecks(
+  status: "draft" | "active",
+  checks: Array<{ id: string; name: string; expectation: string }>
+) {
+  if (checks.length > 20 || (status === "active" && checks.length === 0)) {
+    throw new Error("Active scenarios require 1 to 20 evaluation checks.")
+  }
+  if (new Set(checks.map((check) => check.id)).size !== checks.length) {
+    throw new Error("Evaluation check IDs must be unique.")
+  }
+  for (const check of checks) {
+    if (
+      !UUID_PATTERN.test(check.id) ||
+      check.name.trim() === "" ||
+      check.name.length > 120 ||
+      check.expectation.trim() === "" ||
+      check.expectation.length > 2_000
+    ) {
+      throw new Error(
+        "Evaluation checks must have a valid ID, name, and expectation."
+      )
+    }
+  }
+}
 
 function normalizePhaseFilterKey(phaseFilter: string | null | undefined) {
   return phaseFilter === null || phaseFilter === undefined
@@ -67,14 +99,12 @@ export const listSummariesForProject = query({
       slug: scenario.slug,
       status: scenario.status,
       phaseId: scenario.phaseId ?? null,
-      phaseName:
-        scenario.phaseId
-          ? phaseById.get(scenario.phaseId as Id<"phases">)?.name ?? null
-          : null,
-      phaseOrder:
-        scenario.phaseId
-          ? phaseById.get(scenario.phaseId as Id<"phases">)?.order ?? null
-          : null,
+      phaseName: scenario.phaseId
+        ? (phaseById.get(scenario.phaseId as Id<"phases">)?.name ?? null)
+        : null,
+      phaseOrder: scenario.phaseId
+        ? (phaseById.get(scenario.phaseId as Id<"phases">)?.order ?? null)
+        : null,
       dependencyCount: scenario.dependencyIds.length,
     }))
   },
@@ -88,13 +118,13 @@ export const getNavigationSummaryForProject = query({
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
     const unassignedScenarioCount = (
       await ctx.db
-      .query("scenarios")
-      .withIndex("by_project_phase_navigation_order", (query) =>
-        query
-          .eq("projectId", project._id)
-          .eq("phaseFilterKey", UNASSIGNED_SCENARIO_PHASE_KEY)
-      )
-      .collect()
+        .query("scenarios")
+        .withIndex("by_project_phase_navigation_order", (query) =>
+          query
+            .eq("projectId", project._id)
+            .eq("phaseFilterKey", UNASSIGNED_SCENARIO_PHASE_KEY)
+        )
+        .collect()
     ).length
 
     return {
@@ -157,7 +187,7 @@ export const listPageForProject = query({
       page: result.page.map((scenario) =>
         toScenarioSummary(
           scenario,
-          scenario.phaseId ? phaseById.get(scenario.phaseId) ?? null : null
+          scenario.phaseId ? (phaseById.get(scenario.phaseId) ?? null) : null
         )
       ),
     }
@@ -181,10 +211,13 @@ export const getBySlug = query({
       return null
     }
 
-    const dependencyIds = [...(dependencyIdsByScenario.get(scenario._id) ?? [])].sort()
+    const dependencyIds = [
+      ...(dependencyIdsByScenario.get(scenario._id) ?? []),
+    ].sort()
     const phase =
-      phases.find((candidate) => candidate._id === (scenario.phaseId ?? null)) ??
-      null
+      phases.find(
+        (candidate) => candidate._id === (scenario.phaseId ?? null)
+      ) ?? null
 
     return {
       ...toScenario(scenario, phase),
@@ -223,11 +256,12 @@ export const create = mutation({
     slug: v.optional(v.string()),
     status: v.union(v.literal("draft"), v.literal("active")),
     instructions: v.string(),
-    scoringPrompt: v.string(),
+    evaluationChecks: v.array(evaluationCheckValidator),
     phaseId: v.optional(v.union(v.null(), v.id("phases"))),
     dependsOnScenarioIds: v.array(v.id("scenarios")),
   },
   handler: async (ctx, args) => {
+    validateEvaluationChecks(args.status, args.evaluationChecks)
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
@@ -239,7 +273,9 @@ export const create = mutation({
     const selectedPhaseId =
       args.phaseId !== undefined
         ? args.phaseId
-        : (phases.length > 0 ? phases[phases.length - 1]?._id ?? null : null)
+        : phases.length > 0
+          ? (phases[phases.length - 1]?._id ?? null)
+          : null
 
     if (
       selectedPhaseId !== null &&
@@ -254,7 +290,7 @@ export const create = mutation({
       slug,
       status: args.status,
       instructions: args.instructions,
-      scoringPrompt: args.scoringPrompt,
+      evaluationChecks: args.evaluationChecks,
       phaseId: selectedPhaseId,
       updatedAt: timestamp,
     })
@@ -273,8 +309,9 @@ export const create = mutation({
     }
 
     const phase =
-      phases.find((candidate) => candidate._id === (scenario.phaseId ?? null)) ??
-      null
+      phases.find(
+        (candidate) => candidate._id === (scenario.phaseId ?? null)
+      ) ?? null
 
     return toScenario(scenario, phase)
   },
@@ -314,11 +351,12 @@ export const update = mutation({
     slug: v.string(),
     status: v.union(v.literal("draft"), v.literal("active")),
     instructions: v.string(),
-    scoringPrompt: v.string(),
+    evaluationChecks: v.array(evaluationCheckValidator),
     phaseId: v.optional(v.union(v.null(), v.id("phases"))),
     dependsOnScenarioIds: v.array(v.id("scenarios")),
   },
   handler: async (ctx, args) => {
+    validateEvaluationChecks(args.status, args.evaluationChecks)
     const { project, scenario } = await ensureScenarioOwnership(
       ctx,
       args.scenarioId
@@ -348,13 +386,15 @@ export const update = mutation({
       slug,
       status: args.status,
       instructions: args.instructions,
-      scoringPrompt: args.scoringPrompt,
+      evaluationChecks: args.evaluationChecks,
       phaseId: selectedPhaseId,
       updatedAt: Date.now(),
     })
 
     if (isChangingPhase) {
-      await deleteDependenciesTouchingScenarioIds(ctx, project._id, [scenario._id])
+      await deleteDependenciesTouchingScenarioIds(ctx, project._id, [
+        scenario._id,
+      ])
     }
 
     await replaceScenarioDependencies(ctx, {

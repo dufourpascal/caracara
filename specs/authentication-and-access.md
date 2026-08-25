@@ -49,3 +49,12 @@ A user who owns a project in the web app should be able to use the CLI against t
 Sensitive credentials remain outside scenario content.
 
 Authentication tokens, local secrets, and environment credentials used during execution must not be stored as part of scenario definitions or exposed through normal project authoring flows.
+
+The CLI stores project-specific execution secrets in `.caracara/secrets.env`, separate from `config.json`. `caracara init` creates the ignored, owner-only stub without replacing existing values. Each run loads the nearest project secrets, gives the local runner their environment variable names and values, and redacts exact values from submitted summaries, evidence, and runner errors.
+
+The local agent can read a secret when it needs to enter that value into the application under test. This means the selected agent provider may receive that value in model context. Secrets that must remain hidden from the agent require a separate local secret-entry tool and are outside the v1 file-based flow.
+
+### AUTH_11
+Screenshot evidence uses the same project ownership boundary as runs.
+
+The CLI uploads screenshots with its Clerk bearer token. Convex verifies the owner, run, running scenario result, and check before storing a file. The web app serves image bytes through an authenticated same-origin route and never gives the browser a reusable Convex storage URL.

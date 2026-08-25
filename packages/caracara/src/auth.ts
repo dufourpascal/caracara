@@ -1,7 +1,11 @@
 import { createHash, randomBytes } from "node:crypto"
 import { createServer } from "node:http"
 
-import { authTokenResponseSchema, oauthTokenRequestSchema } from "@workspace/contracts"
+import {
+  API_NAMESPACE,
+  authTokenResponseSchema,
+  oauthTokenRequestSchema,
+} from "@workspace/contracts"
 
 function toBase64Url(buffer: Buffer) {
   return buffer
@@ -37,32 +41,34 @@ export async function listenForOAuthCallback() {
       const callbackUrl = `http://127.0.0.1:${address.port}/callback`
 
       const waitForCode = () =>
-        new Promise<{ code: string; state: string }>((resolveCode, rejectCode) => {
-          server.once("request", (request, response) => {
-            try {
-              const url = new URL(request.url ?? "/", callbackUrl)
-              const code = url.searchParams.get("code")
-              const state = url.searchParams.get("state")
+        new Promise<{ code: string; state: string }>(
+          (resolveCode, rejectCode) => {
+            server.once("request", (request, response) => {
+              try {
+                const url = new URL(request.url ?? "/", callbackUrl)
+                const code = url.searchParams.get("code")
+                const state = url.searchParams.get("state")
 
-              if (!code || !state) {
-                response.statusCode = 400
-                response.end("Missing OAuth code or state.")
-                rejectCode(new Error("Missing OAuth code or state"))
-                return
+                if (!code || !state) {
+                  response.statusCode = 400
+                  response.end("Missing OAuth code or state.")
+                  rejectCode(new Error("Missing OAuth code or state"))
+                  return
+                }
+
+                response.statusCode = 200
+                response.setHeader("content-type", "text/html; charset=utf-8")
+                response.end(
+                  "<html><body><p>Login complete. You can close this window.</p></body></html>"
+                )
+
+                resolveCode({ code, state })
+              } catch (error) {
+                rejectCode(error)
               }
-
-              response.statusCode = 200
-              response.setHeader("content-type", "text/html; charset=utf-8")
-              response.end(
-                "<html><body><p>Login complete. You can close this window.</p></body></html>",
-              )
-
-              resolveCode({ code, state })
-            } catch (error) {
-              rejectCode(error)
-            }
-          })
-        })
+            })
+          }
+        )
 
       const close = () =>
         new Promise<void>((resolveClose, rejectClose) => {
@@ -96,13 +102,16 @@ export async function exchangeAuthorizationCode(args: {
     redirectUri: args.redirectUri,
   })
 
-  const response = await fetch(`${args.apiBaseUrl}/api/${"v1"}/oauth/token`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  })
+  const response = await fetch(
+    `${args.apiBaseUrl}/api/${API_NAMESPACE}/oauth/token`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  )
 
   const json = await response.json()
 

@@ -48,7 +48,7 @@ When the user clicks a scenario in the left-side scenario list, the right-side p
 ### LAYOUT_10
 Selecting a run opens a run details workspace with a second-tier left-side navigation and summary metadata.
 
-When the user clicks a run in the runs list, the right-side area becomes a run details workspace. That workspace includes a second-tier left-side navigation panel whose top area shows a compact run summary with execution date and aggregated score when available. Below that summary, the panel lists the scenarios executed in that run in execution order, showing each scenario's score, a failure icon if it failed to run, and an icon indicating that the agent runner returned a response when applicable. Clicking one of those executed scenarios opens a detailed panel with all execution information for that scenario within the selected run.
+When the user clicks a run, the right-side workspace shows its date and derived pass rate. The scenario list shows passed and total check counts or an execution-failure icon. Selecting a scenario opens its ordered check snapshot, verdicts, browser evidence, execution summary, and failure details.
 
 ### LAYOUT_11
 Primary workspace state is reflected in the URL.

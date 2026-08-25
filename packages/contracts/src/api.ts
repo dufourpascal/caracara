@@ -78,7 +78,7 @@ export const orderedScenarioSchema = scenarioSchema
     slug: true,
     status: true,
     instructions: true,
-    scoringPrompt: true,
+    evaluationChecks: true,
     phaseId: true,
     phaseName: true,
     phaseOrder: true,
@@ -141,9 +141,25 @@ export const createRunResponseSchema = z.object({
     status: true,
     mode: true,
     runnerType: true,
+    evidencePolicy: true,
     requestedScenarioSlug: true,
     requestedPhaseOrder: true,
     startedAt: true,
+  }),
+  evidenceUploadUrl: z.string().url().optional(),
+})
+
+export const runEvidenceUploadResponseSchema = z.object({
+  evidence: z.object({
+    id: z.string().min(1),
+    checkId: z.string().uuid(),
+    contentType: z.literal("image/webp"),
+    byteSize: z
+      .number()
+      .int()
+      .positive()
+      .max(3 * 1024 * 1024),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
   }),
 })
 
@@ -154,7 +170,10 @@ export const startScenarioExecutionRequestSchema = z.object({
     scenarioSlug: slugSchema,
     scenarioName: z.string().min(1).max(120),
     executionInstructions: z.string().min(1).max(20_000),
-    scoringPrompt: z.string().min(1).max(20_000),
+    evaluationChecks: scenarioSchema.shape.evaluationChecks.min(1),
+    phaseId: z.string().nullable().optional(),
+    phaseName: z.string().min(1).max(120).nullable().optional(),
+    phaseOrder: z.number().int().positive().nullable().optional(),
     sequenceIndex: z.number().int().nonnegative(),
     runnerType: runnerTypeSchema,
     startedAt: z.number().int().positive(),
@@ -175,25 +194,15 @@ export const submitScenarioResultRequestSchema = z.object({
   runId: z.string().min(1),
   result: z.object({
     scenarioId: z.string().min(1),
-    scenarioSlug: slugSchema,
-    scenarioName: z.string().min(1).max(120),
-    executionInstructions: z.string().min(1).max(20_000),
-    scoringPrompt: z.string().min(1).max(20_000),
-    sequenceIndex: z.number().int().nonnegative(),
     status: z.enum([
-      "success",
-      "scoring_failed",
+      "completed",
       "runner_failed",
       "dependency_failed",
       "interrupted",
     ]),
-    runnerType: runnerTypeSchema,
-    score: z.number().min(0).max(1).nullable(),
-    rationale: nullableStringSchema,
-    improvementInstruction: nullableStringSchema,
+    checkResults: scenarioResultSchema.shape.checkResults,
     executionSummary: nullableStringSchema,
     failureDetail: nullableStringSchema,
-    startedAt: z.number().int().positive(),
     finishedAt: z.number().int().positive(),
   }),
 })
@@ -217,7 +226,9 @@ export const finalizeRunResponseSchema = z.object({
   run: runSchema.pick({
     id: true,
     status: true,
-    averageScore: true,
+    passedCheckCount: true,
+    totalCheckCount: true,
+    passRate: true,
     finishedAt: true,
     updatedAt: true,
   }),
@@ -247,3 +258,6 @@ export type CliConfig = z.infer<typeof cliConfigSchema>
 export type ProjectSummary = z.infer<typeof projectSummarySchema>
 export type OrderedScenario = z.infer<typeof orderedScenarioSchema>
 export type RunnablePhase = z.infer<typeof runnablePhaseSchema>
+export type RunEvidenceUploadResponse = z.infer<
+  typeof runEvidenceUploadResponseSchema
+>

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 
-import { createRunResponseSchema } from "@workspace/contracts"
+import { finalizeRunResponseSchema } from "@workspace/contracts"
 
 import {
-  createRun,
+  finalizeRun,
   handleApiError,
   parseJsonBody,
   requireCliVersion,
@@ -13,19 +13,28 @@ import {
 
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ projectSlug: string }> }
+  {
+    params,
+  }: {
+    params: Promise<{ projectSlug: string; runId: string }>
+  }
 ) {
   try {
     requireCliVersion(request)
     const token = await requireVerifiedToken(request)
-    const { projectSlug } = await params
+    const { projectSlug, runId } = await params
     const body = await parseJsonBody(
       request,
-      routeSchemas.createRunRequestSchema
+      routeSchemas.finalizeRunRequestSchema
     )
-    const response = await createRun(token, { projectSlug, body })
+    const response = await finalizeRun({
+      token,
+      projectSlug,
+      runId,
+      body,
+    })
 
-    return NextResponse.json(createRunResponseSchema.parse(response))
+    return NextResponse.json(finalizeRunResponseSchema.parse(response))
   } catch (error) {
     return handleApiError(error)
   }

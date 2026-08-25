@@ -85,6 +85,7 @@ import {
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
+import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
 type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
@@ -2402,6 +2403,7 @@ function ScenarioEditor({
     id: string
     name: string
     slug: string
+    dependencyIds: string[]
     phaseId?: string | null
   }>
   allPhases: Array<{
@@ -2421,6 +2423,7 @@ function ScenarioEditor({
   )
   const [form, setForm] = useState(() => createScenarioFormState(scenario))
   const [dependencySearch, setDependencySearch] = useState("")
+  const [saveError, setSaveError] = useState<string | null>(null)
   const isDraftScenario = !scenario.id
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
@@ -2441,8 +2444,13 @@ function ScenarioEditor({
 
   return (
     <div className="grid h-full content-start gap-6 px-6 py-6">
-      <div className="flex items-center justify-end gap-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        {saveError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {saveError}
+          </p>
+        ) : null}
+        <div className="ml-auto flex items-center gap-2">
           {isDraftScenario ? null : (
             <Button
               size="sm"
@@ -2468,7 +2476,10 @@ function ScenarioEditor({
             size="sm"
             variant="outline"
             disabled={!isDirty}
-            onClick={() => setForm(savedForm)}
+            onClick={() => {
+              setForm(savedForm)
+              setSaveError(null)
+            }}
           >
             <RotateCcw />
             Revert
@@ -2477,11 +2488,38 @@ function ScenarioEditor({
             size="sm"
             disabled={!isDirty || hasInvalidEvaluationChecks}
             onClick={async () => {
-              if (isDraftScenario) {
-                const created = await createScenario({
-                  projectId: projectId as never,
+              setSaveError(null)
+
+              try {
+                if (isDraftScenario) {
+                  const created = await createScenario({
+                    projectId: projectId as never,
+                    name: form.name,
+                    slug: form.slug.trim() === "" ? undefined : form.slug,
+                    status: form.status,
+                    instructions: form.instructions,
+                    evaluationChecks: form.evaluationChecks,
+                    phaseId: form.phaseId ? (form.phaseId as never) : null,
+                    dependsOnScenarioIds: form.dependencyIds.map(
+                      (dependencyId) => dependencyId as never
+                    ),
+                  })
+                  router.replace(
+                    getScenarioSelectionHref({
+                      mode: "edit",
+                      phaseFilter:
+                        created.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
+                      projectSlug,
+                      scenarioSlug: created.slug,
+                    })
+                  )
+                  return
+                }
+
+                const updated = await updateScenario({
+                  scenarioId: scenario.id as never,
                   name: form.name,
-                  slug: form.slug.trim() === "" ? undefined : form.slug,
+                  slug: form.slug,
                   status: form.status,
                   instructions: form.instructions,
                   evaluationChecks: form.evaluationChecks,
@@ -2490,40 +2528,19 @@ function ScenarioEditor({
                     (dependencyId) => dependencyId as never
                   ),
                 })
+                setSavedForm(form)
                 router.replace(
                   getScenarioSelectionHref({
                     mode: "edit",
                     phaseFilter:
-                      created.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
+                      updated.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
                     projectSlug,
-                    scenarioSlug: created.slug,
+                    scenarioSlug: updated.slug,
                   })
                 )
-                return
+              } catch (error) {
+                setSaveError(getErrorMessage(error))
               }
-
-              const updated = await updateScenario({
-                scenarioId: scenario.id as never,
-                name: form.name,
-                slug: form.slug,
-                status: form.status,
-                instructions: form.instructions,
-                evaluationChecks: form.evaluationChecks,
-                phaseId: form.phaseId ? (form.phaseId as never) : null,
-                dependsOnScenarioIds: form.dependencyIds.map(
-                  (dependencyId) => dependencyId as never
-                ),
-              })
-              setSavedForm(form)
-              router.replace(
-                getScenarioSelectionHref({
-                  mode: "edit",
-                  phaseFilter:
-                    updated.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
-                  projectSlug,
-                  scenarioSlug: updated.slug,
-                })
-              )
             }}
           >
             <Save />
@@ -2832,11 +2849,22 @@ function ScenarioEditor({
               ) : (
                 visibleDependencies.map((dependency) => {
                   const checked = form.dependencyIds.includes(dependency.id)
+                  const createsCycle =
+                    !checked &&
+                    wouldCreateDependencyCycle(
+                      allScenarios,
+                      scenario.id,
+                      dependency.id
+                    )
+                  const cycleWarningId = `dependency-${dependency.id}-cycle`
 
                   return (
                     <label
                       key={dependency.id}
-                      className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
+                      className={cn(
+                        "flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0",
+                        createsCycle && "text-muted-foreground"
+                      )}
                     >
                       <span>
                         <span className="block text-foreground">
@@ -2845,9 +2873,21 @@ function ScenarioEditor({
                         <span className="font-mono text-[11px] text-muted-foreground">
                           {dependency.slug}
                         </span>
+                        {createsCycle ? (
+                          <span
+                            className="block text-xs text-destructive"
+                            id={cycleWarningId}
+                          >
+                            Would create a cycle
+                          </span>
+                        ) : null}
                       </span>
                       <input
+                        aria-describedby={
+                          createsCycle ? cycleWarningId : undefined
+                        }
                         checked={checked}
+                        disabled={createsCycle}
                         onChange={(event) =>
                           setForm((current) => ({
                             ...current,

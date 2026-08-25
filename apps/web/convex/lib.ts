@@ -703,7 +703,21 @@ export async function validateProjectDependencyGraph(
   ctx: Ctx,
   projectId: Id<"projects">
 ) {
-  await getExecutionPlan(ctx, projectId)
+  try {
+    await getExecutionPlan(ctx, projectId)
+  } catch (error) {
+    if (error instanceof ConvexError) {
+      throw error
+    }
+
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Scenario dependencies are invalid.",
+    })
+  }
 }
 
 export async function getScenarioBySlug(

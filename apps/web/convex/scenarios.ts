@@ -107,6 +107,7 @@ export const listSummariesForProject = query({
       name: scenario.name,
       slug: scenario.slug,
       status: scenario.status,
+      dependencyIds: scenario.dependencyIds,
       phaseId: scenario.phaseId ?? null,
       phaseName: scenario.phaseId
         ? (phaseById.get(scenario.phaseId as Id<"phases">)?.name ?? null)

@@ -4,6 +4,7 @@ import {
   assertProjectAuthoringUnlocked,
   ensurePhaseOwnership,
   ensureScenarioOwnership,
+  validateProjectDependencyGraph,
 } from "./lib"
 import { validateEvaluationChecks } from "./scenarios"
 
@@ -116,6 +117,91 @@ describe("authoring validation", () => {
         data: {
           code: "validation_error",
           message: expect.stringMatching(/1 to 20 evaluation checks/i),
+        },
+      })
+    }
+  })
+
+  it("reports dependency cycles as validation errors", async () => {
+    const documents = {
+      phases: [
+        {
+          _id: "phase-1",
+          name: "Checkout",
+          order: 1,
+          projectId: "project-1",
+        },
+      ],
+      scenarios: [
+        {
+          _id: "scenario-a",
+          name: "A",
+          slug: "a",
+          status: "draft",
+          instructions: "A",
+          evaluationChecks: [],
+          phaseId: "phase-1",
+          projectId: "project-1",
+        },
+        {
+          _id: "scenario-b",
+          name: "B",
+          slug: "b",
+          status: "draft",
+          instructions: "B",
+          evaluationChecks: [],
+          phaseId: "phase-1",
+          projectId: "project-1",
+        },
+      ],
+      scenarioDependencies: [
+        {
+          scenarioId: "scenario-a",
+          dependsOnScenarioId: "scenario-b",
+          projectId: "project-1",
+        },
+        {
+          scenarioId: "scenario-b",
+          dependsOnScenarioId: "scenario-a",
+          projectId: "project-1",
+        },
+      ],
+    }
+    const graphContext = {
+      db: {
+        query(table: keyof typeof documents) {
+          return {
+            withIndex(
+              _indexName: string,
+              buildQuery: (query: {
+                eq: (field: string, value: string) => unknown
+              }) => unknown
+            ) {
+              const query = {
+                eq() {
+                  return query
+                },
+              }
+              buildQuery(query)
+              return {
+                async collect() {
+                  return documents[table]
+                },
+              }
+            },
+          }
+        },
+      },
+    } as never
+
+    try {
+      await validateProjectDependencyGraph(graphContext, "project-1" as never)
+      throw new Error("Expected dependency validation to fail")
+    } catch (error) {
+      expect(error).toMatchObject({
+        data: {
+          code: "validation_error",
+          message: expect.stringMatching(/cycle/i),
         },
       })
     }

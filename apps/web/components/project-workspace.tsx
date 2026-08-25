@@ -2467,7 +2467,7 @@ function ScenarioEditor({
           <Button
             size="sm"
             variant="outline"
-            disabled={!isDirty || hasInvalidEvaluationChecks}
+            disabled={!isDirty}
             onClick={() => setForm(savedForm)}
           >
             <RotateCcw />
@@ -2475,7 +2475,7 @@ function ScenarioEditor({
           </Button>
           <Button
             size="sm"
-            disabled={!isDirty}
+            disabled={!isDirty || hasInvalidEvaluationChecks}
             onClick={async () => {
               if (isDraftScenario) {
                 const created = await createScenario({

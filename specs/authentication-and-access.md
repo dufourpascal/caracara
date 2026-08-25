@@ -58,3 +58,8 @@ The local agent can read a secret when it needs to enter that value into the app
 Screenshot evidence uses the same project ownership boundary as runs.
 
 The CLI uploads screenshots with its Clerk bearer token. Convex verifies the owner, run, running scenario result, and check before storing a file. The web app serves image bytes through an authenticated same-origin route and never gives the browser a reusable Convex storage URL.
+
+### AUTH_12
+CLI authoring reuses the existing user login.
+
+The eight authoring commands use the current Clerk-backed CLI token and project ownership checks. V1 does not add authoring credentials, roles, API keys, or another login flow.

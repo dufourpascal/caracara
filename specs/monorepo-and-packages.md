@@ -43,7 +43,7 @@ Even though everything lives in one monorepo, the web app, CLI, and shared contr
 ### REPO_09
 The CLI package should be publishable to npm from the monorepo.
 
-The repository structure and release process should support building and publishing the `caracara` package without manual copying or external packaging steps.
+The repository structure and release process should support building and publishing the `caracara` package without manual copying or external packaging steps. The package includes the eight direct phase, scenario, and check authoring commands alongside execution commands.
 
 ### REPO_10
 The monorepo should optimize for straightforward local development and future growth.

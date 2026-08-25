@@ -53,3 +53,8 @@ The service supports only HTTP namespace v3, API version 3, and CLI version 0.3.
 The API distinguishes contract errors from execution outcomes.
 
 Contract responses should clearly separate malformed requests, authentication failures, authorization failures, missing resources, and accepted result submissions that contain failed scenario executions as normal product data.
+
+### API_11
+API v3 exposes one narrow authoring operation endpoint.
+
+`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eight supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. A running-run authoring lock returns `conflict` rather than queuing the write.

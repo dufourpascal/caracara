@@ -1,8 +1,9 @@
-import { v } from "convex/values"
+import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import {
+  assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
@@ -263,6 +264,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     validateEvaluationChecks(args.status, args.evaluationChecks)
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const slug = await ensureUniqueScenarioSlug(
@@ -323,6 +325,7 @@ export const ensureNavigationMetadataForProject = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
     const needsRebuild = scenarios.some(
       (scenario) =>
@@ -361,6 +364,7 @@ export const update = mutation({
       ctx,
       args.scenarioId
     )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const slug = await ensureUniqueScenarioSlug(
       ctx,
@@ -419,6 +423,243 @@ export const update = mutation({
   },
 })
 
+export const updateDetails = mutation({
+  args: {
+    scenarioId: v.id("scenarios"),
+    name: v.optional(v.string()),
+    slug: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("draft"), v.literal("active"))),
+    instructions: v.optional(v.string()),
+    phaseId: v.optional(v.union(v.null(), v.id("phases"))),
+    dependsOnScenarioIds: v.optional(v.array(v.id("scenarios"))),
+  },
+  handler: async (ctx, args) => {
+    if (
+      args.name === undefined &&
+      args.slug === undefined &&
+      args.status === undefined &&
+      args.instructions === undefined &&
+      args.phaseId === undefined &&
+      args.dependsOnScenarioIds === undefined
+    ) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "updateScenario requires at least one change.",
+      })
+    }
+
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+    const phases = await getProjectPhases(ctx, project._id)
+    const status = args.status ?? scenario.status
+    const selectedPhaseId =
+      args.phaseId !== undefined ? args.phaseId : (scenario.phaseId ?? null)
+
+    validateEvaluationChecks(status, scenario.evaluationChecks)
+
+    if (
+      selectedPhaseId !== null &&
+      !phases.some((phase) => phase._id === selectedPhaseId)
+    ) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Selected phase does not belong to this project.",
+      })
+    }
+
+    const slug =
+      args.slug === undefined
+        ? scenario.slug
+        : await ensureUniqueScenarioSlug(
+            ctx,
+            project._id,
+            args.slug,
+            scenario._id
+          )
+    const isChangingPhase = (scenario.phaseId ?? null) !== selectedPhaseId
+
+    await ctx.db.patch(scenario._id, {
+      name: args.name ?? scenario.name,
+      slug,
+      status,
+      instructions: args.instructions ?? scenario.instructions,
+      phaseId: selectedPhaseId,
+      updatedAt: Date.now(),
+    })
+
+    if (isChangingPhase) {
+      await deleteDependenciesTouchingScenarioIds(ctx, project._id, [
+        scenario._id,
+      ])
+    }
+
+    if (args.dependsOnScenarioIds !== undefined) {
+      await replaceScenarioDependencies(ctx, {
+        projectId: project._id,
+        scenarioId: scenario._id,
+        dependsOnScenarioIds: args.dependsOnScenarioIds,
+      })
+    }
+
+    await validateProjectDependencyGraph(ctx, project._id)
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
+
+    const updatedScenario = await ctx.db.get(scenario._id)
+    if (!updatedScenario) {
+      throw new Error("Failed to update scenario")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === selectedPhaseId) ?? null
+    )
+  },
+})
+
+export const addCheck = mutation({
+  args: {
+    scenarioId: v.id("scenarios"),
+    check: evaluationCheckValidator,
+  },
+  handler: async (ctx, args) => {
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+    const evaluationChecks = [...scenario.evaluationChecks, args.check]
+    validateEvaluationChecks(scenario.status, evaluationChecks)
+    await ctx.db.patch(scenario._id, {
+      evaluationChecks,
+      updatedAt: Date.now(),
+    })
+    const [updatedScenario, phases] = await Promise.all([
+      ctx.db.get(scenario._id),
+      getProjectPhases(ctx, project._id),
+    ])
+
+    if (!updatedScenario) {
+      throw new Error("Failed to add evaluation check")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === (updatedScenario.phaseId ?? null)) ??
+        null
+    )
+  },
+})
+
+export const removeCheck = mutation({
+  args: {
+    scenarioId: v.id("scenarios"),
+    checkId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+
+    if (!scenario.evaluationChecks.some((check) => check.id === args.checkId)) {
+      throw new ConvexError({
+        code: "not_found",
+        message: "Evaluation check not found.",
+      })
+    }
+
+    const evaluationChecks = scenario.evaluationChecks.filter(
+      (check) => check.id !== args.checkId
+    )
+    validateEvaluationChecks(scenario.status, evaluationChecks)
+    await ctx.db.patch(scenario._id, {
+      evaluationChecks,
+      updatedAt: Date.now(),
+    })
+    const [updatedScenario, phases] = await Promise.all([
+      ctx.db.get(scenario._id),
+      getProjectPhases(ctx, project._id),
+    ])
+
+    if (!updatedScenario) {
+      throw new Error("Failed to remove evaluation check")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === (updatedScenario.phaseId ?? null)) ??
+        null
+    )
+  },
+})
+
+export const updateCheck = mutation({
+  args: {
+    scenarioId: v.id("scenarios"),
+    checkId: v.string(),
+    name: v.optional(v.string()),
+    expectation: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.name === undefined && args.expectation === undefined) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "updateCheck requires a name or expectation.",
+      })
+    }
+
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+    let found = false
+    const evaluationChecks = scenario.evaluationChecks.map((check) => {
+      if (check.id !== args.checkId) {
+        return check
+      }
+
+      found = true
+      return {
+        ...check,
+        name: args.name ?? check.name,
+        expectation: args.expectation ?? check.expectation,
+      }
+    })
+
+    if (!found) {
+      throw new ConvexError({
+        code: "not_found",
+        message: "Evaluation check not found.",
+      })
+    }
+
+    validateEvaluationChecks(scenario.status, evaluationChecks)
+    await ctx.db.patch(scenario._id, {
+      evaluationChecks,
+      updatedAt: Date.now(),
+    })
+    const [updatedScenario, phases] = await Promise.all([
+      ctx.db.get(scenario._id),
+      getProjectPhases(ctx, project._id),
+    ])
+
+    if (!updatedScenario) {
+      throw new Error("Failed to update evaluation check")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === (updatedScenario.phaseId ?? null)) ??
+        null
+    )
+  },
+})
+
 export const remove = mutation({
   args: {
     scenarioId: v.id("scenarios"),
@@ -428,6 +669,7 @@ export const remove = mutation({
       ctx,
       args.scenarioId
     )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
 
     const dependencies = await getProjectDependencies(ctx, project._id)
     const relatedDependencies = dependencies.filter(

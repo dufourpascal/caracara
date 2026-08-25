@@ -4,6 +4,8 @@ import { NextResponse } from "next/server"
 
 import {
   apiErrorSchema,
+  authoringRequestSchema,
+  type AuthoringRequest,
   createRunRequestSchema,
   createVersionMismatchDetails,
   finalizeRunRequestSchema,
@@ -266,6 +268,124 @@ export async function getProjectList(token: string) {
   return projectListResponseSchema.parse({ projects })
 }
 
+export async function authorProject(args: {
+  token: string
+  projectSlug: string
+  body: unknown
+}) {
+  const payload = authoringRequestSchema.parse(args.body)
+  const { project } = await getProjectBySlug(args.token, args.projectSlug)
+  let result: unknown
+
+  switch (payload.operation) {
+    case "addPhase":
+      result = await fetchMutation(
+        api.phases.create,
+        { projectId: project.id as never, name: payload.name },
+        { token: args.token }
+      )
+      break
+    case "editPhase":
+      result = await fetchMutation(
+        api.phases.update,
+        { phaseId: payload.phaseId as never, name: payload.name },
+        { token: args.token }
+      )
+      break
+    case "removePhase":
+      result = await fetchMutation(
+        api.phases.remove,
+        { phaseId: payload.phaseId as never },
+        { token: args.token }
+      )
+      break
+    case "createScenario":
+      result = await fetchMutation(
+        api.scenarios.create,
+        {
+          projectId: project.id as never,
+          name: payload.name,
+          ...(payload.slug === undefined ? {} : { slug: payload.slug }),
+          status: "draft",
+          instructions: payload.instructions,
+          evaluationChecks: [],
+          ...(payload.phaseId === undefined
+            ? {}
+            : { phaseId: payload.phaseId as never }),
+          dependsOnScenarioIds: payload.dependsOnScenarioIds.map(
+            (id) => id as never
+          ),
+        },
+        { token: args.token }
+      )
+      break
+    case "updateScenario":
+      result = await fetchMutation(
+        api.scenarios.updateDetails,
+        {
+          scenarioId: payload.scenarioId as never,
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.slug === undefined ? {} : { slug: payload.slug }),
+          ...(payload.status === undefined ? {} : { status: payload.status }),
+          ...(payload.instructions === undefined
+            ? {}
+            : { instructions: payload.instructions }),
+          ...(payload.phaseId === undefined
+            ? {}
+            : { phaseId: payload.phaseId as never }),
+          ...(payload.dependsOnScenarioIds === undefined
+            ? {}
+            : {
+                dependsOnScenarioIds: payload.dependsOnScenarioIds.map(
+                  (id) => id as never
+                ),
+              }),
+        },
+        { token: args.token }
+      )
+      break
+    case "addCheck":
+      result = await fetchMutation(
+        api.scenarios.addCheck,
+        {
+          scenarioId: payload.scenarioId as never,
+          check: payload.check,
+        },
+        { token: args.token }
+      )
+      break
+    case "removeCheck":
+      result = await fetchMutation(
+        api.scenarios.removeCheck,
+        {
+          scenarioId: payload.scenarioId as never,
+          checkId: payload.checkId,
+        },
+        { token: args.token }
+      )
+      break
+    case "updateCheck":
+      result = await fetchMutation(
+        api.scenarios.updateCheck,
+        {
+          scenarioId: payload.scenarioId as never,
+          checkId: payload.checkId,
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.expectation === undefined
+            ? {}
+            : { expectation: payload.expectation }),
+        },
+        { token: args.token }
+      )
+      break
+  }
+
+  return {
+    operation: payload.operation,
+    result,
+  } satisfies { operation: AuthoringRequest["operation"]; result: unknown }
+}
+
 export async function createRun(
   token: string,
   args: {
@@ -399,6 +519,7 @@ export async function finalizeRun(args: {
 }
 
 export const routeSchemas = {
+  authoringRequestSchema,
   createRunRequestSchema,
   finalizeRunRequestSchema,
   oauthAuthorizeRequestSchema,

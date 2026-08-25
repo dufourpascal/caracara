@@ -142,6 +142,25 @@ export async function requireProjectOwnerBySlug(ctx: Ctx, slug: string) {
   return { identity, project }
 }
 
+export async function assertProjectAuthoringUnlocked(
+  ctx: Ctx,
+  projectId: Id<"projects">
+) {
+  const runningRun = await ctx.db
+    .query("runs")
+    .withIndex("by_project_status", (query) =>
+      query.eq("projectId", projectId).eq("status", "running")
+    )
+    .first()
+
+  if (runningRun) {
+    throw new ConvexError({
+      code: "conflict",
+      message: `Authoring is unavailable while run ${runningRun.name} is running.`,
+    })
+  }
+}
+
 export function toProject(project: Doc<"projects">) {
   return {
     id: project._id,

@@ -36,9 +36,9 @@ Scenario dependencies are explicit graph relationships.
 Dependencies should be modeled as first-class relations between scenarios so the system can validate them, prevent cycles, and execute scenarios in a deterministic order.
 
 ### DOMAIN_08
-A scenario has a stable identity and versioned content.
+A scenario has a stable identity and mutable content.
 
-A scenario should keep a durable identifier across edits, while the actual authored content used for execution should be snapshotted or versioned so past runs remain trustworthy.
+A scenario keeps its durable identifier and is updated in place. Caracara does not store authored scenario versions. Scenario results retain the instructions and checks used for that execution so past runs remain intelligible after later edits.
 
 ### DOMAIN_09
 A run is a single execution event within a project.

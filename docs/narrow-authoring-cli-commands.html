@@ -1,0 +1,1360 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'"
+    />
+    <title>Plan: narrow scenario authoring CLI commands</title>
+    <style>
+      :root {
+        --paper: #fff;
+        --ink: #171717;
+        --ink-soft: #525252;
+        --line: #d4d4d4;
+        --line-strong: #a3a3a3;
+        --accent: #262626;
+        --accent-dark: #171717;
+        --accent-soft: #f5f5f5;
+        --success: #047857;
+        --error: #b91c1c;
+        --space-sm: 0.5rem;
+        --space-md: 1rem;
+        --space-lg: 1.5rem;
+        --space-xl: 2rem;
+        --measure: 65ch;
+        --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #fff;
+        color: var(--ink);
+        font-family:
+          "Geist",
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        font-size: 1rem;
+        line-height: 1.6;
+        font-kerning: normal;
+      }
+
+      button,
+      textarea {
+        font: inherit;
+      }
+
+      a {
+        color: var(--accent-dark);
+      }
+
+      .skip-link {
+        position: fixed;
+        top: var(--space-md);
+        left: var(--space-md);
+        z-index: 10;
+        padding: 0.65rem 1rem;
+        background: var(--ink);
+        color: var(--paper);
+        transform: translateY(-200%);
+        transition: transform 180ms var(--ease-out);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .shell {
+        width: min(100% - 2rem, 68rem);
+        margin-inline: auto;
+        padding: clamp(2rem, 5vw, 4rem) 0 5rem;
+      }
+
+      .plan-header {
+        display: grid;
+        gap: var(--space-md);
+        max-width: 48rem;
+        margin-bottom: clamp(3rem, 6vw, 5rem);
+      }
+
+      .eyebrow,
+      .phase-index,
+      .requirement-kind,
+      .status {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        line-height: 1.3;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        color: var(--ink-soft);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-family: inherit;
+        font-weight: 700;
+        line-height: 1.2;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 18ch;
+        font-size: clamp(2.5rem, 6vw, 4.5rem);
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: clamp(1.75rem, 3vw, 2.5rem);
+        letter-spacing: -0.03em;
+      }
+      h3 {
+        font-size: 1.25rem;
+        letter-spacing: -0.015em;
+      }
+
+      .lead {
+        max-width: 56ch;
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 1.125rem;
+      }
+
+      .plan-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-md) var(--space-lg);
+        align-items: center;
+        padding-top: var(--space-md);
+        border-top: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 0.875rem;
+      }
+
+      .status {
+        color: var(--ink-soft);
+      }
+      [data-plan-status="complete"] .status {
+        color: var(--success);
+      }
+
+      .plan-section {
+        scroll-margin-top: 2rem;
+      }
+
+      .overview,
+      .requirements {
+        max-width: 62rem;
+        margin-bottom: clamp(3rem, 6vw, 5rem);
+      }
+
+      .section-heading {
+        display: grid;
+        gap: var(--space-sm);
+        margin-bottom: var(--space-lg);
+      }
+
+      .section-copy,
+      .phase-copy {
+        max-width: var(--measure);
+        color: var(--ink-soft);
+      }
+
+      .section-copy > :first-child,
+      .phase-copy > :first-child {
+        margin-top: 0;
+      }
+      .section-copy > :last-child,
+      .phase-copy > :last-child {
+        margin-bottom: 0;
+      }
+
+      .requirement-list {
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .requirement {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--space-sm);
+        padding: var(--space-lg) 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .requirement-kind {
+        color: var(--ink-soft);
+      }
+      .requirement p {
+        max-width: 58ch;
+        margin: 0;
+        color: var(--ink-soft);
+      }
+
+      .phases {
+        display: grid;
+        gap: clamp(3rem, 6vw, 5rem);
+      }
+
+      .phase {
+        position: relative;
+        display: grid;
+        gap: var(--space-lg);
+        padding-top: var(--space-lg);
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .phase-index {
+        color: var(--ink-soft);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .phase-description {
+        max-width: 52ch;
+        margin: var(--space-sm) 0 0;
+        color: var(--ink-soft);
+        font-size: 1rem;
+      }
+
+      .phase-requirements {
+        margin-top: var(--space-md);
+      }
+
+      .phase-requirements > h3 {
+        margin-bottom: var(--space-lg);
+        font-family: inherit;
+        font-size: 0.75rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .feedback {
+        align-self: start;
+        margin-top: var(--space-md);
+      }
+
+      .feedback-toggle,
+      .feedback-actions button {
+        min-height: 2.75rem;
+        border: 1px solid var(--line);
+        border-radius: 0;
+        background: #fff;
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        transition:
+          background-color 120ms linear,
+          border-color 120ms linear,
+          color 120ms linear;
+      }
+
+      .feedback-toggle {
+        padding: 0.55rem 0.85rem;
+      }
+      .feedback-toggle.has-feedback {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+      }
+
+      @media (hover: hover) {
+        .feedback-toggle:hover,
+        .feedback-actions button:hover {
+          border-color: var(--line-strong);
+          background: #f9fafb;
+        }
+      }
+
+      button:active {
+        background: #f3f4f6;
+      }
+
+      button:focus-visible,
+      textarea:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .feedback-form {
+        max-width: 42rem;
+        margin-top: var(--space-md);
+        padding: var(--space-md);
+        border: 1px solid var(--line);
+        border-radius: 0;
+        background: #f9fafb;
+      }
+
+      .feedback-form[hidden] {
+        display: none;
+      }
+
+      .feedback-form label {
+        display: block;
+        margin-bottom: var(--space-sm);
+        font-size: 0.875rem;
+        font-weight: 700;
+      }
+
+      .feedback-form textarea {
+        display: block;
+        width: 100%;
+        min-height: 8rem;
+        resize: vertical;
+        padding: 0.8rem;
+        border: 1px solid var(--line-strong);
+        border-radius: 0;
+        background: #fff;
+        color: var(--ink);
+        line-height: 1.5;
+      }
+
+      .feedback-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-sm);
+        margin-top: var(--space-md);
+      }
+
+      .feedback-actions button {
+        padding: 0.55rem 0.9rem;
+      }
+      .feedback-actions .save-feedback {
+        border-color: var(--accent-dark);
+        background: var(--accent-dark);
+        color: #fff;
+      }
+      .feedback-actions .save-feedback:hover {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+      .feedback-actions button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+        transform: none;
+      }
+
+      .feedback-status {
+        min-height: 1.5em;
+        margin: var(--space-sm) 0 0;
+        color: var(--ink-soft);
+        font-size: 0.875rem;
+      }
+
+      .feedback-status[data-state="error"] {
+        color: var(--error);
+      }
+      .feedback-status[data-state="success"] {
+        color: var(--success);
+      }
+
+      code,
+      pre {
+        font-family:
+          "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+
+      code {
+        padding: 0.08rem 0.25rem;
+        background: #f5f5f5;
+        font-size: 0.9em;
+      }
+
+      .command-table {
+        width: 100%;
+        margin: var(--space-lg) 0;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+
+      .command-table th,
+      .command-table td {
+        padding: 0.75rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .command-table th {
+        background: #f5f5f5;
+      }
+
+      .command-table code {
+        padding: 0;
+        background: transparent;
+      }
+
+      @media (min-width: 48rem) {
+        .phase {
+          grid-template-columns: 12rem minmax(0, 1fr);
+          column-gap: clamp(2rem, 5vw, 4rem);
+        }
+
+        .phase-heading {
+          grid-column: 1;
+        }
+        .phase-body {
+          grid-column: 2;
+        }
+
+        .requirement {
+          grid-template-columns: 12rem minmax(0, 1fr);
+          gap: var(--space-lg);
+          align-items: start;
+        }
+
+        .requirement > p,
+        .requirement > .feedback {
+          grid-column: 2;
+        }
+        .requirement > .feedback {
+          margin-top: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+        .shell {
+          width: 100%;
+          padding: 0;
+        }
+        .feedback,
+        .skip-link {
+          display: none !important;
+        }
+        .phase {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to plan</a>
+
+    <main
+      class="shell"
+      id="main-content"
+      data-plan-status="complete"
+      data-plan-revision="2"
+    >
+      <header class="plan-header plan-section" data-plan-section="overview">
+        <span class="eyebrow">Implementation plan</span>
+        <h1>Direct scenario authoring from the CLI</h1>
+        <p class="lead">
+          Add eight narrow commands that let an interactive AI agent change
+          phases, scenarios, and checks immediately without giving an evaluation
+          agent the chance to rewrite a running evaluation.
+        </p>
+        <div class="plan-meta" aria-label="Plan metadata">
+          <span class="status">Complete</span>
+          <span class="revision">Revision 2</span>
+        </div>
+        <div class="feedback">
+          <button
+            class="feedback-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="feedback-overview"
+          >
+            Give feedback
+          </button>
+          <form class="feedback-form" id="feedback-overview" hidden>
+            <label for="feedback-text-overview"
+              >Feedback on the plan overview</label
+            >
+            <textarea
+              id="feedback-text-overview"
+              maxlength="10000"
+              placeholder="What should change?"
+            ></textarea>
+            <div class="feedback-actions">
+              <button class="save-feedback" type="submit">Save feedback</button>
+              <button class="close-feedback" type="button">Close editor</button>
+            </div>
+            <p class="feedback-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </header>
+
+      <section class="overview plan-section" data-plan-section="plan-context">
+        <div class="section-heading">
+          <span class="eyebrow">Context</span>
+          <h2>Why this work matters</h2>
+        </div>
+        <div class="section-copy">
+          <p>
+            Caracara already has authenticated Convex mutations for phase and
+            whole-scenario editing, while the published CLI only reads scenarios
+            and submits runs. This change exposes a deliberately small authoring
+            interface through the existing CLI login and project selection.
+          </p>
+          <p>
+            The commands write the live scenario records directly. There is no
+            proposal object, review screen, scenario-version table, delayed
+            activation, or undo feature. The existing
+            <code>scenarioResults</code> snapshots remain because they are run
+            evidence, not authored scenario versions.
+          </p>
+          <p>
+            A direct command using the same owner credential is unsafe during
+            evaluation. The minimum enforceable boundary is therefore a backend
+            rule that rejects every phase or scenario mutation while the project
+            has a <code>running</code> run. Outside a run, changes take effect
+            immediately.
+          </p>
+        </div>
+        <div class="feedback">
+          <button
+            class="feedback-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="feedback-plan-context"
+          >
+            Give feedback
+          </button>
+          <form class="feedback-form" id="feedback-plan-context" hidden>
+            <label for="feedback-text-plan-context"
+              >Feedback on the plan context</label
+            >
+            <textarea
+              id="feedback-text-plan-context"
+              maxlength="10000"
+              placeholder="What should change?"
+            ></textarea>
+            <div class="feedback-actions">
+              <button class="save-feedback" type="submit">Save feedback</button>
+              <button class="close-feedback" type="button">Close editor</button>
+            </div>
+            <p class="feedback-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+
+      <section class="requirements" aria-labelledby="global-requirements-title">
+        <div class="section-heading">
+          <span class="eyebrow">Across all phases</span>
+          <h2 id="global-requirements-title">Global requirements</h2>
+        </div>
+        <div class="requirement-list">
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-eight-operations"
+          >
+            <div>
+              <span class="requirement-kind">CLI scope</span>
+              <h3>Exactly eight mutation commands</h3>
+            </div>
+            <p>
+              Expose <code>addPhase</code>, <code>editPhase</code>,
+              <code>removePhase</code>, <code>createScenario</code>,
+              <code>updateScenario</code>, <code>addCheck</code>,
+              <code>removeCheck</code>, and <code>updateCheck</code>. Do not add
+              a generic patch command or scenario deletion command.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-eight-operations"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-eight-operations"
+                hidden
+              >
+                <label for="feedback-text-requirement-eight-operations"
+                  >Feedback on the command scope</label
+                >
+                <textarea
+                  id="feedback-text-requirement-eight-operations"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-direct-writes"
+          >
+            <div>
+              <span class="requirement-kind">Behavior</span>
+              <h3>Direct, immediate writes</h3>
+            </div>
+            <p>
+              Each successful command updates the current Convex record and
+              returns the changed entity or concise deletion result. There is no
+              confirmation prompt, proposal state, authoring draft workflow,
+              activation delay, or undo path. The existing scenario
+              <code>draft</code> status remains part of the product model.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-direct-writes"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-direct-writes"
+                hidden
+              >
+                <label for="feedback-text-requirement-direct-writes"
+                  >Feedback on direct writes</label
+                >
+                <textarea
+                  id="feedback-text-requirement-direct-writes"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-running-lock"
+          >
+            <div>
+              <span class="requirement-kind">Integrity</span>
+              <h3>Lock authoring during a run</h3>
+            </div>
+            <p>
+              All Convex phase and scenario writes, including existing web
+              mutations, return a <code>conflict</code> while that project has a
+              running run. This is a write lock, not delayed activation: once
+              the run finishes or is removed, the next command writes
+              immediately.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-running-lock"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-running-lock"
+                hidden
+              >
+                <label for="feedback-text-requirement-running-lock"
+                  >Feedback on the running-run lock</label
+                >
+                <textarea
+                  id="feedback-text-requirement-running-lock"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-existing-auth"
+          >
+            <div>
+              <span class="requirement-kind">Access</span>
+              <h3>Reuse existing owner authentication</h3>
+            </div>
+            <p>
+              Commands use the current <code>caracara login</code> bearer token,
+              selected project resolution, API-version header, and Convex
+              ownership checks. Do not introduce roles, authoring tokens, API
+              keys, or a second login flow.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-existing-auth"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-existing-auth"
+                hidden
+              >
+                <label for="feedback-text-requirement-existing-auth"
+                  >Feedback on authentication</label
+                >
+                <textarea
+                  id="feedback-text-requirement-existing-auth"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-no-versioning"
+          >
+            <div>
+              <span class="requirement-kind">Storage</span>
+              <h3>No authoring version model</h3>
+            </div>
+            <p>
+              Do not add version numbers, version tables, revision history,
+              restore actions, or audit snapshots. Continue overwriting live
+              scenarios and checks in place. Past runs keep their existing
+              copied instructions and checks so their recorded evidence stays
+              intelligible.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-no-versioning"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-no-versioning"
+                hidden
+              >
+                <label for="feedback-text-requirement-no-versioning"
+                  >Feedback on omitted versioning</label
+                >
+                <textarea
+                  id="feedback-text-requirement-no-versioning"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="phases" aria-label="Plan phases">
+        <article
+          class="phase plan-section"
+          data-plan-section="phase-1-direct-authoring"
+          data-phase-index="1"
+        >
+          <header class="phase-heading">
+            <span class="phase-index">Phase 01</span>
+            <h2>Ship direct authoring end to end</h2>
+            <p class="phase-description">
+              One vertical slice adds the command interface, authenticated HTTP
+              operation, atomic Convex writes, run lock, documentation, and
+              verification.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-phase-1-direct-authoring"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-phase-1-direct-authoring"
+                hidden
+              >
+                <label for="feedback-text-phase-1-direct-authoring"
+                  >Feedback on Phase 1</label
+                >
+                <textarea
+                  id="feedback-text-phase-1-direct-authoring"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </header>
+
+          <div class="phase-body">
+            <div class="phase-copy">
+              <h3>Command contract</h3>
+              <p>
+                Add these top-level Commander commands using the existing
+                <code>--project &lt;slug&gt;</code> override and
+                selected-project fallback. Commands are non-interactive and
+                print one JSON result to stdout so Codex can verify exactly what
+                changed. Errors go to stderr with a non-zero exit code.
+              </p>
+              <table class="command-table">
+                <thead>
+                  <tr>
+                    <th>Command</th>
+                    <th>Required input</th>
+                    <th>Behavior</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>addPhase</code></td>
+                    <td><code>--name</code></td>
+                    <td>Append a phase at the next order.</td>
+                  </tr>
+                  <tr>
+                    <td><code>editPhase</code></td>
+                    <td><code>--phase</code>, <code>--name</code></td>
+                    <td>Rename one phase without changing its order.</td>
+                  </tr>
+                  <tr>
+                    <td><code>removePhase</code></td>
+                    <td><code>--phase</code></td>
+                    <td>
+                      Keep current behavior: delete the phase, unassign its
+                      scenarios, remove dependencies touching those scenarios,
+                      and normalize phase order.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>createScenario</code></td>
+                    <td><code>--name</code>, <code>--instructions</code></td>
+                    <td>
+                      Create a draft with an optional slug, phase, and repeated
+                      dependency slugs. Checks start empty.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>updateScenario</code></td>
+                    <td><code>--scenario</code> plus at least one change</td>
+                    <td>
+                      Partially update name, slug, status, instructions, phase
+                      assignment, or the complete dependency set. Never alter
+                      checks.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>addCheck</code></td>
+                    <td>
+                      <code>--scenario</code>, <code>--name</code>,
+                      <code>--expectation</code>
+                    </td>
+                    <td>Generate a UUID and append the check.</td>
+                  </tr>
+                  <tr>
+                    <td><code>removeCheck</code></td>
+                    <td><code>--scenario</code>, <code>--check</code></td>
+                    <td>
+                      Remove one check. Reject removal of the last check from an
+                      active scenario.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>updateCheck</code></td>
+                    <td>
+                      <code>--scenario</code>, <code>--check</code> plus name or
+                      expectation
+                    </td>
+                    <td>
+                      Update content while preserving the check ID and array
+                      position.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>
+                <code>--scenario</code> uses the existing scenario slug.
+                <code>--phase</code> accepts an ID, order, or exact name;
+                <code>--check</code> accepts an ID or exact name. The CLI
+                resolves these through existing scenario and execution-plan GET
+                requests and fails on zero or ambiguous matches. This avoids
+                extra discovery commands while retaining stable IDs for writes.
+              </p>
+
+              <h3>Contracts and HTTP</h3>
+              <ul>
+                <li>
+                  Add one Zod discriminated union for the eight request shapes
+                  and one corresponding response union in
+                  <code>packages/contracts/src/api.ts</code>. Reuse the existing
+                  domain validators and limits.
+                </li>
+                <li>
+                  Add one authenticated
+                  <code>POST /api/v3/projects/[projectSlug]/authoring</code>
+                  route. Its body contains <code>operation</code> and the
+                  operation-specific input. Keep namespace v3 and minimum CLI
+                  0.3.0 because the endpoint is additive.
+                </li>
+                <li>
+                  Add one <code>submitAuthoringOperation</code> client function
+                  in <code>packages/caracara/src/api.ts</code>. Command handlers
+                  in <code>commands.ts</code> resolve project and resource
+                  references, validate flags, call it, and print the parsed
+                  response.
+                </li>
+                <li>
+                  Bump the publishable <code>caracara</code> package and its
+                  internal contracts package to 0.4.0. Do not create a
+                  compatibility adapter or force existing 0.3 clients to
+                  upgrade.
+                </li>
+              </ul>
+
+              <h3>Atomic backend behavior</h3>
+              <ul>
+                <li>
+                  Reuse the existing phase <code>create</code>,
+                  <code>update</code>, and <code>remove</code> mutations after
+                  adding the shared running-run guard.
+                </li>
+                <li>
+                  Reuse scenario <code>create</code> with
+                  <code>status: draft</code> and an empty check array. Add a
+                  focused partial scenario mutation so
+                  <code>updateScenario</code> does not fetch and rewrite checks
+                  or unchanged fields.
+                </li>
+                <li>
+                  Add three focused check mutations. Each reads and validates
+                  the owned scenario inside the transaction, edits only
+                  <code>evaluationChecks</code>, updates <code>updatedAt</code>,
+                  and returns the current scenario. The existing 20-check limit,
+                  required active check, UUID, name, and expectation rules
+                  remain authoritative.
+                </li>
+                <li>
+                  Add <code>runs.by_project_status</code> and one shared
+                  <code>assertProjectAuthoringUnlocked</code> helper. Call it
+                  inside every phase and scenario write mutation, including
+                  existing web-only reorder and delete mutations, so another
+                  client cannot bypass the lock.
+                </li>
+                <li>
+                  Map a locked project to HTTP 409 with the running run name. Do
+                  not queue the change. The caller can retry after the run
+                  reaches a terminal state or is removed.
+                </li>
+              </ul>
+
+              <h3>Deliberate omissions</h3>
+              <p>
+                No frontend changes, generic JSON Patch, bulk import, scenario
+                deletion, phase reorder, check reorder, confirmation prompt,
+                change preview, audit log, authoring token, version model,
+                activation scheduler, or undo action. Existing web authoring
+                continues to use its current UI and shares the run lock.
+              </p>
+
+              <h3>Specs and documentation</h3>
+              <p>
+                Update scenario authoring, execution, API, authentication,
+                storage, and package specs. State that live scenario records are
+                overwritten, completed runs retain their existing snapshots, CLI
+                authoring is owner-only, and authoring is unavailable while a
+                project run is active. Add the eight commands and examples to
+                the CLI README/help text.
+              </p>
+
+              <h3>Verification</h3>
+              <ul>
+                <li>
+                  Contract tests cover every discriminated request and response,
+                  missing fields, invalid slugs and UUIDs, oversized text, and
+                  unknown operations.
+                </li>
+                <li>
+                  Convex tests cover ownership, phase cleanup semantics, partial
+                  scenario updates that preserve checks, check ID/order
+                  preservation, maximum and minimum check counts, dependency
+                  validation, and all writes blocked by a running project run.
+                </li>
+                <li>
+                  Route tests cover authentication, ownership, operation
+                  dispatch, validation errors, not-found targets, and the 409
+                  running-run conflict.
+                </li>
+                <li>
+                  CLI tests cover all flag mappings, selected-project fallback,
+                  ID/name/order resolution, ambiguous names, one-line JSON
+                  output, and non-zero failures without interactive prompts.
+                </li>
+                <li>
+                  Manual acceptance: use Codex to create a phase and draft
+                  scenario, update the scenario, add and edit two checks, remove
+                  one check, rename and remove the phase, and confirm each
+                  result immediately in the existing web UI. Start a run, verify
+                  all eight operations fail with 409, finish it, and verify the
+                  same command succeeds.
+                </li>
+                <li>
+                  Run <code>pnpm lint</code>, <code>pnpm typecheck</code>,
+                  <code>pnpm test</code>, <code>pnpm build</code>, and package
+                  the CLI to confirm the new commands appear in
+                  <code>caracara --help</code>.
+                </li>
+              </ul>
+            </div>
+
+            <section
+              class="phase-requirements"
+              aria-labelledby="phase-1-requirements-title"
+            >
+              <h3 id="phase-1-requirements-title">Phase requirements</h3>
+              <div class="requirement-list">
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-requirement-agent-usable"
+                >
+                  <div>
+                    <span class="requirement-kind">Agent use</span>
+                    <h3>No human data transfer</h3>
+                  </div>
+                  <p>
+                    An interactive Codex session can complete all eight
+                    operations by invoking commands and reading their results.
+                    The user never copies scenario JSON, check IDs, or generated
+                    patches between tools.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-requirement-agent-usable"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-requirement-agent-usable"
+                      hidden
+                    >
+                      <label
+                        for="feedback-text-phase-1-requirement-agent-usable"
+                        >Feedback on agent usability</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-requirement-agent-usable"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-requirement-evaluator-blocked"
+                >
+                  <div>
+                    <span class="requirement-kind">Evaluation</span>
+                    <h3>A running evaluator cannot author</h3>
+                  </div>
+                  <p>
+                    Once <code>caracara run</code> creates its running record,
+                    every phase or scenario write for that project fails
+                    server-side until finalization. The rule holds for CLI, web,
+                    and direct Convex mutation callers.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-requirement-evaluator-blocked"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-requirement-evaluator-blocked"
+                      hidden
+                    >
+                      <label
+                        for="feedback-text-phase-1-requirement-evaluator-blocked"
+                        >Feedback on evaluator isolation</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-requirement-evaluator-blocked"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-requirement-live-record-only"
+                >
+                  <div>
+                    <span class="requirement-kind">Data model</span>
+                    <h3>One live authored record</h3>
+                  </div>
+                  <p>
+                    Inspecting the schema after implementation shows no
+                    scenario-version, proposal, activation, or undo storage. A
+                    successful change updates only the live phase or scenario
+                    data and its existing navigation metadata.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-requirement-live-record-only"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-requirement-live-record-only"
+                      hidden
+                    >
+                      <label
+                        for="feedback-text-phase-1-requirement-live-record-only"
+                        >Feedback on the live record model</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-requirement-live-record-only"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+              </div>
+            </section>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script id="plan-feedback" type="application/json">
+      {}
+    </script>
+    <script>
+      ;(() => {
+        const feedbackElement = document.getElementById("plan-feedback")
+        let feedback
+
+        try {
+          feedback = JSON.parse(feedbackElement.textContent || "{}")
+        } catch {
+          feedback = {}
+        }
+
+        document.querySelectorAll("[data-plan-section]").forEach((section) => {
+          const sectionId = section.dataset.planSection
+          const feedbackRoot = Array.from(section.children).flatMap((child) =>
+            child.matches(".feedback")
+              ? [child]
+              : Array.from(child.children).filter((nested) =>
+                  nested.matches(".feedback")
+                )
+          )[0]
+
+          if (!feedbackRoot) return
+
+          const toggle = feedbackRoot.querySelector(".feedback-toggle")
+          const form = feedbackRoot.querySelector(".feedback-form")
+          const textarea = feedbackRoot.querySelector("textarea")
+          const close = feedbackRoot.querySelector(".close-feedback")
+          const status = feedbackRoot.querySelector(".feedback-status")
+          const save = feedbackRoot.querySelector(".save-feedback")
+
+          const renderPendingState = () => {
+            const hasFeedback =
+              Object.hasOwn(feedback, sectionId) &&
+              feedback[sectionId].length > 0
+            toggle.classList.toggle("has-feedback", hasFeedback)
+            toggle.textContent = hasFeedback
+              ? "Edit pending feedback"
+              : "Give feedback"
+            textarea.value = feedback[sectionId] || ""
+          }
+
+          const closeEditor = () => {
+            form.hidden = true
+            toggle.setAttribute("aria-expanded", "false")
+            toggle.focus()
+          }
+
+          toggle.addEventListener("click", () => {
+            const willOpen = form.hidden
+            form.hidden = !willOpen
+            toggle.setAttribute("aria-expanded", String(willOpen))
+            if (willOpen) textarea.focus()
+          })
+
+          close.addEventListener("click", closeEditor)
+
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault()
+            save.disabled = true
+            status.dataset.state = ""
+            status.textContent = "Saving feedback…"
+
+            try {
+              const response = await fetch("/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sectionId, text: textarea.value }),
+              })
+              const result = await response.json()
+              if (!response.ok)
+                throw new Error(
+                  result.error || "The server rejected the feedback."
+                )
+
+              const text = textarea.value.trim()
+              if (text) feedback[sectionId] = text
+              else delete feedback[sectionId]
+              renderPendingState()
+              status.dataset.state = "success"
+              status.textContent = text
+                ? "Feedback saved."
+                : "Feedback cleared."
+              window.setTimeout(closeEditor, 450)
+            } catch (error) {
+              status.dataset.state = "error"
+              status.textContent = `Feedback was not saved. ${error.message}`
+            } finally {
+              save.disabled = false
+            }
+          })
+
+          renderPendingState()
+        })
+      })()
+    </script>
+  </body>
+</html>

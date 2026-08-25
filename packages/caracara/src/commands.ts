@@ -5,6 +5,7 @@ import {
   CONVEX_TOKEN_TEMPLATE,
   API_NAMESPACE,
   formatRunName,
+  type AuthoringRequest,
   type OrderedScenario,
   type RunnablePhase,
 } from "@workspace/contracts"
@@ -17,6 +18,7 @@ import {
   fetchSingleScenario,
   fetchWhoAmI,
   startScenarioExecution,
+  submitAuthoringOperation,
   submitScenarioResult,
   uploadRunEvidence,
 } from "./api.js"
@@ -38,7 +40,7 @@ import { getRunnerAdapter } from "./execution.js"
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.3.0"
+const CLI_VERSION = "0.4.0"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
@@ -128,6 +130,288 @@ export async function listProjectsCommand(apiBaseUrl?: string) {
   for (const project of response.projects) {
     process.stdout.write(`${project.slug}\t${project.name}\n`)
   }
+}
+
+type AuthoringCommandOptions = {
+  apiBaseUrl?: string
+  project?: string
+}
+
+async function getAuthoringContext(options: AuthoringCommandOptions) {
+  const config = await readResolvedConfig(
+    {
+      apiBaseUrl: options.apiBaseUrl,
+      selectedProjectSlug: options.project,
+    },
+    process.env
+  )
+  const accessToken = ensureAccessToken(config)
+
+  if (!config.selectedProjectSlug) {
+    throw new Error(
+      "No project selected. Run `caracara init --project <slug>` or pass --project."
+    )
+  }
+
+  return {
+    apiBaseUrl: config.apiBaseUrl,
+    accessToken,
+    projectSlug: config.selectedProjectSlug,
+  }
+}
+
+function printAuthoringResult(result: unknown) {
+  process.stdout.write(`${JSON.stringify(result)}\n`)
+}
+
+export function resolvePhaseReference(
+  phases: RunnablePhase[],
+  reference: string
+) {
+  const matches = new Map(
+    phases
+      .filter(
+        (phase) =>
+          phase.id === reference ||
+          phase.name === reference ||
+          String(phase.order) === reference
+      )
+      .map((phase) => [phase.id, phase])
+  )
+
+  if (matches.size === 0) {
+    throw new Error(`Phase ${JSON.stringify(reference)} was not found.`)
+  }
+
+  if (matches.size > 1) {
+    throw new Error(
+      `Phase ${JSON.stringify(reference)} is ambiguous. Use its phase ID.`
+    )
+  }
+
+  return [...matches.values()][0]!
+}
+
+export function resolveCheckReference(
+  scenario: OrderedScenario,
+  reference: string
+) {
+  const matches = new Map(
+    scenario.evaluationChecks
+      .filter((check) => check.id === reference || check.name === reference)
+      .map((check) => [check.id, check])
+  )
+
+  if (matches.size === 0) {
+    throw new Error(`Check ${JSON.stringify(reference)} was not found.`)
+  }
+
+  if (matches.size > 1) {
+    throw new Error(
+      `Check ${JSON.stringify(reference)} is ambiguous. Use its check ID.`
+    )
+  }
+
+  return [...matches.values()][0]!
+}
+
+async function fetchAuthoringScenario(
+  context: Awaited<ReturnType<typeof getAuthoringContext>>,
+  scenarioSlug: string
+) {
+  return (
+    await fetchSingleScenario({
+      ...context,
+      version: CLI_VERSION,
+      scenarioSlug,
+    })
+  ).scenario
+}
+
+async function resolvePhaseId(
+  context: Awaited<ReturnType<typeof getAuthoringContext>>,
+  reference: string
+) {
+  const plan = await fetchExecutionPlan({
+    ...context,
+    version: CLI_VERSION,
+  })
+  return resolvePhaseReference(plan.phases, reference).id
+}
+
+async function resolveDependencyIds(
+  context: Awaited<ReturnType<typeof getAuthoringContext>>,
+  slugs: string[]
+) {
+  const scenarios = await Promise.all(
+    [...new Set(slugs)].map((slug) => fetchAuthoringScenario(context, slug))
+  )
+  return scenarios.map((scenario) => scenario.id)
+}
+
+async function author(
+  context: Awaited<ReturnType<typeof getAuthoringContext>>,
+  payload: AuthoringRequest
+) {
+  const response = await submitAuthoringOperation({
+    ...context,
+    version: CLI_VERSION,
+    payload,
+  })
+  printAuthoringResult(response)
+  return response
+}
+
+export async function addPhaseCommand(
+  options: AuthoringCommandOptions & { name: string }
+) {
+  const context = await getAuthoringContext(options)
+  await author(context, { operation: "addPhase", name: options.name })
+}
+
+export async function editPhaseCommand(
+  options: AuthoringCommandOptions & { phase: string; name: string }
+) {
+  const context = await getAuthoringContext(options)
+  const phaseId = await resolvePhaseId(context, options.phase)
+  await author(context, {
+    operation: "editPhase",
+    phaseId,
+    name: options.name,
+  })
+}
+
+export async function removePhaseCommand(
+  options: AuthoringCommandOptions & { phase: string }
+) {
+  const context = await getAuthoringContext(options)
+  const phaseId = await resolvePhaseId(context, options.phase)
+  await author(context, { operation: "removePhase", phaseId })
+}
+
+export async function createScenarioCommand(
+  options: AuthoringCommandOptions & {
+    name: string
+    slug?: string
+    instructions: string
+    phase?: string
+    dependsOn?: string[]
+  }
+) {
+  const context = await getAuthoringContext(options)
+  const [phaseId, dependsOnScenarioIds] = await Promise.all([
+    options.phase ? resolvePhaseId(context, options.phase) : undefined,
+    resolveDependencyIds(context, options.dependsOn ?? []),
+  ])
+  await author(context, {
+    operation: "createScenario",
+    name: options.name,
+    slug: options.slug,
+    instructions: options.instructions,
+    phaseId,
+    dependsOnScenarioIds,
+  })
+}
+
+export async function updateScenarioCommand(
+  options: AuthoringCommandOptions & {
+    scenario: string
+    name?: string
+    slug?: string
+    status?: "draft" | "active"
+    instructions?: string
+    phase?: string
+    unassigned?: boolean
+    dependsOn?: string[]
+    clearDependencies?: boolean
+  }
+) {
+  if (options.phase && options.unassigned) {
+    throw new Error("`--phase` cannot be combined with `--unassigned`.")
+  }
+  if (options.dependsOn && options.clearDependencies) {
+    throw new Error(
+      "`--depends-on` cannot be combined with `--clear-dependencies`."
+    )
+  }
+
+  const context = await getAuthoringContext(options)
+  const scenario = await fetchAuthoringScenario(context, options.scenario)
+  const [phaseId, dependsOnScenarioIds] = await Promise.all([
+    options.unassigned
+      ? null
+      : options.phase
+        ? resolvePhaseId(context, options.phase)
+        : undefined,
+    options.clearDependencies
+      ? []
+      : options.dependsOn
+        ? resolveDependencyIds(context, options.dependsOn)
+        : undefined,
+  ])
+  await author(context, {
+    operation: "updateScenario",
+    scenarioId: scenario.id,
+    name: options.name,
+    slug: options.slug,
+    status: options.status,
+    instructions: options.instructions,
+    phaseId,
+    dependsOnScenarioIds,
+  })
+}
+
+export async function addCheckCommand(
+  options: AuthoringCommandOptions & {
+    scenario: string
+    name: string
+    expectation: string
+  }
+) {
+  const context = await getAuthoringContext(options)
+  const scenario = await fetchAuthoringScenario(context, options.scenario)
+  await author(context, {
+    operation: "addCheck",
+    scenarioId: scenario.id,
+    check: {
+      id: crypto.randomUUID(),
+      name: options.name,
+      expectation: options.expectation,
+    },
+  })
+}
+
+export async function removeCheckCommand(
+  options: AuthoringCommandOptions & { scenario: string; check: string }
+) {
+  const context = await getAuthoringContext(options)
+  const scenario = await fetchAuthoringScenario(context, options.scenario)
+  const check = resolveCheckReference(scenario, options.check)
+  await author(context, {
+    operation: "removeCheck",
+    scenarioId: scenario.id,
+    checkId: check.id,
+  })
+}
+
+export async function updateCheckCommand(
+  options: AuthoringCommandOptions & {
+    scenario: string
+    check: string
+    name?: string
+    expectation?: string
+  }
+) {
+  const context = await getAuthoringContext(options)
+  const scenario = await fetchAuthoringScenario(context, options.scenario)
+  const check = resolveCheckReference(scenario, options.check)
+  await author(context, {
+    operation: "updateCheck",
+    scenarioId: scenario.id,
+    checkId: check.id,
+    name: options.name,
+    expectation: options.expectation,
+  })
 }
 
 export async function initCommand(options: InitCommandOptions) {

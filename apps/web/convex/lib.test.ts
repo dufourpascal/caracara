@@ -6,6 +6,7 @@ import {
   toScenarioResult,
   validateCompletedCheckResults,
   validateFailedCheckEvidence,
+  validateRunnerMatch,
 } from "./lib"
 
 describe("convex response mappers", () => {
@@ -49,6 +50,13 @@ describe("convex response mappers", () => {
         [{ checkId: "failed" }, { checkId: "failed" }]
       )
     ).toThrow(/requires exactly one screenshot/i)
+  })
+
+  it("rejects a scenario runner that differs from its run", () => {
+    expect(() => validateRunnerMatch("codex", "claude-code")).toThrow(
+      /must match the run runner/i
+    )
+    expect(() => validateRunnerMatch("codex", "codex")).not.toThrow()
   })
 
   it("normalizes Convex creation timestamps to integers", () => {

@@ -47,7 +47,7 @@ API contracts are versioned and require the most recent supported client version
 
 Older CLI versions should fail fast when they are no longer compatible so users can upgrade to the newest published version instead of continuing with undefined behavior.
 
-The screenshot-evidence contract uses HTTP namespace v3, API version 3, and minimum CLI version 0.3.0. Namespace v2 remains available to 0.2 clients for one compatibility window and creates text-only runs. The service rejects v1 payloads.
+The service supports only HTTP namespace v3, API version 3, and CLI version 0.3.0 or newer. Older namespaces and clients are rejected.
 
 ### API_10
 The API distinguishes contract errors from execution outcomes.

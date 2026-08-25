@@ -4,7 +4,6 @@ import {
   ApiRouteError,
   handleApiError,
   requireCliVersion,
-  requireLegacyCliVersion,
   startScenarioExecution,
   submitScenarioResult,
 } from "./api-route"
@@ -29,17 +28,13 @@ describe("api-route helpers", () => {
     })
   })
 
-  it("keeps 0.2 clients on v2 and requires 0.3 clients on v3", () => {
+  it("requires 0.3 clients on v3", () => {
     const requestFor = (version: string) =>
       new Request("https://example.com", {
         headers: { "x-caracara-cli-version": version },
       })
 
-    expect(requireLegacyCliVersion(requestFor("0.2.9"))).toBe("0.2.9")
     expect(requireCliVersion(requestFor("0.3.0"))).toBe("0.3.0")
-    expect(() => requireLegacyCliVersion(requestFor("0.3.0"))).toThrow(
-      /upgrade required/i
-    )
     expect(() => requireCliVersion(requestFor("0.2.9"))).toThrow(
       /upgrade required/i
     )

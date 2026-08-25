@@ -9,7 +9,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server"
-import { ensureRunOwnership } from "./lib"
+import { ensureRunOwnership, requireIdentity } from "./lib"
 
 const MAX_SCREENSHOT_BYTES = 3 * 1024 * 1024
 
@@ -172,6 +172,7 @@ export const attach = internalMutation({
 export const getForServing = query({
   args: { evidenceId: v.id("runEvidence") },
   handler: async (ctx, args) => {
+    await requireIdentity(ctx)
     const evidence = await ctx.db.get(args.evidenceId)
     if (!evidence) {
       return null

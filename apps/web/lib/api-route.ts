@@ -6,7 +6,6 @@ import {
   apiErrorSchema,
   createRunRequestSchema,
   createVersionMismatchDetails,
-  compareVersions,
   finalizeRunRequestSchema,
   isCliVersionSupported,
   oauthAuthorizeRequestSchema,
@@ -181,27 +180,6 @@ export function requireCliVersion(request: Request) {
   if (!version || !isCliVersionSupported(version)) {
     throw new ApiRouteError(409, "version_mismatch", "CLI upgrade required.", {
       ...createVersionMismatchDetails(),
-    })
-  }
-
-  return version
-}
-
-export function requireLegacyCliVersion(request: Request) {
-  const version = request.headers.get(API_VERSION_HEADER)
-
-  try {
-    if (
-      !version ||
-      compareVersions(version, "0.2.0") < 0 ||
-      compareVersions(version, "0.3.0") >= 0
-    ) {
-      throw new Error("unsupported")
-    }
-  } catch {
-    throw new ApiRouteError(409, "version_mismatch", "CLI upgrade required.", {
-      apiVersion: 2,
-      minimumSupportedCliVersion: "0.2.0",
     })
   }
 

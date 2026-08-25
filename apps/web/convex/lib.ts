@@ -905,6 +905,18 @@ export function validateCompletedCheckResults(
   }
 }
 
+export function validateRunnerMatch(
+  runRunnerType: "codex" | "claude-code" | null,
+  resultRunnerType: "codex" | "claude-code"
+) {
+  if (runRunnerType !== resultRunnerType) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Scenario runner must match the run runner.",
+    })
+  }
+}
+
 export async function computeRunCheckCounts(ctx: Ctx, runId: Id<"runs">) {
   const results = await ctx.db
     .query("scenarioResults")

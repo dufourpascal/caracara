@@ -16,6 +16,7 @@ import {
   toScenarioResult,
   validateCompletedCheckResults,
   validateFailedCheckEvidence,
+  validateRunnerMatch,
 } from "./lib"
 
 const evaluationCheckValidator = v.object({
@@ -335,6 +336,8 @@ export const startScenarioExecution = mutation({
         message: "Run is no longer accepting scenario updates.",
       })
     }
+
+    validateRunnerMatch(run.runnerType, args.result.runnerType)
 
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 

@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -8,7 +15,9 @@ import {
   DEFAULT_API_BASE_URL,
   cliPaths,
   findLocalConfigPath,
+  getLocalSecretsPath,
   readLocalConfig,
+  readLocalSecrets,
   resolveConfig,
   resolveRunner,
   writeLocalConfig,
@@ -93,6 +102,8 @@ describe("config", () => {
         apiBaseUrl: "https://local.example.com",
         selectedProjectSlug: "demo-project",
         runner: "claude-code",
+        model: "gpt-5.6-luna",
+        model_reasoning_effort: "low",
       },
       dir,
     )
@@ -102,7 +113,87 @@ describe("config", () => {
       apiBaseUrl: "https://local.example.com",
       selectedProjectSlug: "demo-project",
       runner: "claude-code",
+      model: "gpt-5.6-luna",
+      model_reasoning_effort: "low",
     })
+
+    const secretsPath = getLocalSecretsPath(configPath)
+    await expect(readFile(secretsPath, "utf8")).resolves.toContain(
+      "# CARACARA_SECRET_USERNAME=",
+    )
+    await expect(
+      readFile(join(dir, ".caracara", ".gitignore"), "utf8"),
+    ).resolves.toContain("secrets.env")
+    if (process.platform !== "win32") {
+      expect((await stat(secretsPath)).mode & 0o077).toBe(0)
+    }
+  })
+
+  it("loads project secrets from the nearest local config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "caracara-secrets-test-"))
+    const nested = join(root, "apps", "web")
+    const configPath = await writeLocalConfig(
+      { selectedProjectSlug: "demo-project" },
+      root,
+    )
+    await mkdir(nested, { recursive: true })
+    await writeFile(
+      getLocalSecretsPath(configPath),
+      [
+        "CARACARA_SECRET_USERNAME=test@example.com",
+        "CARACARA_SECRET_PASSWORD='correct horse battery staple'",
+        "",
+      ].join("\n"),
+      "utf8",
+    )
+
+    await expect(readLocalSecrets(nested)).resolves.toEqual({
+      CARACARA_SECRET_USERNAME: "test@example.com",
+      CARACARA_SECRET_PASSWORD: "correct horse battery staple",
+    })
+  })
+
+  it("preserves an existing secrets file when local config is rewritten", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-secrets-preserve-"))
+    const configPath = await writeLocalConfig(
+      { selectedProjectSlug: "demo-project" },
+      dir,
+    )
+    const secretsPath = getLocalSecretsPath(configPath)
+    await writeFile(secretsPath, "CARACARA_SECRET_PASSWORD=keep-me\n", "utf8")
+
+    await writeLocalConfig({ selectedProjectSlug: "renamed-project" }, dir)
+
+    await expect(readFile(secretsPath, "utf8")).resolves.toBe(
+      "CARACARA_SECRET_PASSWORD=keep-me\n",
+    )
+  })
+
+  it("rejects secret keys without the Caracara prefix", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-secrets-key-"))
+    const configPath = await writeLocalConfig({}, dir)
+    await writeFile(
+      getLocalSecretsPath(configPath),
+      "PASSWORD=do-not-load\n",
+      "utf8",
+    )
+
+    await expect(readLocalSecrets(dir)).rejects.toThrow(
+      "Secret names must start with CARACARA_SECRET_",
+    )
+  })
+
+  it("rejects a secrets file readable by other users", async () => {
+    if (process.platform === "win32") {
+      return
+    }
+
+    const dir = await mkdtemp(join(tmpdir(), "caracara-secrets-mode-"))
+    const configPath = await writeLocalConfig({}, dir)
+    const secretsPath = getLocalSecretsPath(configPath)
+    await chmod(secretsPath, 0o644)
+
+    await expect(readLocalSecrets(dir)).rejects.toThrow("chmod 600")
   })
 
   it("finds the nearest local config in an ancestor directory", async () => {
@@ -127,6 +218,18 @@ describe("config", () => {
     )
   })
 
+  it("rejects unknown local config keys", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-config-key-"))
+    await mkdir(join(dir, ".caracara"), { recursive: true })
+    await writeFile(
+      join(dir, ".caracara", "config.json"),
+      JSON.stringify({ model_reasoning_effor: "low" }),
+      "utf8",
+    )
+
+    await expect(readLocalConfig(dir)).rejects.toThrow("Unrecognized key")
+  })
+
   it("resolves the runner from overrides, env, local config, and defaults", () => {
     vi.stubEnv("CARACARA_RUNNER", "claude-code")
 
@@ -142,5 +245,6 @@ describe("config", () => {
     expect(cliPaths.configPath).toContain(".config/caracara/config.json")
     expect(cliPaths.localConfigDirName).toBe(".caracara")
     expect(cliPaths.localConfigFileName).toBe("config.json")
+    expect(cliPaths.localSecretsFileName).toBe("secrets.env")
   })
 })

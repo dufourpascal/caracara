@@ -6,6 +6,7 @@ import {
   apiErrorSchema,
   createRunRequestSchema,
   createVersionMismatchDetails,
+  compareVersions,
   finalizeRunRequestSchema,
   isCliVersionSupported,
   oauthAuthorizeRequestSchema,
@@ -186,6 +187,27 @@ export function requireCliVersion(request: Request) {
   return version
 }
 
+export function requireLegacyCliVersion(request: Request) {
+  const version = request.headers.get(API_VERSION_HEADER)
+
+  try {
+    if (
+      !version ||
+      compareVersions(version, "0.2.0") < 0 ||
+      compareVersions(version, "0.3.0") >= 0
+    ) {
+      throw new Error("unsupported")
+    }
+  } catch {
+    throw new ApiRouteError(409, "version_mismatch", "CLI upgrade required.", {
+      apiVersion: 2,
+      minimumSupportedCliVersion: "0.2.0",
+    })
+  }
+
+  return version
+}
+
 export function parseBearerToken(request: Request) {
   const header = request.headers.get("authorization")
   if (!header?.startsWith("Bearer ")) {
@@ -268,9 +290,30 @@ export async function getProjectList(token: string) {
 
 export async function createRun(
   token: string,
-  args: { projectSlug: string; body: unknown }
+  args: {
+    projectSlug: string
+    body: unknown
+    evidencePolicy: "text_only" | "failed_check_screenshot"
+  }
 ) {
   const payload = createRunRequestSchema.parse(args.body)
+  const configuredSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL
+  const deploymentUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+  const evidenceUploadBaseUrl =
+    configuredSiteUrl ??
+    (deploymentUrl?.endsWith(".convex.cloud")
+      ? deploymentUrl.replace(/\.convex\.cloud$/, ".convex.site")
+      : null)
+  if (
+    args.evidencePolicy === "failed_check_screenshot" &&
+    !evidenceUploadBaseUrl
+  ) {
+    throw new ApiRouteError(
+      500,
+      "internal_error",
+      "Evidence upload service is not configured."
+    )
+  }
   const { project } = await getProjectBySlug(token, args.projectSlug)
   const run = await fetchMutation(
     api.runs.create,
@@ -278,6 +321,7 @@ export async function createRun(
       projectId: project.id as never,
       mode: payload.mode,
       runnerType: payload.runnerType,
+      evidencePolicy: args.evidencePolicy,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       startedAt: payload.startedAt,
@@ -285,7 +329,14 @@ export async function createRun(
     { token }
   )
 
-  return { run }
+  return {
+    run,
+    ...(evidenceUploadBaseUrl
+      ? {
+          evidenceUploadUrl: `${evidenceUploadBaseUrl.replace(/\/$/, "")}/run-evidence`,
+        }
+      : {}),
+  }
 }
 
 export async function submitScenarioResult(args: {
@@ -312,7 +363,6 @@ export async function submitScenarioResult(args: {
       result: {
         ...payload.result,
         scenarioId: payload.result.scenarioId as never,
-        improvementInstruction: payload.result.improvementInstruction,
       },
     },
     { token: args.token }

@@ -11,9 +11,9 @@ A scenario requires both a name and a slug.
 The name is the primary human-readable label used in the web app, while the slug is a CLI-friendly identifier that can be used when a user wants to run a single scenario through the `caracara` CLI. In v1, the slug does not need to be permanently stable across edits.
 
 ### AUTHORING_03
-A scenario requires execution instructions and a scoring prompt.
+A scenario requires execution instructions and evaluation checks.
 
-These are the minimum authored content fields needed for a scenario to be meaningful and executable in v1.
+Draft scenarios may have no checks. An active scenario requires 1 to 20 ordered checks. Each check has a stable ID, short name, and observable expectation.
 
 ### AUTHORING_04
 A scenario may include dependencies on other scenarios in the same project.
@@ -26,14 +26,14 @@ Scenario authoring must validate dependency correctness.
 The system should prevent invalid self-dependencies, cycles, and references to scenarios outside the current project.
 
 ### AUTHORING_06
-Scenario instructions and scoring prompts are edited separately.
+Scenario instructions and evaluation checks are edited separately.
 
-The authoring interface should make a clear distinction between what the runner is asked to do and how the outcome is judged.
+The authoring interface separates the user flow from the observable conditions the frontend must satisfy. Users can add, edit, delete, and reorder checks without changing their stable IDs.
 
 ### AUTHORING_07
 Scenario authoring uses project-level prompt context automatically.
 
-Authors define scenario-specific instructions and scoring logic, while shared project context comes from the project configuration rather than being repeated manually in every scenario.
+Authors define scenario instructions and checks, while shared project context comes from project configuration.
 
 ### AUTHORING_08
 A scenario has an explicit draft or active status.

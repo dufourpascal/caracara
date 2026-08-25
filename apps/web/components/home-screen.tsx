@@ -20,7 +20,7 @@ import { Button } from "@workspace/ui/components/button"
 const loopSteps = [
   {
     step: "Define",
-    body: "Write the scenario and the grading rubric for the behavior you want to evaluate.",
+    body: "Write the scenario and concrete checks for the behavior you want to evaluate.",
   },
   {
     step: "Run",
@@ -28,7 +28,7 @@ const loopSteps = [
   },
   {
     step: "Improve",
-    body: "Use the score and suggestions to push UI and UX fixes back into development.",
+    body: "Use failed checks and browser evidence to push UI and UX fixes back into development.",
   },
 ] as const
 
@@ -37,7 +37,7 @@ const flowSteps = [
     icon: FileText,
     label: "Author",
     title: "Write the scenario once",
-    body: "Store the task, grading rubric, dependencies, and shared project context in Caracara.",
+    body: "Store the task, evaluation checks, dependencies, and shared project context in Caracara.",
   },
   {
     icon: Terminal,
@@ -48,20 +48,20 @@ const flowSteps = [
   {
     icon: LockKeyhole,
     label: "Anchor",
-    title: "Grade against the run snapshot",
-    body: "The runner cannot improve its score by rewriting the source scenario during execution; results are tied to the scenario content fetched for that run.",
+    title: "Evaluate against the run snapshot",
+    body: "Results stay tied to the checks captured when the run started, even if the source scenario changes later.",
   },
   {
     icon: RefreshCw,
     label: "Loop",
     title: "Feed changes back to coding agents",
-    body: "Scores, rationale, and suggested fixes become the next development prompt instead of another loose bug report.",
+    body: "Failed checks and concrete browser evidence become the next development prompt instead of another loose bug report.",
   },
 ] as const
 
 const scenarioFields = [
   ["Instructions", "What the agent should do in the application."],
-  ["Scoring prompt", "How the outcome should be judged."],
+  ["Evaluation checks", "Observable conditions the frontend must satisfy."],
   ["Dependencies", "Prerequisite scenarios for setup flows and staged tasks."],
   ["Project context", "Shared background prepended to each scenario run."],
   ["Status", "Draft while authoring, active when it should run."],
@@ -70,33 +70,33 @@ const scenarioFields = [
 
 const resultFields = [
   {
-    label: "Score",
-    body: "A compact read on whether the behavior met the rubric.",
+    label: "Pass rate",
+    body: "The percentage of authored checks that passed.",
   },
   {
-    label: "Rationale",
-    body: "The evidence behind the score, so teams can inspect the judgment.",
+    label: "Browser evidence",
+    body: "What the agent observed for each check in the actual frontend.",
   },
   {
     label: "Failure detail",
     body: "The concrete product behavior that missed the scenario expectation.",
   },
   {
-    label: "Improvements",
-    body: "Specific change suggestions that can be handed back to Codex, Claude Code, or a developer.",
+    label: "Check verdicts",
+    body: "Passed, failed, or not observed, with no model-generated number.",
   },
 ] as const
 
 const fitItems = [
   "Use it when product behavior depends on UI state, workflows, and judgment that unit tests do not cover well.",
-  "Keep unit tests, Playwright tests, and CI for deterministic checks; use Caracara for repeatable agent evaluation.",
+  "Keep unit tests, deterministic browser tests, and CI; use Caracara for repeatable agent evaluation.",
   "Run execution locally when the app, credentials, or environment should stay on your machine.",
   "Do not treat it as a hosted runner, infrastructure provisioner, or replacement for human-authored scenarios in v1.",
 ] as const
 
 const accentBlue = "#00B0FF"
 const accentOrange = "#F57C00"
-const exampleScore = 0.82 as const
+const examplePassRate = 67 as const
 
 const exampleScenario = [
   ["Project", "dev-storefront"],
@@ -106,8 +106,8 @@ const exampleScenario = [
     "Act as a user completing checkout. If the session is expired, recover the flow and confirm the cart is preserved.",
   ],
   [
-    "Scoring",
-    "Score for cart preservation, successful retry, clarity of recovery copy, and how little friction the user experiences.",
+    "Checks",
+    "Cart remains intact; retry completes checkout; recovery copy explains what happens next.",
   ],
 ] as const
 
@@ -121,8 +121,8 @@ const exampleObservations = {
   issueFound: "Retry copy did not clearly reassure the user.",
 } as const
 
-const exampleAgentFeedback =
-  "Persist cart line items after session refresh and rewrite the expired-session copy to say retry is safe and returns the user to checkout."
+const exampleFailedEvidence =
+  "The retry message says only 'Try again' and does not explain whether the cart will be preserved."
 
 export function HomeScreen() {
   return (
@@ -138,7 +138,7 @@ export function HomeScreen() {
         <div className="mx-auto w-full max-w-5xl px-5 py-14 sm:px-6 sm:py-20">
           <div className="grid items-stretch gap-10 lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-10">
             <div className="flex max-w-3xl flex-col">
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
                 Dark factory for app quality
               </p>
               <h1 className="mt-5 text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
@@ -146,9 +146,9 @@ export function HomeScreen() {
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-8 text-muted-foreground">
                 Caracara helps developers define scenarios, decide how they
-                should be graded, and run agents against a deployed dev
-                instance. The output is a scored feedback loop that catches UI
-                and UX issues beyond unit tests.
+                should be checked, and run agents against a deployed dev
+                instance. The output is a check-based feedback loop that catches
+                UI and UX issues beyond unit tests.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <PrimaryActions />
@@ -176,12 +176,15 @@ export function HomeScreen() {
                     className="flex size-12 items-center justify-center rounded-full"
                     style={{ backgroundColor: accentOrange }}
                   >
-                    <ArrowRight className="size-6 text-background" strokeWidth={2.5} />
+                    <ArrowRight
+                      className="size-6 text-background"
+                      strokeWidth={2.5}
+                    />
                   </span>
                 </div>
               </div>
 
-              <section className="relative bg-muted/10 pl-4 lg:border-r lg:border-border sm:pl-5">
+              <section className="relative bg-muted/10 pl-4 sm:pl-5 lg:border-r lg:border-border">
                 <span
                   aria-hidden
                   className="absolute inset-y-0 left-0 block w-1.5"
@@ -189,7 +192,7 @@ export function HomeScreen() {
                 />
                 <div className="border-b border-border px-4 py-3 sm:px-5">
                   <p
-                    className="text-xs uppercase tracking-[0.2em]"
+                    className="text-xs tracking-[0.2em] uppercase"
                     style={{ color: accentBlue }}
                   >
                     Scenario Definition
@@ -199,12 +202,12 @@ export function HomeScreen() {
                   {exampleScenario.map(([label, value]) => (
                     <div key={label} className="px-4 py-4 text-sm sm:px-5">
                       <dt
-                        className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                        className="font-mono text-[11px] tracking-[0.16em] uppercase"
                         style={{ color: accentBlue }}
                       >
                         {label}
                       </dt>
-                      <dd className="mt-2 min-w-0 text-pretty text-sm leading-6 text-foreground/90">
+                      <dd className="mt-2 min-w-0 text-sm leading-6 text-pretty text-foreground/90">
                         {value}
                       </dd>
                     </div>
@@ -212,7 +215,7 @@ export function HomeScreen() {
                 </dl>
               </section>
 
-              <section className="relative pl-4 bg-background sm:pl-5">
+              <section className="relative bg-background pl-4 sm:pl-5">
                 <span
                   aria-hidden
                   className="absolute inset-y-0 left-0 block w-1.5"
@@ -220,7 +223,7 @@ export function HomeScreen() {
                 />
                 <div className="border-t border-border px-4 py-3 sm:px-5 lg:border-t-0 lg:border-b lg:border-border">
                   <p
-                    className="text-xs uppercase tracking-[0.2em]"
+                    className="text-xs tracking-[0.2em] uppercase"
                     style={{ color: accentOrange }}
                   >
                     Run Results
@@ -228,7 +231,7 @@ export function HomeScreen() {
                 </div>
                 <div className="grid gap-px bg-border sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="bg-background px-4 py-5 sm:px-5">
-                    <ScoreRing value={exampleScore} />
+                    <PassRateRing value={examplePassRate} />
                   </div>
                   <dl className="contents">
                     {exampleEvaluation.map(([label, value]) => (
@@ -238,12 +241,12 @@ export function HomeScreen() {
                       >
                         <div>
                           <dt
-                            className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                            className="font-mono text-[11px] tracking-[0.16em] uppercase"
                             style={{ color: accentOrange }}
                           >
                             {label}
                           </dt>
-                          <dd className="mt-2 min-w-0 text-pretty font-mono text-[13px] text-foreground">
+                          <dd className="mt-2 min-w-0 font-mono text-[13px] text-pretty text-foreground">
                             {value}
                           </dd>
                         </div>
@@ -254,7 +257,7 @@ export function HomeScreen() {
 
                 <div className="border-t border-border px-4 py-3 sm:px-5">
                   <p
-                    className="text-xs uppercase tracking-[0.2em]"
+                    className="text-xs tracking-[0.2em] uppercase"
                     style={{ color: accentOrange }}
                   >
                     Observed behavior
@@ -269,20 +272,22 @@ export function HomeScreen() {
 
                 <div className="border-t border-border px-4 py-3 sm:px-5">
                   <p
-                    className="text-xs uppercase tracking-[0.2em]"
+                    className="text-xs tracking-[0.2em] uppercase"
                     style={{ color: accentOrange }}
                   >
-                    Feedback for coding agent
+                    Failed check evidence
                   </p>
                 </div>
                 <div className="border-t border-border bg-muted/5 px-4 py-4 sm:px-5">
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-sm leading-6 text-foreground">
-                      {exampleAgentFeedback}
+                      {exampleFailedEvidence}
                     </p>
                     <Button
-                      aria-label="Copy feedback for coding agent"
-                      onClick={() => navigator.clipboard.writeText(exampleAgentFeedback)}
+                      aria-label="Copy failed check evidence"
+                      onClick={() =>
+                        navigator.clipboard.writeText(exampleFailedEvidence)
+                      }
                       size="icon-sm"
                       variant="ghost"
                     >
@@ -298,7 +303,7 @@ export function HomeScreen() {
             {loopSteps.map((item, index) => (
               <div key={item.step} className="bg-background px-4 py-5 sm:px-5">
                 <p
-                  className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                  className="font-mono text-[11px] tracking-[0.16em] uppercase"
                   style={{
                     color:
                       index === 0
@@ -325,7 +330,7 @@ export function HomeScreen() {
       <section className="border-b border-border">
         <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 py-12 sm:px-6 sm:py-16 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
               How it works
             </p>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
@@ -334,7 +339,7 @@ export function HomeScreen() {
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
               Caracara separates the authored evaluation asset from the local
               execution loop, so the runner is working against a fetched plan
-              rather than inventing its own grading target.
+              rather than inventing its own evaluation target.
             </p>
           </div>
 
@@ -350,7 +355,7 @@ export function HomeScreen() {
                         <Icon className="size-4 text-muted-foreground" />
                       </span>
                       <p
-                        className="font-mono text-[11px] uppercase tracking-[0.16em]"
+                        className="font-mono text-[11px] tracking-[0.16em] uppercase"
                         style={{
                           color:
                             index === 0
@@ -380,12 +385,11 @@ export function HomeScreen() {
       <section className="border-b border-border">
         <div className="mx-auto w-full max-w-5xl px-5 py-12 sm:px-6 sm:py-16">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
               What a scenario contains
             </p>
             <h2 className="mt-3 max-w-2xl text-2xl font-semibold tracking-tight text-foreground">
-              One reusable behavior definition, split into execution and
-              scoring.
+              One reusable behavior definition, split into execution and checks.
             </h2>
             <div className="mt-8 grid gap-px border border-border bg-border sm:grid-cols-2">
               {scenarioFields.map(([label, body]) => (
@@ -409,15 +413,15 @@ export function HomeScreen() {
       <section className="border-b border-border">
         <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 py-12 sm:px-6 sm:py-16 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
               What you get back
             </p>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-              A scored result that points directly at the next fix.
+              A check result backed by what the agent saw.
             </h2>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              The result is not just pass or fail. It is structured feedback
-              that can become the next implementation instruction.
+              Every verdict includes concrete browser evidence, so a failed
+              check is easy to reproduce and hand to a developer.
             </p>
           </div>
 
@@ -441,25 +445,30 @@ export function HomeScreen() {
             <div className="border border-border">
               <div className="grid gap-px bg-border md:grid-cols-[16rem_minmax(0,1fr)]">
                 <div className="bg-background p-4">
-                  <ScoreRing value={exampleScore} accentColor={accentOrange} />
+                  <PassRateRing
+                    value={examplePassRate}
+                    accentColor={accentOrange}
+                  />
                 </div>
                 <div className="bg-background p-4">
                   <div className="flex items-center gap-2">
-                    <Wrench className="size-4" style={{ color: accentOrange }} />
+                    <Wrench
+                      className="size-4"
+                      style={{ color: accentOrange }}
+                    />
                     <h3
                       className="text-sm font-semibold"
                       style={{ color: accentOrange }}
                     >
-                      Suggested next change
+                      Failed check evidence
                     </h3>
                   </div>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                    Preserve cart line items after session refresh, then update
-                    the expired-session copy to explain that retry is safe.
+                    The retry message says only &quot;Try again&quot; and does not
+                    explain whether the cart will be preserved.
                   </p>
                   <p className="mt-4 font-mono text-xs leading-6 text-foreground">
-                    caracara result -&gt; coding agent prompt -&gt; product fix
-                    -&gt; rerun
+                    failed check -&gt; product fix -&gt; rerun
                   </p>
                 </div>
               </div>
@@ -471,7 +480,7 @@ export function HomeScreen() {
       <section>
         <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 py-12 sm:px-6 sm:py-16 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
               Where it fits
             </p>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
@@ -494,7 +503,7 @@ export function HomeScreen() {
   )
 }
 
-function ScoreRing({
+function PassRateRing({
   value,
   accentColor = accentBlue,
 }: {
@@ -503,14 +512,14 @@ function ScoreRing({
 }) {
   const radius = 54
   const circumference = 2 * Math.PI * radius
-  const dashOffset = circumference * (1 - value)
+  const dashOffset = circumference * (1 - value / 100)
 
   return (
     <div className="mt-4 flex justify-center sm:justify-start">
       <div className="relative flex size-40 items-center justify-center sm:size-44">
         <svg
           aria-hidden
-          className="-rotate-90 size-full overflow-visible"
+          className="size-full -rotate-90 overflow-visible"
           viewBox="0 0 140 140"
         >
           <circle
@@ -537,13 +546,13 @@ function ScoreRing({
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <p className="text-4xl font-semibold tracking-tight text-foreground">
-            {value.toFixed(2)}
+            {value}%
           </p>
           <p
-            className="mt-2 font-mono text-[11px] uppercase tracking-[0.2em]"
+            className="mt-2 font-mono text-[11px] tracking-[0.2em] uppercase"
             style={{ color: accentColor }}
           >
-            Score
+            Pass rate
           </p>
         </div>
       </div>

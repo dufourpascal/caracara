@@ -6,7 +6,7 @@ import {
   finalizeRun,
   handleApiError,
   parseJsonBody,
-  requireCliVersion,
+  requireLegacyCliVersion,
   requireVerifiedToken,
   routeSchemas,
 } from "@/lib/api-route"
@@ -20,10 +20,13 @@ export async function POST(
   }
 ) {
   try {
-    requireCliVersion(request)
+    requireLegacyCliVersion(request)
     const token = await requireVerifiedToken(request)
     const { projectSlug, runId } = await params
-    const body = await parseJsonBody(request, routeSchemas.finalizeRunRequestSchema)
+    const body = await parseJsonBody(
+      request,
+      routeSchemas.finalizeRunRequestSchema
+    )
     const response = await finalizeRun({
       token,
       projectSlug,

@@ -3,12 +3,12 @@
 ### SCOPE_01
 The product is a scenario-based evaluation system for locally deployed applications.
 
-Caracara Score allows users to define structured scenarios that test an application running in a local environment, execute those scenarios through a local CLI, and capture the resulting scores and outputs in a central web application.
+Caracara Score lets users define structured scenarios and checks, execute them through a local CLI, and inspect evidenced verdicts plus a derived pass rate in the web app.
 
 ### SCOPE_02
 The primary value of the product is repeatable evaluation of real application behavior.
 
-Caracara Score is not just a prompt runner or chatbot wrapper; it is intended to help users repeatedly evaluate whether an application behaves correctly under defined conditions using consistent scenario definitions and scoring instructions.
+Caracara Score repeatedly evaluates whether an application behaves correctly under concrete, stable checks.
 
 ### SCOPE_03
 The product consists of two primary surfaces: a web app and a local CLI.
@@ -18,7 +18,7 @@ The web app is used to author, organize, version, and inspect scenarios and resu
 ### SCOPE_04
 Scenarios are the core unit of evaluation.
 
-Each scenario represents one testable behavior or task to be executed against a target application, including execution instructions, scoring guidance, and dependency information that determines how it fits into a broader evaluation flow.
+Each scenario represents one testable behavior with execution instructions, ordered evaluation checks, and dependency information.
 
 ### SCOPE_05
 A scenario may depend on other scenarios.
@@ -33,12 +33,12 @@ The hosted system stores and serves scenario definitions, but the actual executi
 ### SCOPE_07
 The product supports multiple local agent runners.
 
-Caracara Score is designed to execute scenarios through supported local coding-agent CLIs, initially including Codex CLI and Claude Code CLI, with the product responsible for providing a consistent scenario model above those runners.
+Caracara Score executes scenarios through supported local coding-agent backends, initially including the Codex SDK and Claude Code CLI, while keeping one consistent scenario model above both runners.
 
 ### SCOPE_08
-Scoring is defined separately from execution instructions.
+Evaluation checks are defined separately from execution instructions.
 
-Each scenario contains instructions that tell the runner what to do, and a separate scoring prompt that tells the runner how to evaluate the outcome. These remain distinct authored inputs even though the local runner receives them together in a single invocation.
+Each scenario contains instructions that tell the runner what to do and concrete checks that define observable pass conditions. The runner returns evidence and verdicts, while Caracara calculates the pass rate.
 
 ### SCOPE_09
 The initial product is intended for technical users.
@@ -53,7 +53,7 @@ Caracara Score is responsible for defining, sequencing, and evaluating scenarios
 ### SCOPE_11
 The product stores scenario definitions and evaluation records as durable assets.
 
-Users should be able to treat scenarios, prompts, dependencies, and run outcomes as persistent project artifacts that can be reviewed, updated, and reused over time rather than ephemeral one-off prompts.
+Users can treat scenarios, checks, dependencies, and run outcomes as persistent project artifacts.
 
 ### SCOPE_12
 The initial version focuses on human-authored scenarios.
@@ -71,6 +71,6 @@ The product is not a generic CI system in v1.
 Although scenario runs may later integrate with automation pipelines, the first version is centered on user-triggered local execution and result reporting rather than broad CI/CD orchestration.
 
 ### SCOPE_15
-The initial goal is trustworthy evaluation workflows, not perfect universal scoring.
+The initial goal is trustworthy evaluation workflows, not model-generated scoring.
 
-Caracara Score aims to make AI-assisted application evaluation more structured and inspectable, but it does not guarantee objective truth for every scenario; instead, it provides a repeatable framework for defining how evaluation should happen.
+The agent still judges each check from browser evidence, but it cannot choose the numeric result. The same stored verdicts always produce the same pass rate.

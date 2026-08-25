@@ -2,14 +2,33 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
+import { createHash } from "node:crypto"
 
-import type { OrderedScenario, RunnerType } from "@workspace/contracts"
+import {
+  Codex,
+  type CodexOptions,
+  type SandboxMode,
+  type ThreadOptions,
+} from "@openai/codex-sdk"
+import type {
+  CheckResult,
+  OrderedScenario,
+  RunnerType,
+} from "@workspace/contracts"
+
+import type { ModelReasoningEffort } from "./config.js"
 
 export type RunnerExecution = {
   executionSummary: string
-  score: number
-  rationale: string | null
-  improvementInstruction: string | null
+  checkResults: CheckResult[]
+  screenshotEvidence?: ScreenshotEvidence[]
+}
+
+export type ScreenshotEvidence = {
+  checkId: string
+  bytes: Uint8Array
+  byteSize: number
+  sha256: string
 }
 
 export type RunnerScenarioInput = {
@@ -18,9 +37,18 @@ export type RunnerScenarioInput = {
   scenario: OrderedScenario
 }
 
+export type RunnerSecrets = Record<string, string>
+
+type RunnerStartInput = {
+  cwd: string
+  secrets: RunnerSecrets
+  model?: string
+  modelReasoningEffort?: ModelReasoningEffort
+}
+
 export interface RunnerAdapter {
   type: RunnerType
-  startRun(input: { cwd: string }): Promise<RunnerSession>
+  startRun(input: RunnerStartInput): Promise<RunnerSession>
 }
 
 export interface RunnerSession {
@@ -28,49 +56,62 @@ export interface RunnerSession {
   close(): Promise<void>
 }
 
-const executionResultSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "executionSummary",
-    "score",
-    "rationale",
-    "improvementInstruction",
-  ],
-  properties: {
-    executionSummary: {
-      type: "string",
-      minLength: 1,
-    },
-    score: {
-      type: "number",
-      minimum: 0,
-      maximum: 1,
-    },
-    rationale: {
-      anyOf: [
-        {
-          type: "string",
-          minLength: 1,
+export function buildExecutionResultSchema(scenario: OrderedScenario) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["executionSummary", "checkResults"],
+    properties: {
+      executionSummary: { type: "string", minLength: 1 },
+      checkResults: {
+        type: "array",
+        minItems: scenario.evaluationChecks.length,
+        maxItems: scenario.evaluationChecks.length,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["checkId", "verdict", "evidence"],
+          properties: {
+            checkId: {
+              type: "string",
+              enum: scenario.evaluationChecks.map((check) => check.id),
+            },
+            verdict: {
+              type: "string",
+              enum: ["passed", "failed", "not_observed"],
+            },
+            evidence: { type: "string", minLength: 1, maxLength: 2_000 },
+          },
         },
-        {
-          type: "null",
-        },
-      ],
+      },
     },
-    improvementInstruction: {
-      anyOf: [
-        {
-          type: "string",
-          minLength: 1,
-        },
-        {
-          type: "null",
-        },
-      ],
-    },
-  },
-} as const
+  } as const
+}
+
+export function validateRunnerExecution(
+  scenario: OrderedScenario,
+  execution: RunnerExecution
+) {
+  const expectedIds = scenario.evaluationChecks.map((check) => check.id)
+  const returnedIds = execution.checkResults.map((result) => result.checkId)
+  if (
+    execution.executionSummary.trim() === "" ||
+    returnedIds.length !== expectedIds.length ||
+    new Set(returnedIds).size !== returnedIds.length ||
+    expectedIds.some((id) => !returnedIds.includes(id)) ||
+    execution.checkResults.some((result) => result.evidence.trim() === "")
+  ) {
+    throw new Error("Runner output did not account for every evaluation check.")
+  }
+
+  return {
+    executionSummary: execution.executionSummary.trim(),
+    checkResults: execution.checkResults.map((result) => ({
+      ...result,
+      evidence: result.evidence.trim(),
+    })),
+  }
+}
 
 const defaultCodexSandbox = "read-only"
 const defaultChromeExecutablePath = "/usr/bin/chromium"
@@ -79,9 +120,13 @@ const defaultChromiumStartupTimeoutMs = 15_000
 export function buildRunnerPrompt(input: {
   projectPrompt: string
   scenario: OrderedScenario
+  secretNames?: string[]
+  evidenceDirectory?: string
 }) {
+  const secretNames = [...(input.secretNames ?? [])].sort()
+
   return [
-    "You are executing and scoring a Caracara Score evaluation scenario against a local application.",
+    "You are executing a Caracara evaluation scenario against a local application.",
     "",
     "Project context:",
     input.projectPrompt.trim(),
@@ -91,29 +136,156 @@ export function buildRunnerPrompt(input: {
     "Task instructions:",
     input.scenario.instructions.trim(),
     "",
-    "Scoring prompt:",
-    input.scenario.scoringPrompt.trim(),
+    "Evaluation checks:",
+    ...input.scenario.evaluationChecks.flatMap((check) => [
+      `- ${check.name} [${check.id}]`,
+      `  Expected: ${check.expectation}`,
+      ...(input.evidenceDirectory
+        ? [
+            `  Failure screenshot: ${join(input.evidenceDirectory, `${check.id}.webp`)}`,
+          ]
+        : []),
+    ]),
+    ...(secretNames.length > 0
+      ? [
+          "",
+          "Local secret environment variables available to this run:",
+          ...secretNames.map((name) => `- ${name}`),
+          "Read a secret only when the task requires it. Never repeat secret values in the execution summary, evidence, or other user-facing output.",
+        ]
+      : []),
     "",
-    "Execute the task, collect the evidence needed for scoring, then return JSON with:",
-    '- "executionSummary": a concise factual summary of what you did and observed, including the evidence needed for review and scoring',
-    '- "score": a number from 0 to 1',
-    '- "rationale": null when the score is exactly 1, otherwise a short explanation of the quality issues that prevented a perfect score',
-    '- "improvementInstruction": null when the score is exactly 1. Otherwise, write a concise, human-readable instruction for the application team using this exact structure:',
-    "  Location: [view/page/flow]",
-    "  Action taken: [what you did]",
-    "  Expected: [expected outcome]",
-    "  Actual: [actual outcome]",
-    "  Fix next: [specific implementation change]",
-    "  Requirements:",
-    "  - Be concrete and implementation-oriented.",
-    "  - Mention routes, UI elements, fields, or components when known.",
-    "  - Do not mention the score.",
-    "  - Do not add filler, hedging, or generic advice.",
+    "Use the Chrome DevTools browser tools to perform the task once and inspect the actual frontend.",
+    "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
+    'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "not_observed" when you could not reach or inspect it.',
+    ...(input.evidenceDirectory
+      ? [
+          "For every failed check, immediately call chrome-devtools take_screenshot with the exact failure screenshot path listed for that check, format webp, quality 80, and fullPage false.",
+          "A failed check is incomplete without its screenshot. Do not capture screenshots for passed or not-observed checks. Never include screenshot paths or image bytes in the JSON response.",
+        ]
+      : []),
+    "Every verdict needs concise, concrete browser evidence. Do not calculate or return a score.",
   ].join("\n")
 }
 
-function getCodexSandboxMode() {
-  return process.env.CARACARA_CODEX_SANDBOX ?? defaultCodexSandbox
+export function buildMissingScreenshotPrompt(input: {
+  scenario: OrderedScenario
+  evidenceDirectory: string
+  missingCheckIds: string[]
+}) {
+  const checks = input.scenario.evaluationChecks.filter((check) =>
+    input.missingCheckIds.includes(check.id)
+  )
+  return [
+    "Required screenshot evidence is missing for the failed checks below.",
+    "Do not repeat the scenario. Use the current browser state and call chrome-devtools take_screenshot once for each check with format webp, quality 80, and fullPage false.",
+    ...checks.map(
+      (check) =>
+        `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`
+    ),
+    "Do not include secret values, screenshot paths, or image bytes in your response.",
+  ].join("\n")
+}
+
+const maxScreenshotBytes = 3 * 1024 * 1024
+
+export function hasWebpSignature(bytes: Uint8Array) {
+  return (
+    bytes.length >= 12 &&
+    Buffer.from(bytes.subarray(0, 4)).toString("ascii") === "RIFF" &&
+    Buffer.from(bytes.subarray(8, 12)).toString("ascii") === "WEBP"
+  )
+}
+
+async function readScreenshotEvidence(input: {
+  evidenceDirectory: string
+  checkIds: string[]
+}) {
+  const evidence: ScreenshotEvidence[] = []
+  const missingCheckIds: string[] = []
+
+  for (const checkId of input.checkIds) {
+    const path = join(input.evidenceDirectory, `${checkId}.webp`)
+    try {
+      const bytes = await readFile(path)
+      if (
+        bytes.byteLength === 0 ||
+        bytes.byteLength > maxScreenshotBytes ||
+        !hasWebpSignature(bytes)
+      ) {
+        await rm(path, { force: true })
+        missingCheckIds.push(checkId)
+        continue
+      }
+      evidence.push({
+        checkId,
+        bytes,
+        byteSize: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error
+      }
+      missingCheckIds.push(checkId)
+    }
+  }
+
+  return { evidence, missingCheckIds }
+}
+
+export function redactSecretValues(text: string, secrets: RunnerSecrets) {
+  return [...new Set(Object.values(secrets))]
+    .filter((secret) => secret !== "")
+    .sort((left, right) => right.length - left.length)
+    .reduce(
+      (redacted, secret) => redacted.split(secret).join("[REDACTED]"),
+      text
+    )
+}
+
+export function redactRunnerExecution(
+  execution: RunnerExecution,
+  secrets: RunnerSecrets
+) {
+  return {
+    executionSummary: redactSecretValues(execution.executionSummary, secrets),
+    checkResults: execution.checkResults.map((result) => ({
+      ...result,
+      evidence: redactSecretValues(result.evidence, secrets),
+    })),
+  }
+}
+
+function redactEvidenceDirectory(
+  execution: RunnerExecution,
+  evidenceDirectory: string
+) {
+  return {
+    executionSummary: execution.executionSummary
+      .split(evidenceDirectory)
+      .join("[LOCAL_EVIDENCE_DIR]"),
+    checkResults: execution.checkResults.map((result) => ({
+      ...result,
+      evidence: result.evidence
+        .split(evidenceDirectory)
+        .join("[LOCAL_EVIDENCE_DIR]"),
+    })),
+  }
+}
+
+function getCodexSandboxMode(): SandboxMode {
+  const sandboxMode = process.env.CARACARA_CODEX_SANDBOX ?? defaultCodexSandbox
+
+  if (
+    sandboxMode !== "read-only" &&
+    sandboxMode !== "workspace-write" &&
+    sandboxMode !== "danger-full-access"
+  ) {
+    throw new Error(`Invalid CARACARA_CODEX_SANDBOX value: ${sandboxMode}.`)
+  }
+
+  return sandboxMode
 }
 
 function getChromeExecutablePath() {
@@ -124,94 +296,89 @@ function getChromeExecutablePath() {
   )
 }
 
-function encodeTomlValue(value: boolean | string | string[]) {
-  return JSON.stringify(value)
-}
-
 export function buildCodexChromeMcpArgs(input: {
   logFilePath: string
-  wsEndpoint?: string
-  browserUrl?: string
+  wsEndpoint: string
 }) {
-  const args = ["-y", "chrome-devtools-mcp@latest"]
-
-  if (input.wsEndpoint) {
-    args.push("--wsEndpoint", input.wsEndpoint)
-  } else if (input.browserUrl) {
-    args.push("--browserUrl", input.browserUrl)
-  } else {
-    throw new Error("Either wsEndpoint or browserUrl must be provided.")
-  }
-
-  args.push("--logFile", input.logFilePath)
-
-  return args
+  return [
+    "-y",
+    "chrome-devtools-mcp@latest",
+    "--wsEndpoint",
+    input.wsEndpoint,
+    "--logFile",
+    input.logFilePath,
+  ]
 }
 
-function buildCodexConfigOverrides(input?: {
+function compactEnvironment(env: NodeJS.ProcessEnv) {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
+  )
+}
+
+export function buildCodexClientOptions(input: {
+  env: NodeJS.ProcessEnv
   logFilePath: string
-  wsEndpoint?: string
-  browserUrl?: string
-}) {
-  if (!input) {
-    return []
+  wsEndpoint: string
+  modelReasoningEffort?: ModelReasoningEffort
+}): CodexOptions {
+  return {
+    env: compactEnvironment(input.env),
+    config: {
+      mcp_servers: {
+        "chrome-devtools": {
+          command: "npx",
+          args: buildCodexChromeMcpArgs({
+            logFilePath: input.logFilePath,
+            wsEndpoint: input.wsEndpoint,
+          }),
+          required: true,
+          default_tools_approval_mode: "approve",
+        },
+        node_repl: {
+          enabled: false,
+        },
+      },
+      ...(input.modelReasoningEffort === "none"
+        ? { model_reasoning_effort: "none" }
+        : {}),
+    },
   }
-
-  return [
-    "-c",
-    `mcp_servers.chrome-devtools.command=${encodeTomlValue("npx")}`,
-    "-c",
-    `mcp_servers.chrome-devtools.args=${encodeTomlValue(
-      buildCodexChromeMcpArgs(input)
-    )}`,
-  ]
 }
 
-export function buildCodexExecArgs(input: {
+export function buildCodexThreadOptions(input: {
   cwd: string
-  prompt: string
-  outputPath: string
-  outputSchemaPath?: string
-  wsEndpoint?: string
-  browserUrl?: string
-  chromeDevtoolsLogPath?: string
-}) {
-  return [
-    "-a",
-    "never",
-    "exec",
-    "--skip-git-repo-check",
-    ...buildCodexConfigOverrides(
-      input.chromeDevtoolsLogPath && (input.wsEndpoint || input.browserUrl)
-        ? {
-            logFilePath: input.chromeDevtoolsLogPath,
-            wsEndpoint: input.wsEndpoint,
-            browserUrl: input.browserUrl,
-          }
-        : undefined
-    ),
-    "--sandbox",
-    getCodexSandboxMode(),
-    "--cd",
-    input.cwd,
-    ...(input.outputSchemaPath
-      ? ["--output-schema", input.outputSchemaPath]
-      : []),
-    "--output-last-message",
-    input.outputPath,
-    input.prompt,
-  ]
+  model?: string
+  modelReasoningEffort?: ModelReasoningEffort
+}): ThreadOptions {
+  return {
+    workingDirectory: input.cwd,
+    skipGitRepoCheck: true,
+    sandboxMode: getCodexSandboxMode(),
+    approvalPolicy: "never",
+    threadSource: "caracara",
+    model: input.model,
+    modelReasoningEffort:
+      input.modelReasoningEffort === "none"
+        ? undefined
+        : input.modelReasoningEffort,
+  }
 }
 
 async function runCommand(args: {
   command: string
   commandArgs: string[]
   cwd: string
+  env?: NodeJS.ProcessEnv
+  secrets?: RunnerSecrets
 }) {
   return await new Promise<{ stdout: string; stderr: string }>(
     (resolve, reject) => {
       const child = spawn(args.command, args.commandArgs, {
         cwd: args.cwd,
+        env: args.env,
         stdio: ["ignore", "pipe", "pipe"],
       })
 
@@ -233,7 +400,10 @@ async function runCommand(args: {
 
         reject(
           new Error(
-            `${args.command} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`
+            redactSecretValues(
+              `${args.command} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+              args.secrets ?? {}
+            )
           )
         )
       })
@@ -380,7 +550,6 @@ async function launchSharedChromium(input: { cwd: string }) {
     ])
 
     return {
-      browserUrl: `http://127.0.0.1:${port}`,
       wsEndpoint: `ws://127.0.0.1:${port}${wsPath}`,
       chromeDevtoolsLogPath,
       async close() {
@@ -398,53 +567,97 @@ async function launchSharedChromium(input: { cwd: string }) {
 class CodexRunner implements RunnerAdapter {
   readonly type = "codex" as const
 
-  async startRun(input: { cwd: string }) {
+  async startRun(input: RunnerStartInput) {
     const sharedBrowser = await launchSharedChromium({ cwd: input.cwd })
+    const runnerEnv = { ...process.env, ...input.secrets }
+    const secretNames = Object.keys(input.secrets)
+    let codex: Codex
+    try {
+      codex = new Codex(
+        buildCodexClientOptions({
+          env: runnerEnv,
+          logFilePath: sharedBrowser.chromeDevtoolsLogPath,
+          wsEndpoint: sharedBrowser.wsEndpoint,
+          modelReasoningEffort: input.modelReasoningEffort,
+        })
+      )
+    } catch (error) {
+      await sharedBrowser.close().catch(() => undefined)
+      throw error
+    }
 
     return {
       async executeScenario(scenarioInput: RunnerScenarioInput) {
-        return withTempFiles(async (dir) => {
-          const executionOutputPath = join(dir, "execution.txt")
-          const resultSchemaPath = join(dir, "result-schema.json")
+        return await withTempFiles(async (dir) => {
+          const evidenceDirectory = join(dir, "evidence")
+          await mkdir(evidenceDirectory)
+          try {
+            const thread = codex.startThread(
+              buildCodexThreadOptions({
+                cwd: scenarioInput.cwd,
+                model: input.model,
+                modelReasoningEffort: input.modelReasoningEffort,
+              })
+            )
+            const turn = await thread.run(
+              buildRunnerPrompt({
+                ...scenarioInput,
+                secretNames,
+                evidenceDirectory,
+              }),
+              {
+                outputSchema: buildExecutionResultSchema(
+                  scenarioInput.scenario
+                ),
+              }
+            )
 
-          await writeFile(
-            resultSchemaPath,
-            JSON.stringify(executionResultSchema),
-            "utf8"
-          )
+            const validated = validateRunnerExecution(
+              scenarioInput.scenario,
+              JSON.parse(turn.finalResponse) as RunnerExecution
+            )
+            const failedCheckIds = validated.checkResults
+              .filter((result) => result.verdict === "failed")
+              .map((result) => result.checkId)
+            let screenshots = await readScreenshotEvidence({
+              evidenceDirectory,
+              checkIds: failedCheckIds,
+            })
 
-          await runCommand({
-            command: "codex",
-            cwd: scenarioInput.cwd,
-            commandArgs: buildCodexExecArgs({
-              cwd: scenarioInput.cwd,
-              outputPath: executionOutputPath,
-              outputSchemaPath: resultSchemaPath,
-              prompt: buildRunnerPrompt(scenarioInput),
-              wsEndpoint: sharedBrowser.wsEndpoint,
-              browserUrl: sharedBrowser.browserUrl,
-              chromeDevtoolsLogPath: sharedBrowser.chromeDevtoolsLogPath,
-            }),
-          })
+            if (screenshots.missingCheckIds.length > 0) {
+              await thread.run(
+                buildMissingScreenshotPrompt({
+                  scenario: scenarioInput.scenario,
+                  evidenceDirectory,
+                  missingCheckIds: screenshots.missingCheckIds,
+                })
+              )
+              screenshots = await readScreenshotEvidence({
+                evidenceDirectory,
+                checkIds: failedCheckIds,
+              })
+            }
 
-          const execution = JSON.parse(
-            await readFile(executionOutputPath, "utf8")
-          ) as {
-            executionSummary: string
-            score: number
-            rationale: string | null
-            improvementInstruction: string | null
-          }
+            if (screenshots.missingCheckIds.length > 0) {
+              throw new Error(
+                `Codex did not capture required screenshot evidence for ${screenshots.missingCheckIds.length} failed check${screenshots.missingCheckIds.length === 1 ? "" : "s"}.`
+              )
+            }
 
-          return {
-            executionSummary: execution.executionSummary.trim(),
-            score: execution.score,
-            rationale:
-              execution.score === 1 ? null : execution.rationale?.trim() ?? null,
-            improvementInstruction:
-              execution.score === 1
-                ? null
-                : execution.improvementInstruction?.trim() ?? null,
+            return {
+              ...redactRunnerExecution(
+                redactEvidenceDirectory(validated, evidenceDirectory),
+                input.secrets
+              ),
+              screenshotEvidence: screenshots.evidence,
+            }
+          } catch (error) {
+            const message = (
+              error instanceof Error ? error.message : "Codex SDK failed."
+            )
+              .split(evidenceDirectory)
+              .join("[LOCAL_EVIDENCE_DIR]")
+            throw new Error(redactSecretValues(message, input.secrets))
           }
         })
       },
@@ -458,41 +671,66 @@ class CodexRunner implements RunnerAdapter {
 class ClaudeRunner implements RunnerAdapter {
   readonly type = "claude-code" as const
 
-  async startRun() {
+  async startRun(runInput: RunnerStartInput) {
+    const sharedBrowser = await launchSharedChromium({ cwd: runInput.cwd })
+    const runnerEnv = { ...process.env, ...runInput.secrets }
+    const secretNames = Object.keys(runInput.secrets)
     return {
-      async executeScenario(input: RunnerScenarioInput) {
-        const execution = await runCommand({
-          command: "claude",
-          cwd: input.cwd,
-          commandArgs: [
-            "-p",
-            "--permission-mode",
-            process.env.CARACARA_CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
-            "--output-format",
-            "json",
-            "--json-schema",
-            JSON.stringify(executionResultSchema),
-            buildRunnerPrompt(input),
-          ],
+      async executeScenario(scenarioInput: RunnerScenarioInput) {
+        return await withTempFiles(async (dir) => {
+          const mcpConfigPath = join(dir, "mcp.json")
+          await writeFile(
+            mcpConfigPath,
+            JSON.stringify({
+              mcpServers: {
+                "chrome-devtools": {
+                  command: "npx",
+                  args: buildCodexChromeMcpArgs({
+                    logFilePath: sharedBrowser.chromeDevtoolsLogPath,
+                    wsEndpoint: sharedBrowser.wsEndpoint,
+                  }),
+                },
+              },
+            }),
+            "utf8"
+          )
+          const execution = await runCommand({
+            command: "claude",
+            cwd: scenarioInput.cwd,
+            env: runnerEnv,
+            secrets: runInput.secrets,
+            commandArgs: [
+              "-p",
+              "--permission-mode",
+              process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
+                "bypassPermissions",
+              "--output-format",
+              "json",
+              "--mcp-config",
+              mcpConfigPath,
+              "--strict-mcp-config",
+              "--json-schema",
+              JSON.stringify(
+                buildExecutionResultSchema(scenarioInput.scenario)
+              ),
+              buildRunnerPrompt({ ...scenarioInput, secretNames }),
+            ],
+          })
+          return {
+            ...redactRunnerExecution(
+              validateRunnerExecution(
+                scenarioInput.scenario,
+                JSON.parse(execution.stdout) as RunnerExecution
+              ),
+              runInput.secrets
+            ),
+            screenshotEvidence: [],
+          }
         })
-        const parsed = JSON.parse(execution.stdout) as {
-          executionSummary: string
-          score: number
-          rationale: string | null
-          improvementInstruction: string | null
-        }
-
-        return {
-          executionSummary: parsed.executionSummary.trim(),
-          score: parsed.score,
-          rationale: parsed.score === 1 ? null : parsed.rationale?.trim() ?? null,
-          improvementInstruction:
-            parsed.score === 1
-              ? null
-              : parsed.improvementInstruction?.trim() ?? null,
-        }
       },
-      async close() {},
+      async close() {
+        await sharedBrowser.close()
+      },
     }
   }
 }

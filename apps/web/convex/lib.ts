@@ -45,7 +45,7 @@ function toScenarioNode(args: {
   phaseById: Map<string, Doc<"phases">>
 }): ScenarioNode {
   const phaseId = normalizePhaseId(args.scenario.phaseId)
-  const phase = phaseId ? args.phaseById.get(phaseId) ?? null : null
+  const phase = phaseId ? (args.phaseById.get(phaseId) ?? null) : null
 
   return {
     id: args.scenario._id,
@@ -53,7 +53,7 @@ function toScenarioNode(args: {
     name: args.scenario.name,
     status: args.scenario.status,
     instructions: args.scenario.instructions,
-    scoringPrompt: args.scenario.scoringPrompt,
+    evaluationChecks: args.scenario.evaluationChecks,
     phaseId,
     phaseName: phase?.name ?? null,
     phaseOrder: phase?.order ?? null,
@@ -178,7 +178,7 @@ export function toScenario(
     slug: scenario.slug,
     status: scenario.status,
     instructions: scenario.instructions,
-    scoringPrompt: scenario.scoringPrompt,
+    evaluationChecks: scenario.evaluationChecks,
     phaseId: normalizePhaseId(scenario.phaseId),
     phaseName: phase?.name ?? null,
     phaseOrder: phase?.order ?? null,
@@ -214,7 +214,13 @@ export function toRun(run: Doc<"runs">) {
     requestedScenarioSlug: run.requestedScenarioSlug,
     requestedPhaseOrder: run.requestedPhaseOrder ?? null,
     runnerType: run.runnerType,
-    averageScore: run.averageScore,
+    evidencePolicy: run.evidencePolicy ?? "text_only",
+    passedCheckCount: run.passedCheckCount,
+    totalCheckCount: run.totalCheckCount,
+    passRate:
+      run.status === "completed" && run.totalCheckCount > 0
+        ? Math.round((100 * run.passedCheckCount) / run.totalCheckCount)
+        : null,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     createdAt: toTimestamp(run._creationTime),
@@ -223,10 +229,6 @@ export function toRun(run: Doc<"runs">) {
 }
 
 export function toScenarioResult(result: Doc<"scenarioResults">) {
-  const legacyResult = result as Doc<"scenarioResults"> & {
-    rawOutput?: string | null
-  }
-
   return {
     id: result._id,
     runId: result.runId,
@@ -234,21 +236,31 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     scenarioSlug: result.scenarioSlug,
     scenarioName: result.scenarioName,
     executionInstructions: result.executionInstructions,
-    scoringPrompt: result.scoringPrompt,
+    evaluationChecks: result.evaluationChecks,
+    checkResults: result.checkResults,
     phaseId: result.phaseId ?? null,
     phaseName: result.phaseName ?? null,
     phaseOrder: result.phaseOrder ?? null,
     sequenceIndex: result.sequenceIndex,
     status: result.status,
     runnerType: result.runnerType,
-    score: result.score,
-    rationale: result.rationale,
-    improvementInstruction: result.improvementInstruction ?? null,
-    executionSummary: result.executionSummary ?? legacyResult.rawOutput ?? null,
+    executionSummary: result.executionSummary,
     failureDetail: result.failureDetail,
     startedAt: result.startedAt,
     finishedAt: result.finishedAt,
     submittedAt: toTimestamp(result._creationTime),
+  }
+}
+
+export function toRunEvidence(evidence: Doc<"runEvidence">) {
+  return {
+    id: evidence._id,
+    checkId: evidence.checkId,
+    kind: evidence.kind,
+    contentType: evidence.contentType,
+    byteSize: evidence.byteSize,
+    sha256: evidence.sha256,
+    createdAt: evidence.createdAt,
   }
 }
 
@@ -470,15 +482,17 @@ export async function getExecutionPlan(
   ).length
 
   return {
-    phases: phasesWithScenarios.map(({ phase, scenarios: orderedScenarios }) => ({
-      id: phase.id,
-      name: phase.name,
-      order: phase.order,
-      scenarios: orderedScenarios.map((scenario) => ({
-        ...scenario,
-        dependencyIds: [...(dependencyIds.get(scenario.id) ?? [])].sort(),
-      })),
-    })),
+    phases: phasesWithScenarios.map(
+      ({ phase, scenarios: orderedScenarios }) => ({
+        id: phase.id,
+        name: phase.name,
+        order: phase.order,
+        scenarios: orderedScenarios.map((scenario) => ({
+          ...scenario,
+          dependencyIds: [...(dependencyIds.get(scenario.id) ?? [])].sort(),
+        })),
+      })
+    ),
     unassignedScenarioCount,
   }
 }
@@ -747,10 +761,21 @@ export async function ensureRunOwnership(ctx: Ctx, runId: Id<"runs">) {
 }
 
 export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
-  const results = await ctx.db
-    .query("scenarioResults")
-    .withIndex("by_run", (query) => query.eq("runId", runId))
-    .collect()
+  const [evidence, results] = await Promise.all([
+    ctx.db
+      .query("runEvidence")
+      .withIndex("by_run", (query) => query.eq("runId", runId))
+      .collect(),
+    ctx.db
+      .query("scenarioResults")
+      .withIndex("by_run", (query) => query.eq("runId", runId))
+      .collect(),
+  ])
+
+  for (const item of evidence) {
+    await ctx.storage.delete(item.storageId)
+    await ctx.db.delete(item._id)
+  }
 
   for (const result of results) {
     await ctx.db.delete(result._id)
@@ -759,7 +784,54 @@ export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
   await ctx.db.delete(runId)
 
   return {
+    deletedEvidenceCount: evidence.length,
     deletedResultCount: results.length,
+  }
+}
+
+export async function deleteScenarioResultEvidence(
+  ctx: MutationCtx,
+  scenarioResultId: Id<"scenarioResults">,
+  keepCheckIds: ReadonlySet<string> = new Set()
+) {
+  const evidence = await ctx.db
+    .query("runEvidence")
+    .withIndex("by_result", (query) =>
+      query.eq("scenarioResultId", scenarioResultId)
+    )
+    .collect()
+
+  let deletedCount = 0
+  for (const item of evidence) {
+    if (keepCheckIds.has(item.checkId)) {
+      continue
+    }
+    await ctx.storage.delete(item.storageId)
+    await ctx.db.delete(item._id)
+    deletedCount += 1
+  }
+
+  return deletedCount
+}
+
+export function validateFailedCheckEvidence(
+  checkResults: Array<{ checkId: string; verdict: string }>,
+  evidence: Array<{ checkId: string }>
+) {
+  const failedCheckIds = checkResults
+    .filter((check) => check.verdict === "failed")
+    .map((check) => check.checkId)
+  const evidenceIds = evidence.map((item) => item.checkId)
+
+  if (
+    evidenceIds.length !== failedCheckIds.length ||
+    new Set(evidenceIds).size !== evidenceIds.length ||
+    failedCheckIds.some((checkId) => !evidenceIds.includes(checkId))
+  ) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Every failed check requires exactly one screenshot.",
+    })
   }
 }
 
@@ -812,18 +884,44 @@ export function createRunName() {
   return formatRunName(new Date())
 }
 
-export async function computeRunAverageScore(ctx: Ctx, runId: Id<"runs">) {
+export function validateCompletedCheckResults(
+  evaluationChecks: Array<{ id: string }>,
+  checkResults: Array<{ checkId: string; evidence: string }>
+) {
+  const expectedIds = evaluationChecks.map((check) => check.id)
+  const returnedIds = checkResults.map((check) => check.checkId)
+  if (
+    returnedIds.length !== expectedIds.length ||
+    new Set(returnedIds).size !== returnedIds.length ||
+    expectedIds.some((id) => !returnedIds.includes(id)) ||
+    checkResults.some(
+      (check) => check.evidence.trim() === "" || check.evidence.length > 2_000
+    )
+  ) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Check results must match the scenario snapshot exactly.",
+    })
+  }
+}
+
+export async function computeRunCheckCounts(ctx: Ctx, runId: Id<"runs">) {
   const results = await ctx.db
     .query("scenarioResults")
     .withIndex("by_run", (query) => query.eq("runId", runId))
     .collect()
-  const scores = results.flatMap((result) =>
-    typeof result.score === "number" ? [result.score] : []
-  )
-
-  if (scores.length === 0) {
-    return null
+  const completed = results.filter((result) => result.status === "completed")
+  return {
+    passedCheckCount: completed.reduce(
+      (count, result) =>
+        count +
+        result.checkResults.filter((check) => check.verdict === "passed")
+          .length,
+      0
+    ),
+    totalCheckCount: completed.reduce(
+      (count, result) => count + result.evaluationChecks.length,
+      0
+    ),
   }
-
-  return scores.reduce((sum, score) => sum + score, 0) / scores.length
 }

@@ -13,7 +13,7 @@ const scenarios = [
     name: "Alpha",
     status: "active" as const,
     instructions: "Alpha instructions",
-    scoringPrompt: "Alpha scoring",
+    evaluationChecks: [],
   },
   {
     id: "b",
@@ -21,7 +21,7 @@ const scenarios = [
     name: "Beta",
     status: "active" as const,
     instructions: "Beta instructions",
-    scoringPrompt: "Beta scoring",
+    evaluationChecks: [],
   },
   {
     id: "c",
@@ -29,7 +29,7 @@ const scenarios = [
     name: "Charlie",
     status: "draft" as const,
     instructions: "Charlie instructions",
-    scoringPrompt: "Charlie scoring",
+    evaluationChecks: [],
   },
 ]
 
@@ -89,8 +89,8 @@ describe("convex domain helpers", () => {
         strictPhaseBoundaries: true,
       })
     ).not.toThrow()
-    expect(filterDependenciesForPhaseExecution(withPhases, dependencies)).toEqual([
-      { scenarioId: "c", dependsOnScenarioId: "b" },
-    ])
+    expect(
+      filterDependenciesForPhaseExecution(withPhases, dependencies)
+    ).toEqual([{ scenarioId: "c", dependsOnScenarioId: "b" }])
   })
 })

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process"
 
 import {
   CONVEX_TOKEN_TEMPLATE,
+  API_NAMESPACE,
   formatRunName,
   type OrderedScenario,
   type RunnablePhase,
@@ -17,6 +18,7 @@ import {
   fetchWhoAmI,
   startScenarioExecution,
   submitScenarioResult,
+  uploadRunEvidence,
 } from "./api.js"
 import {
   createPkcePair,
@@ -25,7 +27,9 @@ import {
 } from "./auth.js"
 import {
   clearAuth,
+  getLocalSecretsPath,
   readConfig,
+  readLocalSecrets,
   readResolvedConfig,
   writeConfig,
   writeLocalConfig,
@@ -34,7 +38,7 @@ import { getRunnerAdapter } from "./execution.js"
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.1.0"
+const CLI_VERSION = "0.3.0"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
@@ -50,7 +54,9 @@ export async function loginCommand(apiBaseUrl?: string) {
   const { verifier, challenge } = createPkcePair()
   const listener = await listenForOAuthCallback()
   const state = crypto.randomUUID()
-  const url = new URL(`${config.apiBaseUrl}/api/v1/oauth/authorize`)
+  const url = new URL(
+    `${config.apiBaseUrl}/api/${API_NAMESPACE}/oauth/authorize`
+  )
 
   url.searchParams.set("client_id", CLIENT_ID)
   url.searchParams.set("redirect_uri", listener.callbackUrl)
@@ -130,6 +136,8 @@ export async function initCommand(options: InitCommandOptions) {
       apiBaseUrl: options.apiBaseUrl,
       selectedProjectSlug: options.project,
       runner: options.runner,
+      model: options.model,
+      model_reasoning_effort: options.modelReasoningEffort,
     },
     process.env
   )
@@ -138,6 +146,8 @@ export async function initCommand(options: InitCommandOptions) {
     apiBaseUrl: config.apiBaseUrl,
     selectedProjectSlug: config.selectedProjectSlug,
     runner: config.runner,
+    model: config.model,
+    model_reasoning_effort: config.model_reasoning_effort,
   })
 
   process.stdout.write(`Saved local config to ${configPath}\n`)
@@ -146,6 +156,15 @@ export async function initCommand(options: InitCommandOptions) {
     `  project: ${config.selectedProjectSlug ?? "(not set)"}\n`
   )
   process.stdout.write(`  runner: ${config.runner}\n`)
+  if (config.model) {
+    process.stdout.write(`  model: ${config.model}\n`)
+  }
+  if (config.model_reasoning_effort) {
+    process.stdout.write(
+      `  model_reasoning_effort: ${config.model_reasoning_effort}\n`
+    )
+  }
+  process.stdout.write(`  secrets: ${getLocalSecretsPath(configPath)}\n`)
 }
 
 function parsePhaseOrder(value: string | undefined, flagName: string) {
@@ -214,14 +233,17 @@ function resolveRunMode(options: RunCommandOptions) {
 
 export async function runCommand(options: RunCommandOptions) {
   const cwd = process.cwd()
-  const config = await readResolvedConfig(
-    {
-      apiBaseUrl: options.apiBaseUrl,
-      selectedProjectSlug: options.project,
-      runner: options.runner,
-    },
-    process.env
-  )
+  const [config, secrets] = await Promise.all([
+    readResolvedConfig(
+      {
+        apiBaseUrl: options.apiBaseUrl,
+        selectedProjectSlug: options.project,
+        runner: options.runner,
+      },
+      process.env
+    ),
+    readLocalSecrets(cwd),
+  ])
   const accessToken = ensureAccessToken(config)
   const projectSlug = config.selectedProjectSlug
 
@@ -237,22 +259,22 @@ export async function runCommand(options: RunCommandOptions) {
   const executionSource =
     runSelection.mode === "single"
       ? await fetchSingleScenario({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        scenarioSlug: runSelection.requestedScenarioSlug,
-      }).then((response) => ({
-        project: response.project,
-        phases: [] as RunnablePhase[],
-        unassignedScenarioCount: 0,
-        queue: [
-          {
-            phase: null as RunnablePhase | null,
-            scenario: response.scenario,
-          },
-        ],
-      }))
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
+          scenarioSlug: runSelection.requestedScenarioSlug,
+        }).then((response) => ({
+          project: response.project,
+          phases: [] as RunnablePhase[],
+          unassignedScenarioCount: 0,
+          queue: [
+            {
+              phase: null as RunnablePhase | null,
+              scenario: response.scenario,
+            },
+          ],
+        }))
       : await fetchExecutionPlan({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
@@ -326,7 +348,7 @@ export async function runCommand(options: RunCommandOptions) {
     scenarioSlug: args.scenario.slug,
     scenarioName: args.scenario.name,
     executionInstructions: args.scenario.instructions,
-    scoringPrompt: args.scenario.scoringPrompt,
+    evaluationChecks: args.scenario.evaluationChecks,
     phaseId: args.phase?.id ?? args.scenario.phaseId ?? null,
     phaseName: args.phase?.name ?? args.scenario.phaseName ?? null,
     phaseOrder: args.phase?.order ?? args.scenario.phaseOrder ?? null,
@@ -355,7 +377,9 @@ export async function runCommand(options: RunCommandOptions) {
       })
 
       if (item.phase && item.phase.id !== lastPrintedPhaseId) {
-        process.stdout.write(`\nPhase ${item.phase.order}: ${item.phase.name}\n`)
+        process.stdout.write(
+          `\nPhase ${item.phase.order}: ${item.phase.name}\n`
+        )
         lastPrintedPhaseId = item.phase.id
       }
 
@@ -363,32 +387,7 @@ export async function runCommand(options: RunCommandOptions) {
         `Executing ${item.scenario.slug} with ${runnerType}\n`
       )
 
-      if (runFailed) {
-        await submitScenarioResult({
-          apiBaseUrl: config.apiBaseUrl,
-          accessToken,
-          version: CLI_VERSION,
-          projectSlug,
-          runId: createRunResponse.run.id,
-          payload: {
-            runId: createRunResponse.run.id,
-            result: {
-              ...scenarioSnapshot,
-              status: "dependency_failed",
-              score: null,
-              rationale: "Skipped because an earlier scenario failed.",
-              improvementInstruction: null,
-              executionSummary: null,
-              failureDetail:
-                "Dependency chain stopped after an earlier failure.",
-              finishedAt: Date.now(),
-            },
-          },
-        })
-        continue
-      }
-
-      await startScenarioExecution({
+      const startedScenario = await startScenarioExecution({
         apiBaseUrl: config.apiBaseUrl,
         accessToken,
         version: CLI_VERSION,
@@ -401,14 +400,63 @@ export async function runCommand(options: RunCommandOptions) {
       })
       activeScenario = scenarioSnapshot
 
+      if (runFailed) {
+        await submitScenarioResult({
+          apiBaseUrl: config.apiBaseUrl,
+          accessToken,
+          version: CLI_VERSION,
+          projectSlug,
+          runId: createRunResponse.run.id,
+          payload: {
+            runId: createRunResponse.run.id,
+            result: {
+              scenarioId: scenarioSnapshot.scenarioId,
+              status: "dependency_failed",
+              checkResults: [],
+              executionSummary: null,
+              failureDetail:
+                "Dependency chain stopped after an earlier failure.",
+              finishedAt: Date.now(),
+            },
+          },
+        })
+        activeScenario = null
+        continue
+      }
+
       try {
-        runSession ??= await runner.startRun({ cwd })
+        runSession ??= await runner.startRun({
+          cwd,
+          secrets,
+          model: config.model,
+          modelReasoningEffort: config.model_reasoning_effort,
+        })
 
         const execution = await runSession.executeScenario({
           cwd,
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
         })
+
+        if (
+          createRunResponse.run.evidencePolicy === "failed_check_screenshot"
+        ) {
+          if (!createRunResponse.evidenceUploadUrl) {
+            throw new Error("Screenshot evidence upload is not configured.")
+          }
+          const screenshots = execution.screenshotEvidence ?? []
+          for (const screenshot of screenshots) {
+            await uploadRunEvidence({
+              uploadUrl: createRunResponse.evidenceUploadUrl,
+              accessToken,
+              runId: createRunResponse.run.id,
+              scenarioResultId: startedScenario.result.id,
+              checkId: screenshot.checkId,
+              sha256: screenshot.sha256,
+              bytes: screenshot.bytes,
+            })
+          }
+        }
         const finishedAt = Date.now()
 
         await submitScenarioResult({
@@ -420,11 +468,9 @@ export async function runCommand(options: RunCommandOptions) {
           payload: {
             runId: createRunResponse.run.id,
             result: {
-              ...scenarioSnapshot,
-              status: "success",
-              score: execution.score,
-              rationale: execution.rationale,
-              improvementInstruction: execution.improvementInstruction,
+              scenarioId: scenarioSnapshot.scenarioId,
+              status: "completed",
+              checkResults: execution.checkResults,
               executionSummary: execution.executionSummary,
               failureDetail: null,
               finishedAt,
@@ -432,7 +478,12 @@ export async function runCommand(options: RunCommandOptions) {
           },
         })
         activeScenario = null
-        process.stdout.write(`  score ${execution.score.toFixed(2)}\n`)
+        const passed = execution.checkResults.filter(
+          (result) => result.verdict === "passed"
+        ).length
+        process.stdout.write(
+          `  ${passed}/${execution.checkResults.length} checks passed\n`
+        )
       } catch (error) {
         runFailed = true
         await submitScenarioResult({
@@ -444,11 +495,9 @@ export async function runCommand(options: RunCommandOptions) {
           payload: {
             runId: createRunResponse.run.id,
             result: {
-              ...scenarioSnapshot,
+              scenarioId: scenarioSnapshot.scenarioId,
               status: "runner_failed",
-              score: null,
-              rationale: null,
-              improvementInstruction: null,
+              checkResults: [],
               executionSummary: null,
               failureDetail:
                 error instanceof Error ? error.message : "Runner failed",
@@ -477,11 +526,9 @@ export async function runCommand(options: RunCommandOptions) {
           payload: {
             runId: createRunResponse.run.id,
             result: {
-              ...activeScenario,
+              scenarioId: activeScenario.scenarioId,
               status: "interrupted",
-              score: null,
-              rationale: null,
-              improvementInstruction: null,
+              checkResults: [],
               executionSummary: null,
               failureDetail:
                 error instanceof Error

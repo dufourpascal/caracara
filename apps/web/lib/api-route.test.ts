@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   ApiRouteError,
   handleApiError,
+  requireCliVersion,
+  requireLegacyCliVersion,
   startScenarioExecution,
   submitScenarioResult,
 } from "./api-route"
@@ -25,6 +27,22 @@ describe("api-route helpers", () => {
       code: "not_found",
       message: "Run not found.",
     })
+  })
+
+  it("keeps 0.2 clients on v2 and requires 0.3 clients on v3", () => {
+    const requestFor = (version: string) =>
+      new Request("https://example.com", {
+        headers: { "x-caracara-cli-version": version },
+      })
+
+    expect(requireLegacyCliVersion(requestFor("0.2.9"))).toBe("0.2.9")
+    expect(requireCliVersion(requestFor("0.3.0"))).toBe("0.3.0")
+    expect(() => requireLegacyCliVersion(requestFor("0.3.0"))).toThrow(
+      /upgrade required/i
+    )
+    expect(() => requireCliVersion(requestFor("0.2.9"))).toThrow(
+      /upgrade required/i
+    )
   })
 
   it("maps stringified structured errors in messages to API responses", async () => {
@@ -66,16 +84,8 @@ describe("api-route helpers", () => {
           runId: "body-run-id",
           result: {
             scenarioId: "scenario-id",
-            scenarioSlug: "demo-scenario",
-            scenarioName: "Demo scenario",
-            executionInstructions: "Do the thing",
-            scoringPrompt: "Score the thing",
-            sequenceIndex: 0,
-            status: "success",
-            runnerType: "codex",
-            score: 1,
-            rationale: "Worked",
-            improvementInstruction: null,
+            status: "completed",
+            checkResults: [],
             executionSummary: "Output",
             failureDetail: null,
             startedAt: 1,
@@ -105,7 +115,13 @@ describe("api-route helpers", () => {
             scenarioSlug: "demo-scenario",
             scenarioName: "Demo scenario",
             executionInstructions: "Do the thing",
-            scoringPrompt: "Score the thing",
+            evaluationChecks: [
+              {
+                id: "00000000-0000-4000-8000-000000000001",
+                name: "Thing worked",
+                expectation: "The thing is visible.",
+              },
+            ],
             sequenceIndex: 0,
             runnerType: "codex",
             startedAt: 1,

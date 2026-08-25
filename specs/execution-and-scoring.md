@@ -1,4 +1,4 @@
-# Execution and Scoring
+# Execution and evaluation checks
 
 ### EXEC_01
 Scenario execution is initiated locally through the `caracara` CLI.
@@ -18,7 +18,7 @@ When a user runs a scenario in normal mode, all declared dependencies must be re
 ### EXEC_03A
 Scenarios in the same local run share browser session state when the runner supports browser automation.
 
-For browser-driven execution backends, the CLI should keep a single run-scoped browser session so later scenarios can continue from authenticated or otherwise stateful steps completed by earlier scenarios in the same run.
+The CLI starts one run-scoped Chromium process and exposes it to the agent through Chrome DevTools MCP. Later scenarios reuse its authenticated state. Caracara does not use Playwright.
 
 ### EXEC_04
 The CLI also supports direct single-scenario execution.
@@ -28,7 +28,9 @@ A user may execute a specific scenario by slug through the CLI, and this mode ru
 ### EXEC_05
 Execution is performed through supported local agent runners.
 
-In v1, the system supports Codex CLI and Claude Code CLI as local execution backends, while keeping the scenario model independent from any one runner.
+In v1, the system supports the Codex SDK and Claude Code CLI as local execution backends, while keeping the scenario model independent from any one runner.
+
+The local `.caracara/config.json` may pin the Codex model and reasoning effort for reproducible project runs. If either setting is absent, the Codex SDK resolves its own default.
 
 ### EXEC_06
 Project-level prompt context is included in each scenario execution.
@@ -36,21 +38,30 @@ Project-level prompt context is included in each scenario execution.
 Each scenario run should include both project-level shared context and scenario-level instructions so execution remains consistent across scenarios within the same project.
 
 ### EXEC_07
-Scoring prompt context is executed in the same runner invocation as task instructions.
+Evaluation checks are executed in the same runner invocation as task instructions.
 
-The scoring prompt is still authored and stored separately from scenario instructions, but the local runner receives both in a single invocation so it can gather the evidence needed for evaluation while executing the scenario.
+The runner receives the ordered authored checks and must return exactly one passed, failed, or not-observed verdict with concrete browser evidence for every check. It never returns a numeric score.
+
+For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same SDK thread if the screenshot is missing. A second miss is a runner failure.
 
 ### EXEC_08
 Each executed scenario produces a structured result.
 
-A scenario execution result should capture status, timestamps, runner used, an execution summary, score, and any available scoring rationale or evaluation details. The enclosing run record should also include a generated human-readable run name built with `unique-names-generator` using one adjective and one bird, plus a timestamp suffix at the end.
+A scenario execution result captures status, timestamps, runner, an execution summary, the snapshotted checks, and one evidenced verdict per check. The enclosing run stores passed and total check counts plus its generated human-readable name.
+
+Failed-check screenshots are stored as private attachments to the run, scenario result, and check. Local screenshot files are removed after the CLI reads them or the runner closes.
 
 ### EXEC_09
 Execution failures must be represented explicitly.
 
-The system should distinguish successful runs, scoring failures, runner invocation failures, dependency failures, and interrupted executions so users can understand what went wrong.
+The system distinguishes completed scenarios, runner failures, dependency failures, and interrupted executions. Failed checks are product findings and do not turn a completed scenario into an infrastructure failure.
 
 ### EXEC_10
 Runs are reported back to the hosted service as durable records.
 
 After local execution, the CLI submits the resulting run and per-scenario outputs back to the backend so users can inspect and compare results in the web app.
+
+### EXEC_11
+Caracara calculates the final pass rate.
+
+For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheckCount)`. Failed and not-observed checks stay in the denominator. Failed or interrupted runs have no final pass rate.

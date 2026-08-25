@@ -28,12 +28,14 @@ The CLI should not need to understand or resolve the dependency graph itself. Fo
 ### API_06
 Scenario responses include project-level execution context.
 
-When the CLI retrieves scenarios, the response must include enough information to compose execution inputs correctly, including project-level prompt data and the scenario fields needed for execution and scoring.
+When the CLI retrieves scenarios, the response includes project context, instructions, and ordered evaluation checks.
 
 ### API_07
-Run result submission includes the scenario data that was actually executed.
+Scenario start snapshots the data that will be executed.
 
-Instead of relying on backend version lookups, each submitted scenario result should attach the scenario content used during execution so historical run records remain accurate even if the scenario is edited later.
+The start request includes scenario identity, instructions, phase metadata, and checks. Result submission sends scenario ID, status, check results, summary or failure detail, and finish time. The backend validates result IDs against the stored snapshot.
+
+API v3 run creation snapshots an evidence policy and returns the authenticated Convex HTTP-action URL for screenshot uploads. The CLI uploads each failed-check screenshot after scenario start and before result submission. The backend rejects a completed Codex result under the screenshot policy unless every failed check has exactly one attached image.
 
 ### API_08
 Scenario results are submitted incrementally.
@@ -44,6 +46,8 @@ The CLI should report each scenario result back to the hosted service immediatel
 API contracts are versioned and require the most recent supported client version.
 
 Older CLI versions should fail fast when they are no longer compatible so users can upgrade to the newest published version instead of continuing with undefined behavior.
+
+The screenshot-evidence contract uses HTTP namespace v3, API version 3, and minimum CLI version 0.3.0. Namespace v2 remains available to 0.2 clients for one compatibility window and creates text-only runs. The service rejects v1 payloads.
 
 ### API_10
 The API distinguishes contract errors from execution outcomes.

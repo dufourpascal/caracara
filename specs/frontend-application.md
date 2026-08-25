@@ -26,9 +26,9 @@ The UI must support editing project-level configuration with standard shared for
 Users need a dedicated way to edit project metadata such as name, slug, description, and the shared project-level prompt used during scenario execution, and these forms should use shadcn input, textarea, label, button, and validation patterns rather than bespoke controls.
 
 ### FRONTEND_06
-The scenario editor must separate execution instructions from scoring prompts.
+The scenario editor must separate execution instructions from evaluation checks.
 
-The UI should make it obvious that scenario task instructions and scoring logic are different fields with different purposes, and the editor should be composed from standard shadcn form and layout primitives wherever possible.
+The editor provides an ordered check list with add, edit, delete, and move controls. Each check has a name and observable expectation.
 
 ### FRONTEND_07
 Dependencies are managed through a searchable dropdown-style control built from shadcn primitives.
@@ -43,7 +43,9 @@ Users need a clear way to see whether a scenario is still being authored or inte
 ### FRONTEND_09
 The frontend should present run history and per-scenario results using reusable data-display patterns.
 
-Users should be able to inspect past runs, see scenario-by-scenario outcomes, and understand which scenarios passed, failed, or produced non-perfect scores, with data tables, badges, panels, and disclosure patterns built from shared shadcn-based components wherever practical. Run history and run detail views should use the generated run name as the primary human-readable label.
+Users can inspect pass rates and every scenario's ordered check verdicts and browser evidence. Execution failures remain visually separate from failed product checks. Run history uses the generated run name as its primary label.
+
+When a failed check has screenshot evidence, the result view shows a small uncropped thumbnail below its text evidence. The thumbnail opens the authenticated full-size image in an accessible shared dialog. Historical text-only results do not show an empty screenshot frame.
 
 ### FRONTEND_10
 The frontend is a management interface built on shared design-system conventions, not the execution environment.

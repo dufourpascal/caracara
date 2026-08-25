@@ -33,7 +33,7 @@ pnpm --filter web convex:dev
 
 2. Log in to Convex in the browser if prompted.
 3. Create or select the development deployment for `apps/web`.
-4. Let Convex write `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into [apps/web/.env.local](/home/pascal/src/caracarascore/apps/web/.env.local).
+4. Let Convex write `CONVEX_DEPLOYMENT`, `NEXT_PUBLIC_CONVEX_URL`, and `NEXT_PUBLIC_CONVEX_SITE_URL` into [apps/web/.env.local](/home/pascal/src/caracarascore/apps/web/.env.local).
 5. Set the Clerk Frontend API URL on the Convex development deployment:
 
 ```bash
@@ -55,6 +55,35 @@ That starts both:
 - `web#dev` for Next.js
 - `web#convex:dev` for Convex
 
+## Local CLI secrets
+
+`caracara init` creates `.caracara/secrets.env` with owner-only permissions and adds it to `.caracara/.gitignore`. Put project-specific credentials there using names that start with `CARACARA_SECRET_`:
+
+```dotenv
+CARACARA_SECRET_USERNAME=test@example.com
+CARACARA_SECRET_PASSWORD=replace-me
+```
+
+`caracara run` loads the nearest project secrets automatically and makes them available only to the selected local runner. Project and scenario prompts may refer to the variable names, but must never contain their values. The CLI redacts exact secret values from runner errors and submitted result text. The local agent may still receive a secret in model context when it reads the value to enter it into the application under test.
+
+## Codex model configuration
+
+Set the Codex model and reasoning effort in `.caracara/config.json`:
+
+```json
+{
+  "runner": "codex",
+  "model": "gpt-5.6-luna",
+  "model_reasoning_effort": "low"
+}
+```
+
+Both settings are optional. Without them, Codex uses its own configuration. You can also set them with `caracara init --model <model> --model-reasoning-effort <effort>`.
+
+Caracara runs Codex through `@openai/codex-sdk`. The SDK uses the existing local Codex authentication and starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
+
+When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
+
 ## Verify the flow
 
 1. Visit `/` and confirm the signed-out shell renders.
@@ -68,4 +97,4 @@ That starts both:
 - `pnpm --filter web lint` passes.
 - `pnpm --filter web typecheck` passes.
 - Convex code generation is not fully active yet because it needs a real deployment connection first. The frontend currently uses `makeFunctionReference("users:viewer")` so the auth flow can be completed before `convex dev` has generated `convex/_generated/api`.
-- For production, repeat the same `CLERK_FRONTEND_API_URL` setup on the Convex production deployment and set the corresponding Clerk env vars in Vercel.
+- For production, repeat the same `CLERK_FRONTEND_API_URL` setup on the Convex production deployment and set the corresponding Clerk and `NEXT_PUBLIC_CONVEX_SITE_URL` env vars in Vercel.

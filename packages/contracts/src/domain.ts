@@ -10,18 +10,16 @@ export const runStatusSchema = z.enum([
 ])
 export const scenarioResultStatusSchema = z.enum([
   "running",
-  "success",
-  "scoring_failed",
+  "completed",
   "runner_failed",
   "dependency_failed",
   "interrupted",
 ])
 export const runnerTypeSchema = z.enum(["codex", "claude-code"])
-export const runModeSchema = z.enum([
-  "all",
-  "single",
-  "phase",
-  "through_phase",
+export const runModeSchema = z.enum(["all", "single", "phase", "through_phase"])
+export const evidencePolicySchema = z.enum([
+  "text_only",
+  "failed_check_screenshot",
 ])
 
 export const timestampSchema = z.number().int().nonnegative()
@@ -31,6 +29,17 @@ export const slugSchema = z
   .max(120)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 export const nullableStringSchema = z.string().max(20_000).nullable()
+export const evaluationCheckSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  expectation: z.string().min(1).max(2_000),
+})
+export const checkVerdictSchema = z.enum(["passed", "failed", "not_observed"])
+export const checkResultSchema = z.object({
+  checkId: z.string().uuid(),
+  verdict: checkVerdictSchema,
+  evidence: z.string().min(1).max(2_000),
+})
 
 export const projectSchema = z.object({
   id: z.string(),
@@ -60,7 +69,7 @@ export const scenarioSchema = z.object({
   slug: slugSchema,
   status: scenarioStatusSchema,
   instructions: z.string().min(1).max(20_000),
-  scoringPrompt: z.string().min(1).max(20_000),
+  evaluationChecks: z.array(evaluationCheckSchema).max(20),
   phaseId: z.string().nullable().optional(),
   phaseName: z.string().min(1).max(120).nullable().optional(),
   phaseOrder: z.number().int().positive().nullable().optional(),
@@ -85,7 +94,10 @@ export const runSchema = z.object({
   requestedScenarioSlug: slugSchema.nullable(),
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   runnerType: runnerTypeSchema.nullable(),
-  averageScore: z.number().min(0).max(1).nullable(),
+  evidencePolicy: evidencePolicySchema,
+  passedCheckCount: z.number().int().nonnegative(),
+  totalCheckCount: z.number().int().nonnegative(),
+  passRate: z.number().int().min(0).max(100).nullable(),
   startedAt: timestampSchema,
   finishedAt: timestampSchema.nullable(),
   createdAt: timestampSchema,
@@ -99,16 +111,14 @@ export const scenarioResultSchema = z.object({
   scenarioSlug: slugSchema,
   scenarioName: z.string().min(1).max(120),
   executionInstructions: z.string().min(1).max(20_000),
-  scoringPrompt: z.string().min(1).max(20_000),
+  evaluationChecks: z.array(evaluationCheckSchema).max(20),
+  checkResults: z.array(checkResultSchema).max(20),
   phaseId: z.string().nullable().optional(),
   phaseName: z.string().min(1).max(120).nullable().optional(),
   phaseOrder: z.number().int().positive().nullable().optional(),
   sequenceIndex: z.number().int().nonnegative(),
   status: scenarioResultStatusSchema,
   runnerType: runnerTypeSchema,
-  score: z.number().min(0).max(1).nullable(),
-  rationale: nullableStringSchema,
-  improvementInstruction: nullableStringSchema,
   executionSummary: nullableStringSchema,
   failureDetail: nullableStringSchema,
   startedAt: timestampSchema,
@@ -119,8 +129,12 @@ export const scenarioResultSchema = z.object({
 export type ScenarioStatus = z.infer<typeof scenarioStatusSchema>
 export type RunStatus = z.infer<typeof runStatusSchema>
 export type ScenarioResultStatus = z.infer<typeof scenarioResultStatusSchema>
+export type EvaluationCheck = z.infer<typeof evaluationCheckSchema>
+export type CheckVerdict = z.infer<typeof checkVerdictSchema>
+export type CheckResult = z.infer<typeof checkResultSchema>
 export type RunnerType = z.infer<typeof runnerTypeSchema>
 export type RunMode = z.infer<typeof runModeSchema>
+export type EvidencePolicy = z.infer<typeof evidencePolicySchema>
 export type Project = z.infer<typeof projectSchema>
 export type Phase = z.infer<typeof phaseSchema>
 export type Scenario = z.infer<typeof scenarioSchema>

@@ -12,7 +12,11 @@ export type ScenarioNode = {
   name: string
   status: ScenarioStatus
   instructions: string
-  scoringPrompt: string
+  evaluationChecks: Array<{
+    id: string
+    name: string
+    expectation: string
+  }>
   phaseId?: string | null
   phaseName?: string | null
   phaseOrder?: number | null
@@ -39,7 +43,9 @@ export function assertValidDependencies(
     strictPhaseBoundaries?: boolean
   }
 ) {
-  const scenarioById = new Map(scenarios.map((scenario) => [scenario.id, scenario]))
+  const scenarioById = new Map(
+    scenarios.map((scenario) => [scenario.id, scenario])
+  )
 
   for (const dependency of dependencies) {
     const scenario = scenarioById.get(dependency.scenarioId)
@@ -103,7 +109,9 @@ export function filterDependenciesForPhaseExecution(
   scenarios: ScenarioNode[],
   dependencies: DependencyEdge[]
 ) {
-  const scenarioById = new Map(scenarios.map((scenario) => [scenario.id, scenario]))
+  const scenarioById = new Map(
+    scenarios.map((scenario) => [scenario.id, scenario])
+  )
 
   return dependencies.filter((dependency) => {
     const scenario = scenarioById.get(dependency.scenarioId)
@@ -240,7 +248,9 @@ export function buildPhaseExecutionPlan(
     scenariosByPhase.set(phaseId, current)
   }
 
-  const orderedPhases = [...phases].sort((left, right) => left.order - right.order)
+  const orderedPhases = [...phases].sort(
+    (left, right) => left.order - right.order
+  )
   const executionPhases: ExecutionPhase[] = []
 
   for (const phase of orderedPhases) {
@@ -254,7 +264,9 @@ export function buildPhaseExecutionPlan(
       continue
     }
 
-    const phaseScenarioIds = new Set(phaseScenarios.map((scenario) => scenario.id))
+    const phaseScenarioIds = new Set(
+      phaseScenarios.map((scenario) => scenario.id)
+    )
     const phaseDependencies = relevantDependencies.filter(
       (dependency) =>
         phaseScenarioIds.has(dependency.scenarioId) &&
@@ -263,7 +275,11 @@ export function buildPhaseExecutionPlan(
 
     executionPhases.push({
       phase,
-      scenarios: buildExecutionOrder(phaseScenarios, phaseDependencies, options),
+      scenarios: buildExecutionOrder(
+        phaseScenarios,
+        phaseDependencies,
+        options
+      ),
     })
   }
 

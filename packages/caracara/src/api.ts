@@ -1,5 +1,6 @@
 import {
   type ApiError,
+  API_NAMESPACE,
   API_VERSION_HEADER,
   createRunRequestSchema,
   createRunResponseSchema,
@@ -8,6 +9,7 @@ import {
   finalizeRunResponseSchema,
   parseApiError,
   projectListResponseSchema,
+  runEvidenceUploadResponseSchema,
   singleScenarioResponseSchema,
   startScenarioExecutionRequestSchema,
   startScenarioExecutionResponseSchema,
@@ -66,7 +68,7 @@ export async function fetchWhoAmI(
   version: string
 ) {
   return request({
-    url: `${apiBaseUrl}/api/v1/whoami`,
+    url: `${apiBaseUrl}/api/${API_NAMESPACE}/whoami`,
     version,
     accessToken,
     schema: whoAmIResponseSchema,
@@ -79,7 +81,7 @@ export async function fetchProjects(
   version: string
 ) {
   return request({
-    url: `${apiBaseUrl}/api/v1/projects`,
+    url: `${apiBaseUrl}/api/${API_NAMESPACE}/projects`,
     version,
     accessToken,
     schema: projectListResponseSchema,
@@ -93,7 +95,7 @@ export async function fetchExecutionPlan(args: {
   projectSlug: string
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/scenarios`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios`,
     version: args.version,
     accessToken: args.accessToken,
     schema: executionPlanResponseSchema,
@@ -108,7 +110,7 @@ export async function fetchSingleScenario(args: {
   scenarioSlug: string
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
     version: args.version,
     accessToken: args.accessToken,
     schema: singleScenarioResponseSchema,
@@ -123,7 +125,7 @@ export async function createRun(args: {
   payload: Parameters<typeof createRunRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -143,7 +145,7 @@ export async function startScenarioExecution(args: {
   payload: Parameters<typeof startScenarioExecutionRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -165,7 +167,7 @@ export async function submitScenarioResult(args: {
   payload: Parameters<typeof submitScenarioResultRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/results`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -187,7 +189,7 @@ export async function finalizeRun(args: {
   payload: Parameters<typeof finalizeRunRequestSchema.parse>[0]
 }) {
   return request({
-    url: `${args.apiBaseUrl}/api/v1/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
     version: args.version,
     accessToken: args.accessToken,
     init: {
@@ -196,4 +198,39 @@ export async function finalizeRun(args: {
     },
     schema: finalizeRunResponseSchema,
   })
+}
+
+export async function uploadRunEvidence(args: {
+  uploadUrl: string
+  accessToken: string
+  runId: string
+  scenarioResultId: string
+  checkId: string
+  sha256: string
+  bytes: Uint8Array
+}) {
+  const response = await fetch(args.uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.accessToken}`,
+      "content-type": "image/webp",
+      "x-caracara-run-id": args.runId,
+      "x-caracara-result-id": args.scenarioResultId,
+      "x-caracara-check-id": args.checkId,
+      "x-caracara-byte-size": String(args.bytes.byteLength),
+      "x-caracara-sha256": args.sha256,
+    },
+    body: args.bytes as BodyInit,
+  })
+  const json = await response.json()
+  if (!response.ok) {
+    const error = parseApiError(json)
+    throw new Error(
+      error.success
+        ? formatApiError(error.data)
+        : `Unexpected evidence upload error (${response.status} ${response.statusText}).`
+    )
+  }
+
+  return runEvidenceUploadResponseSchema.parse(json)
 }

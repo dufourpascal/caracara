@@ -62,7 +62,13 @@ describe("contracts", () => {
               slug: "complete-signup",
               status: "active",
               instructions: "Create a new account in the app.",
-              scoringPrompt: "Return a score between 0 and 1.",
+              evaluationChecks: [
+                {
+                  id: "00000000-0000-4000-8000-000000000001",
+                  name: "Account created",
+                  expectation: "The dashboard opens for the new account.",
+                },
+              ],
               phaseId: phase.id,
               phaseName: phase.name,
               phaseOrder: phase.order,
@@ -94,16 +100,26 @@ describe("contracts", () => {
         scenarioSlug: "complete-signup",
         scenarioName: "Complete signup",
         executionInstructions: "Create a new account in the app.",
-        scoringPrompt: "Return a score between 0 and 1.",
+        evaluationChecks: [
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            name: "Account created",
+            expectation: "The dashboard opens for the new account.",
+          },
+        ],
+        checkResults: [
+          {
+            checkId: "00000000-0000-4000-8000-000000000001",
+            verdict: "passed",
+            evidence: "The dashboard heading was visible.",
+          },
+        ],
         phaseId: phase.id,
         phaseName: phase.name,
         phaseOrder: phase.order,
         sequenceIndex: 0,
-        status: "success",
+        status: "completed",
         runnerType: "codex",
-        score: 1,
-        rationale: "Passed",
-        improvementInstruction: null,
         executionSummary: "done",
         failureDetail: null,
         startedAt: 3,
@@ -120,16 +136,14 @@ describe("contracts", () => {
         scenarioSlug: "setup-session",
         scenarioName: "Setup session",
         executionInstructions: "Sign in to the app.",
-        scoringPrompt: "Confirm sign-in completed.",
+        evaluationChecks: [],
+        checkResults: [],
         phaseId: null,
         phaseName: null,
         phaseOrder: null,
         sequenceIndex: 1,
         status: "running",
         runnerType: "codex",
-        score: null,
-        rationale: null,
-        improvementInstruction: null,
         executionSummary: null,
         failureDetail: null,
         startedAt: 6,
@@ -149,13 +163,16 @@ describe("contracts", () => {
         requestedScenarioSlug: null,
         requestedPhaseOrder: null,
         runnerType: "codex",
-        averageScore: 0.9,
+        evidencePolicy: "failed_check_screenshot",
+        passedCheckCount: 9,
+        totalCheckCount: 10,
+        passRate: 90,
         startedAt: 1,
         finishedAt: 2,
         createdAt: 1,
         updatedAt: 2,
-      }).averageScore
-    ).toBe(0.9)
+      }).passRate
+    ).toBe(90)
   })
 
   it("rejects invalid cli config", () => {
@@ -220,11 +237,13 @@ describe("contracts", () => {
         run: {
           id: "run_1",
           status: "completed",
-          averageScore: 0.8,
+          passedCheckCount: 4,
+          totalCheckCount: 5,
+          passRate: 80,
           finishedAt: 10,
           updatedAt: 10,
         },
-      }).run.averageScore
-    ).toBe(0.8)
+      }).run.passRate
+    ).toBe(80)
   })
 })

@@ -5,6 +5,7 @@ import { deleteProjectCascade } from "./lib"
 describe("project deletion helpers", () => {
   it("deletes project runs, results, dependencies, and scenarios before the project", async () => {
     const deletedIds: string[] = []
+    const deletedStorageIds: string[] = []
     const ctx = {
       db: {
         query(table: string) {
@@ -142,10 +143,43 @@ describe("project deletion helpers", () => {
             }
           }
 
+          if (table === "runEvidence") {
+            return {
+              withIndex(
+                indexName: string,
+                buildQuery: (query: {
+                  eq: (field: string, value: string) => null
+                }) => null
+              ) {
+                expect(indexName).toBe("by_run")
+                const runIds: string[] = []
+                buildQuery({
+                  eq(field, value) {
+                    expect(field).toBe("runId")
+                    runIds.push(value)
+                    return null
+                  },
+                })
+                return {
+                  async collect() {
+                    return runIds[0] === "run-1"
+                      ? [{ _id: "evidence-1", storageId: "storage-1" }]
+                      : []
+                  },
+                }
+              },
+            }
+          }
+
           throw new Error(`Unexpected table ${table}`)
         },
         async delete(id: string) {
           deletedIds.push(id)
+        },
+      },
+      storage: {
+        async delete(id: string) {
+          deletedStorageIds.push(id)
         },
       },
     } as never
@@ -161,6 +195,7 @@ describe("project deletion helpers", () => {
       deletedScenarioCount: 2,
     })
     expect(deletedIds).toEqual([
+      "evidence-1",
       "result-1",
       "run-1",
       "result-2",
@@ -174,5 +209,6 @@ describe("project deletion helpers", () => {
       "phase-2",
       "project-1",
     ])
+    expect(deletedStorageIds).toEqual(["storage-1"])
   })
 })

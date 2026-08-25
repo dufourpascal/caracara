@@ -204,11 +204,52 @@ const uploadRunEvidence = httpAction(async (ctx, request) => {
   }
 })
 
+const serveRunEvidence = httpAction(async (ctx, request) => {
+  const identity = await ctx.auth.getUserIdentity()
+  if (!identity) {
+    return new Response("Not found", { status: 404 })
+  }
+  const prefix = "/run-evidence/"
+  const evidenceId = new URL(request.url).pathname.slice(prefix.length)
+  if (!evidenceId) {
+    return new Response("Not found", { status: 404 })
+  }
+
+  try {
+    const evidence = await ctx.runQuery(internal.runEvidence.getForServing, {
+      ownerUserId: identity.subject,
+      evidenceId: evidenceId as never,
+    })
+    if (!evidence) {
+      return new Response("Not found", { status: 404 })
+    }
+    const blob = await ctx.storage.get(evidence.storageId)
+    if (!blob) {
+      return new Response("Not found", { status: 404 })
+    }
+    return new Response(blob, {
+      headers: {
+        "cache-control": "private, no-store",
+        "content-length": String(evidence.byteSize),
+        "content-type": evidence.contentType,
+        "x-content-type-options": "nosniff",
+      },
+    })
+  } catch {
+    return new Response("Not found", { status: 404 })
+  }
+})
+
 const http = httpRouter()
 http.route({
   path: "/run-evidence",
   method: "POST",
   handler: uploadRunEvidence,
+})
+http.route({
+  pathPrefix: "/run-evidence/",
+  method: "GET",
+  handler: serveRunEvidence,
 })
 
 export default http

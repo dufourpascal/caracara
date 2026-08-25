@@ -5,11 +5,9 @@ import type { Id } from "./_generated/dataModel"
 import {
   internalMutation,
   internalQuery,
-  query,
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server"
-import { ensureRunOwnership, requireIdentity } from "./lib"
 
 const MAX_SCREENSHOT_BYTES = 3 * 1024 * 1024
 
@@ -169,19 +167,44 @@ export const attach = internalMutation({
   },
 })
 
-export const getForServing = query({
-  args: { evidenceId: v.id("runEvidence") },
+export async function getOwnedEvidenceForServing(
+  ctx: QueryCtx,
+  args: {
+    ownerUserId: string
+    evidenceId: Id<"runEvidence">
+  }
+) {
+  const evidence = await ctx.db.get(args.evidenceId)
+  if (!evidence) {
+    return null
+  }
+  const run = await ctx.db.get(evidence.runId)
+  if (
+    !run ||
+    run.ownerUserId !== args.ownerUserId ||
+    run.projectId !== evidence.projectId
+  ) {
+    return null
+  }
+  const project = await ctx.db.get(run.projectId)
+  return project?.ownerUserId === args.ownerUserId ? evidence : null
+}
+
+export const getForServing = internalQuery({
+  args: {
+    ownerUserId: v.string(),
+    evidenceId: v.id("runEvidence"),
+  },
   handler: async (ctx, args) => {
-    await requireIdentity(ctx)
-    const evidence = await ctx.db.get(args.evidenceId)
+    const evidence = await getOwnedEvidenceForServing(ctx, args)
     if (!evidence) {
       return null
     }
-    await ensureRunOwnership(ctx, evidence.runId)
-    const url = await ctx.storage.getUrl(evidence.storageId)
-    return url
-      ? { url, contentType: evidence.contentType, byteSize: evidence.byteSize }
-      : null
+    return {
+      storageId: evidence.storageId,
+      contentType: evidence.contentType,
+      byteSize: evidence.byteSize,
+    }
   },
 })
 

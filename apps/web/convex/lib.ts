@@ -917,6 +917,47 @@ export function validateRunnerMatch(
   }
 }
 
+export function matchesTerminalScenarioResult(
+  existing: {
+    status: string
+    checkResults: Array<{
+      checkId: string
+      verdict: string
+      evidence: string
+    }>
+    executionSummary: string | null
+    failureDetail: string | null
+    finishedAt: number | null
+  },
+  submitted: {
+    status: string
+    checkResults: Array<{
+      checkId: string
+      verdict: string
+      evidence: string
+    }>
+    executionSummary: string | null
+    failureDetail: string | null
+    finishedAt: number
+  }
+) {
+  return (
+    existing.status === submitted.status &&
+    existing.executionSummary === submitted.executionSummary &&
+    existing.failureDetail === submitted.failureDetail &&
+    existing.finishedAt === submitted.finishedAt &&
+    existing.checkResults.length === submitted.checkResults.length &&
+    existing.checkResults.every((check, index) => {
+      const candidate = submitted.checkResults[index]
+      return (
+        candidate?.checkId === check.checkId &&
+        candidate.verdict === check.verdict &&
+        candidate.evidence === check.evidence
+      )
+    })
+  )
+}
+
 export async function computeRunCheckCounts(ctx: Ctx, runId: Id<"runs">) {
   const results = await ctx.db
     .query("scenarioResults")

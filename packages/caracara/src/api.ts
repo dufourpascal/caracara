@@ -26,14 +26,49 @@ function formatApiError(error: ApiError) {
   return `${error.code}: ${error.message}\n${JSON.stringify(error.details, null, 2)}`
 }
 
+const TRANSIENT_RETRY_DELAYS_MS = [250, 1_000]
+
+function isRetryableStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500
+}
+
+async function fetchWithTransientRetries(
+  input: string,
+  init: RequestInit
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(input, init)
+      if (
+        isRetryableStatus(response.status) &&
+        attempt < TRANSIENT_RETRY_DELAYS_MS.length
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
+        )
+        continue
+      }
+      return response
+    } catch (error) {
+      if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
+        throw error
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
+      )
+    }
+  }
+}
+
 async function request<T>(args: {
   url: string
   version: string
   accessToken: string
   init?: RequestInit
+  retryTransient?: boolean
   schema: { parse: (value: unknown) => T }
 }) {
-  const response = await fetch(args.url, {
+  const init = {
     ...args.init,
     headers: new Headers({
       authorization: `Bearer ${args.accessToken}`,
@@ -45,7 +80,10 @@ async function request<T>(args: {
           ? Object.fromEntries(args.init.headers)
           : (args.init?.headers ?? {})),
     }),
-  })
+  }
+  const response = args.retryTransient
+    ? await fetchWithTransientRetries(args.url, init)
+    : await fetch(args.url, init)
   const json = await response.json()
 
   if (!response.ok) {
@@ -176,6 +214,7 @@ export async function submitScenarioResult(args: {
         submitScenarioResultRequestSchema.parse(args.payload)
       ),
     },
+    retryTransient: true,
     schema: submitScenarioResultResponseSchema,
   })
 }
@@ -209,56 +248,28 @@ export async function uploadRunEvidence(args: {
   sha256: string
   bytes: Uint8Array
 }) {
-  const retryDelays = [250, 1_000]
-
-  for (let attempt = 0; ; attempt += 1) {
-    let response: Response | undefined
-    try {
-      response = await fetch(args.uploadUrl, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${args.accessToken}`,
-          "content-type": "image/webp",
-          "x-caracara-run-id": args.runId,
-          "x-caracara-result-id": args.scenarioResultId,
-          "x-caracara-check-id": args.checkId,
-          "x-caracara-byte-size": String(args.bytes.byteLength),
-          "x-caracara-sha256": args.sha256,
-        },
-        body: args.bytes as BodyInit,
-      })
-      const retryable =
-        response.status === 408 ||
-        response.status === 429 ||
-        response.status >= 500
-      if (retryable && attempt < retryDelays.length) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, retryDelays[attempt])
-        )
-        continue
-      }
-
-      const json = await response.json()
-      if (!response.ok) {
-        const error = parseApiError(json)
-        throw new Error(
-          error.success
-            ? formatApiError(error.data)
-            : `Unexpected evidence upload error (${response.status} ${response.statusText}).`
-        )
-      }
-
-      return runEvidenceUploadResponseSchema.parse(json)
-    } catch (error) {
-      const retryable =
-        !response ||
-        response.status === 408 ||
-        response.status === 429 ||
-        response.status >= 500
-      if (!retryable || attempt >= retryDelays.length) {
-        throw error
-      }
-      await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]))
-    }
+  const response = await fetchWithTransientRetries(args.uploadUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.accessToken}`,
+      "content-type": "image/webp",
+      "x-caracara-run-id": args.runId,
+      "x-caracara-result-id": args.scenarioResultId,
+      "x-caracara-check-id": args.checkId,
+      "x-caracara-byte-size": String(args.bytes.byteLength),
+      "x-caracara-sha256": args.sha256,
+    },
+    body: args.bytes as BodyInit,
+  })
+  const json = await response.json()
+  if (!response.ok) {
+    const error = parseApiError(json)
+    throw new Error(
+      error.success
+        ? formatApiError(error.data)
+        : `Unexpected evidence upload error (${response.status} ${response.statusText}).`
+    )
   }
+
+  return runEvidenceUploadResponseSchema.parse(json)
 }

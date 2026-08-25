@@ -9,6 +9,7 @@ import {
   deleteRunAndResults,
   ensureRunOwnership,
   getScenarioById,
+  matchesTerminalScenarioResult,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
   toRun,
@@ -226,10 +227,22 @@ export const submitScenarioResult = mutation({
         query.eq("runId", args.runId).eq("scenarioId", args.result.scenarioId)
       )
       .unique()
-    if (!existing || existing.status !== "running") {
+    if (!existing) {
       throw new ConvexError({
         code: "conflict",
         message: "Scenario execution has not started or is already complete.",
+      })
+    }
+    if (existing.status !== "running") {
+      if (matchesTerminalScenarioResult(existing, args.result)) {
+        return {
+          run: toRun(run),
+          result: toScenarioResult(existing),
+        }
+      }
+      throw new ConvexError({
+        code: "conflict",
+        message: "Scenario execution has already completed with other data.",
       })
     }
 

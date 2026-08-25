@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { fetchProjects, uploadRunEvidence } from "./api.js"
+import {
+  fetchProjects,
+  submitScenarioResult,
+  uploadRunEvidence,
+} from "./api.js"
 
 describe("api client", () => {
   afterEach(() => {
@@ -117,5 +121,80 @@ describe("api client", () => {
       evidence: { id: "evidence-1" },
     })
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it("retries a terminal result after a lost response", async () => {
+    vi.useFakeTimers()
+    const checkId = "00000000-0000-4000-8000-000000000001"
+    const response = {
+      run: {
+        id: "run-1",
+        status: "running",
+        finishedAt: null,
+        updatedAt: 2,
+      },
+      result: {
+        id: "result-1",
+        runId: "run-1",
+        scenarioId: "scenario-1",
+        scenarioSlug: "scenario",
+        scenarioName: "Scenario",
+        executionInstructions: "Test it",
+        evaluationChecks: [
+          { id: checkId, name: "Check", expectation: "It works" },
+        ],
+        checkResults: [
+          {
+            checkId,
+            verdict: "passed",
+            evidence: "It worked",
+          },
+        ],
+        phaseId: null,
+        phaseName: null,
+        phaseOrder: null,
+        sequenceIndex: 0,
+        status: "completed",
+        runnerType: "codex",
+        executionSummary: "Complete",
+        failureDetail: null,
+        startedAt: 1,
+        finishedAt: 2,
+        submittedAt: 2,
+      },
+    }
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Response lost"))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => response,
+      })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const submission = submitScenarioResult({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.3.0",
+      projectSlug: "project",
+      runId: "run-1",
+      payload: {
+        runId: "run-1",
+        result: {
+          scenarioId: "scenario-1",
+          status: "completed",
+          checkResults: response.result.checkResults,
+          executionSummary: "Complete",
+          failureDetail: null,
+          finishedAt: 2,
+        },
+      },
+    })
+    await vi.runAllTimersAsync()
+
+    await expect(submission).resolves.toEqual(response)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

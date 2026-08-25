@@ -1,7 +1,4 @@
 import { auth } from "@clerk/nextjs/server"
-import { fetchQuery } from "convex/nextjs"
-
-import { api } from "@/convex/_generated/api"
 
 export async function GET(
   _request: Request,
@@ -18,31 +15,37 @@ export async function GET(
   }
 
   const { artifactId } = await params
-  let evidence
-  try {
-    evidence = await fetchQuery(
-      api.runEvidence.getForServing,
-      { evidenceId: artifactId as never },
-      { token }
-    )
-  } catch {
+  const deploymentUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+  const siteUrl =
+    process.env.NEXT_PUBLIC_CONVEX_SITE_URL ??
+    (deploymentUrl?.endsWith(".convex.cloud")
+      ? deploymentUrl.replace(/\.convex\.cloud$/, ".convex.site")
+      : null)
+  if (!siteUrl) {
     return new Response("Not found", { status: 404 })
   }
-  if (!evidence) {
-    return new Response("Not found", { status: 404 })
-  }
-
-  const stored = await fetch(evidence.url, { cache: "no-store" })
+  const stored = await fetch(
+    `${siteUrl.replace(/\/$/, "")}/run-evidence/${encodeURIComponent(artifactId)}`,
+    {
+      cache: "no-store",
+      headers: { authorization: `Bearer ${token}` },
+    }
+  )
   if (!stored.ok || !stored.body) {
     return new Response("Not found", { status: 404 })
   }
 
+  const headers = new Headers({
+    "cache-control": "private, no-store",
+    "content-type": stored.headers.get("content-type") ?? "image/webp",
+    "x-content-type-options": "nosniff",
+  })
+  const contentLength = stored.headers.get("content-length")
+  if (contentLength) {
+    headers.set("content-length", contentLength)
+  }
+
   return new Response(stored.body, {
-    headers: {
-      "cache-control": "private, no-store",
-      "content-length": String(evidence.byteSize),
-      "content-type": evidence.contentType,
-      "x-content-type-options": "nosniff",
-    },
+    headers,
   })
 }

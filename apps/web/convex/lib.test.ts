@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   computeRunCheckCounts,
   deriveScenarioNavigationMetadata,
+  matchesTerminalScenarioResult,
   toRun,
   toScenarioResult,
   validateCompletedCheckResults,
@@ -11,6 +12,26 @@ import {
 } from "./lib"
 
 describe("convex response mappers", () => {
+  it("recognizes only exact terminal result retries", () => {
+    const result = {
+      status: "completed",
+      checkResults: [
+        { checkId: "a", verdict: "passed", evidence: "Visible" },
+      ],
+      executionSummary: "Complete",
+      failureDetail: null,
+      finishedAt: 123,
+    }
+
+    expect(matchesTerminalScenarioResult(result, result)).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(result, {
+        ...result,
+        executionSummary: "Different",
+      })
+    ).toBe(false)
+  })
+
   it("retains completed check counts when a later scenario fails", async () => {
     const ctx = {
       db: {

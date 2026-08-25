@@ -65,3 +65,8 @@ After local execution, the CLI submits the resulting run and per-scenario output
 Caracara calculates the final pass rate.
 
 For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheckCount)`. Failed and not-observed checks stay in the denominator. Failed or interrupted runs have no final pass rate.
+
+### EXEC_12
+The CLI reports local runner usage after each run.
+
+The report includes aggregate token usage and an estimated API-equivalent cost when the runner exposes enough information. Caracara does not submit or persist this usage report.

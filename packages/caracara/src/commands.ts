@@ -34,7 +34,12 @@ import {
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
-import { getRunnerAdapter } from "./execution.js"
+import {
+  formatRunnerUsage,
+  getRunnerAdapter,
+  mergeRunnerUsage,
+  type RunnerUsage,
+} from "./execution.js"
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
@@ -362,6 +367,7 @@ export async function runCommand(options: RunCommandOptions) {
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
   let runError: unknown = null
+  let runUsage: RunnerUsage | undefined
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
   let lastPrintedPhaseId: string | null = null
@@ -437,6 +443,7 @@ export async function runCommand(options: RunCommandOptions) {
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
         })
+        runUsage = mergeRunnerUsage(runUsage, execution.usage)
 
         if (
           createRunResponse.run.evidencePolicy === "failed_check_screenshot"
@@ -565,6 +572,10 @@ export async function runCommand(options: RunCommandOptions) {
         },
       })
     }
+  }
+
+  if (runUsage) {
+    process.stdout.write(`\n${formatRunnerUsage(runUsage)}\n`)
   }
 
   if (runError) {

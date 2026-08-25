@@ -209,28 +209,56 @@ export async function uploadRunEvidence(args: {
   sha256: string
   bytes: Uint8Array
 }) {
-  const response = await fetch(args.uploadUrl, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${args.accessToken}`,
-      "content-type": "image/webp",
-      "x-caracara-run-id": args.runId,
-      "x-caracara-result-id": args.scenarioResultId,
-      "x-caracara-check-id": args.checkId,
-      "x-caracara-byte-size": String(args.bytes.byteLength),
-      "x-caracara-sha256": args.sha256,
-    },
-    body: args.bytes as BodyInit,
-  })
-  const json = await response.json()
-  if (!response.ok) {
-    const error = parseApiError(json)
-    throw new Error(
-      error.success
-        ? formatApiError(error.data)
-        : `Unexpected evidence upload error (${response.status} ${response.statusText}).`
-    )
-  }
+  const retryDelays = [250, 1_000]
 
-  return runEvidenceUploadResponseSchema.parse(json)
+  for (let attempt = 0; ; attempt += 1) {
+    let response: Response | undefined
+    try {
+      response = await fetch(args.uploadUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${args.accessToken}`,
+          "content-type": "image/webp",
+          "x-caracara-run-id": args.runId,
+          "x-caracara-result-id": args.scenarioResultId,
+          "x-caracara-check-id": args.checkId,
+          "x-caracara-byte-size": String(args.bytes.byteLength),
+          "x-caracara-sha256": args.sha256,
+        },
+        body: args.bytes as BodyInit,
+      })
+      const retryable =
+        response.status === 408 ||
+        response.status === 429 ||
+        response.status >= 500
+      if (retryable && attempt < retryDelays.length) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, retryDelays[attempt])
+        )
+        continue
+      }
+
+      const json = await response.json()
+      if (!response.ok) {
+        const error = parseApiError(json)
+        throw new Error(
+          error.success
+            ? formatApiError(error.data)
+            : `Unexpected evidence upload error (${response.status} ${response.statusText}).`
+        )
+      }
+
+      return runEvidenceUploadResponseSchema.parse(json)
+    } catch (error) {
+      const retryable =
+        !response ||
+        response.status === 408 ||
+        response.status === 429 ||
+        response.status >= 500
+      if (!retryable || attempt >= retryDelays.length) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]))
+    }
+  }
 }

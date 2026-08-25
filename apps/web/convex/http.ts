@@ -60,6 +60,43 @@ async function sha256Hex(buffer: ArrayBuffer) {
   ).join("")
 }
 
+export async function readBytesWithLimit(
+  body: ReadableStream<Uint8Array> | null,
+  limit: number
+) {
+  if (!body) {
+    return new Uint8Array()
+  }
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let byteLength = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      byteLength += value.byteLength
+      if (byteLength > limit) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(byteLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
 const uploadRunEvidence = httpAction(async (ctx, request) => {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) {
@@ -72,14 +109,18 @@ const uploadRunEvidence = httpAction(async (ctx, request) => {
   const runId = request.headers.get("x-caracara-run-id")
   const scenarioResultId = request.headers.get("x-caracara-result-id")
   const checkId = request.headers.get("x-caracara-check-id")
-  const expectedByteSize = Number(request.headers.get("x-caracara-byte-size"))
+  const expectedByteSizeHeader = request.headers.get("x-caracara-byte-size")
+  const expectedByteSize = Number(expectedByteSizeHeader)
   const expectedSha256 = request.headers.get("x-caracara-sha256")
   if (
     !runId ||
     !scenarioResultId ||
     !checkId ||
     !expectedSha256 ||
-    !Number.isSafeInteger(expectedByteSize)
+    !expectedByteSizeHeader ||
+    !Number.isSafeInteger(expectedByteSize) ||
+    expectedByteSize <= 0 ||
+    expectedByteSize > MAX_SCREENSHOT_BYTES
   ) {
     return json(
       { code: "validation_error", message: "Missing evidence headers." },
@@ -93,11 +134,20 @@ const uploadRunEvidence = httpAction(async (ctx, request) => {
     )
   }
 
-  const buffer = await request.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
+  const contentLengthHeader = request.headers.get("content-length")
   if (
-    bytes.byteLength === 0 ||
-    bytes.byteLength > MAX_SCREENSHOT_BYTES ||
+    contentLengthHeader &&
+    Number(contentLengthHeader) !== expectedByteSize
+  ) {
+    return json(
+      { code: "validation_error", message: "Invalid evidence size." },
+      400
+    )
+  }
+
+  const bytes = await readBytesWithLimit(request.body, MAX_SCREENSHOT_BYTES)
+  if (
+    !bytes ||
     bytes.byteLength !== expectedByteSize ||
     !hasWebpSignature(bytes)
   ) {
@@ -107,7 +157,7 @@ const uploadRunEvidence = httpAction(async (ctx, request) => {
     )
   }
 
-  const sha256 = await sha256Hex(buffer)
+  const sha256 = await sha256Hex(bytes.buffer as ArrayBuffer)
   if (sha256 !== expectedSha256) {
     return json(
       { code: "validation_error", message: "Evidence digest mismatch." },
@@ -134,7 +184,7 @@ const uploadRunEvidence = httpAction(async (ctx, request) => {
     }
 
     const storageId = await ctx.storage.store(
-      new Blob([buffer], { type: "image/webp" })
+      new Blob([bytes], { type: "image/webp" })
     )
     try {
       const attached = await ctx.runMutation(internal.runEvidence.attach, {

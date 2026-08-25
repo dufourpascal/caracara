@@ -4,6 +4,7 @@ import { fetchProjects, uploadRunEvidence } from "./api.js"
 
 describe("api client", () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -73,5 +74,48 @@ describe("api client", () => {
         }),
       })
     )
+  })
+
+  it("retries transient evidence upload failures", async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Connection reset"))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          evidence: {
+            id: "evidence-1",
+            checkId: "00000000-0000-4000-8000-000000000001",
+            contentType: "image/webp",
+            byteSize: 12,
+            sha256: "a".repeat(64),
+          },
+        }),
+      })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const upload = uploadRunEvidence({
+      uploadUrl: "https://example.convex.site/run-evidence",
+      accessToken: "token",
+      runId: "run-1",
+      scenarioResultId: "result-1",
+      checkId: "00000000-0000-4000-8000-000000000001",
+      sha256: "a".repeat(64),
+      bytes: Buffer.from("RIFF0000WEBP", "ascii"),
+    })
+    await vi.runAllTimersAsync()
+
+    await expect(upload).resolves.toMatchObject({
+      evidence: { id: "evidence-1" },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })

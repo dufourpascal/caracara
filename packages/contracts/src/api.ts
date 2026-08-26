@@ -3,6 +3,7 @@ import { z } from "zod"
 import { API_VERSION, MIN_SUPPORTED_CLI_VERSION } from "./constants.js"
 import {
   evaluationCheckSchema,
+  environmentNameSchema,
   nullableStringSchema,
   phaseSchema,
   projectSchema,
@@ -12,6 +13,7 @@ import {
   scenarioResultSchema,
   scenarioSchema,
   slugSchema,
+  targetUrlSchema,
 } from "./domain.js"
 
 export const apiErrorCodeSchema = z.enum([
@@ -259,13 +261,23 @@ export const authoringResponseSchema = z.union([
   scenarioAuthoringResponseSchema,
 ])
 
-export const createRunRequestSchema = z.object({
-  mode: runModeSchema,
-  runnerType: runnerTypeSchema,
-  requestedScenarioSlug: slugSchema.nullable().optional(),
-  requestedPhaseOrder: z.number().int().positive().nullable().optional(),
-  startedAt: z.number().int().positive(),
-})
+export const createRunRequestSchema = z
+  .object({
+    mode: runModeSchema,
+    runnerType: runnerTypeSchema,
+    environment: environmentNameSchema.optional(),
+    targetUrl: targetUrlSchema.optional(),
+    requestedScenarioSlug: slugSchema.nullable().optional(),
+    requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+    startedAt: z.number().int().positive(),
+  })
+  .refine(
+    (value) =>
+      (value.environment === undefined) === (value.targetUrl === undefined),
+    {
+      message: "Environment and target URL must be provided together.",
+    }
+  )
 
 export const createRunResponseSchema = z.object({
   run: runSchema.pick({
@@ -275,6 +287,8 @@ export const createRunResponseSchema = z.object({
     mode: true,
     runnerType: true,
     evidencePolicy: true,
+    environment: true,
+    targetUrl: true,
     requestedScenarioSlug: true,
     requestedPhaseOrder: true,
     startedAt: true,

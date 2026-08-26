@@ -43,7 +43,7 @@ A scenario keeps its durable identifier and is updated in place. Caracara does n
 ### DOMAIN_09
 A run is a single execution event within a project.
 
-A run captures the execution of one scenario or a group of scenarios against the project's application under test at a specific time and in a specific local environment. Each run stores both a durable identifier and a human-readable run name. In v1, the run name is generated with `unique-names-generator` using a single adjective plus a single bird in kebab-case, followed by a timestamp suffix, for example `pleasant-warbler-20260307-142530`.
+A run captures the execution of one scenario or a group of scenarios against the project's application under test at a specific time and in a specific target environment. New runs snapshot the CLI-selected environment name and target URL so history remains accurate after local configuration changes. Runs created before environment tracking remain valid without that snapshot. Each run stores both a durable identifier and a human-readable run name. In v1, the run name is generated with `unique-names-generator` using a single adjective plus a single bird in kebab-case, followed by a timestamp suffix, for example `pleasant-warbler-20260307-142530`.
 
 ### DOMAIN_10
 Execution results are separate from scenario definitions.

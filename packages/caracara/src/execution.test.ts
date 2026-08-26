@@ -5,6 +5,7 @@ import type { OrderedScenario } from "@workspace/contracts"
 import {
   buildCodexClientOptions,
   buildCodexChromeMcpArgs,
+  buildChromiumArgs,
   buildCodexThreadOptions,
   buildExecutionResultSchema,
   buildMissingScreenshotPrompt,
@@ -161,13 +162,26 @@ describe("Codex SDK configuration", () => {
     ])
   })
 
+  it("opens the shared browser at the selected target URL", () => {
+    const args = buildChromiumArgs({
+      userDataDir: "/tmp/profile",
+      initialUrl: "https://preview.example.com/",
+    })
+
+    expect(args.at(-1)).toBe("https://preview.example.com/")
+  })
+
   it("builds check guidance without asking the model for a score", () => {
     const prompt = buildRunnerPrompt({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
       projectPrompt: "Use the seeded demo account.",
       scenario,
     })
 
     expect(prompt).toContain("Task instructions:\nLog in and create an article")
+    expect(prompt).toContain("Target environment: preview")
+    expect(prompt).toContain("Application URL: https://preview.example.com/")
     expect(prompt).toContain(
       "Valid article slug [00000000-0000-4000-8000-000000000001]"
     )
@@ -178,6 +192,8 @@ describe("Codex SDK configuration", () => {
 
   it("requires deterministic WebP evidence for failed Codex checks", () => {
     const prompt = buildRunnerPrompt({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
       projectPrompt: "Use the seeded demo account.",
       scenario,
       evidenceDirectory: "/tmp/caracara-evidence",
@@ -204,6 +220,8 @@ describe("Codex SDK configuration", () => {
 
   it("lists local secret names in the prompt without adding their values", () => {
     const prompt = buildRunnerPrompt({
+      environment: "development",
+      targetUrl: "http://localhost:3055/",
       projectPrompt: "Open http://localhost:3055.",
       scenario,
       secretNames: ["CARACARA_SECRET_PASSWORD", "CARACARA_SECRET_USERNAME"],

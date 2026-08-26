@@ -35,6 +35,39 @@ export const slugSchema = z
   .min(1)
   .max(SLUG_MAX_LENGTH)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+export const environmentNameSchema = slugSchema
+export const targetUrlSchema = z
+  .string()
+  .superRefine((value, ctx) => {
+    let url: URL
+    try {
+      url = new URL(value)
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Target URL must be a valid URL.",
+      })
+      return
+    }
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Target URL must use HTTP or HTTPS.",
+      })
+    }
+    if (url.username !== "" || url.password !== "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Target URL must not contain credentials.",
+      })
+    }
+  })
+  .transform((value) => new URL(value).toString())
+export const runEnvironmentSchema = z.object({
+  environment: environmentNameSchema,
+  targetUrl: targetUrlSchema,
+})
 export const projectNameSchema = z
   .string()
   .trim()
@@ -133,6 +166,8 @@ export const runSchema = z.object({
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   runnerType: runnerTypeSchema.nullable(),
   evidencePolicy: evidencePolicySchema,
+  environment: environmentNameSchema.nullable().optional(),
+  targetUrl: targetUrlSchema.nullable().optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),

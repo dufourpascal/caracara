@@ -21,6 +21,7 @@ export type RunCommandOptions = {
   apiBaseUrl?: string
   project?: string
   runner?: RunnerType
+  environment?: string
   scenario?: string
   phase?: string
   throughPhase?: string

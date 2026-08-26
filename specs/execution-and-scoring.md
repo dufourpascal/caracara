@@ -70,3 +70,8 @@ For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheck
 The CLI reports local runner usage after each run.
 
 The report includes aggregate token usage and an estimated API-equivalent cost when the runner exposes enough information. Caracara does not submit or persist this usage report.
+
+### EXEC_13
+Each CLI run selects one named target environment.
+
+The nearest `.caracara/config.json` maps arbitrary lowercase environment names to HTTP or HTTPS application URLs and may set a default. `--environment` overrides `CARACARA_ENVIRONMENT`, which overrides the saved default. The CLI opens its shared browser at the selected URL and treats that origin as authoritative for every scenario in the run.

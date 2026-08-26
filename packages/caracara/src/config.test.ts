@@ -19,6 +19,7 @@ import {
   readLocalConfig,
   readLocalSecrets,
   resolveConfig,
+  resolveEnvironment,
   resolveRunner,
   writeLocalConfig,
 } from "./config.js"
@@ -49,7 +50,7 @@ describe("config", () => {
         apiBaseUrl: "https://flag.example.com",
         selectedProjectSlug: "flag-project",
       },
-      process.env,
+      process.env
     )
 
     expect(resolved.apiBaseUrl).toBe("https://flag.example.com")
@@ -70,7 +71,7 @@ describe("config", () => {
         selectedProjectSlug: "local-project",
       },
       {},
-      process.env,
+      process.env
     )
 
     expect(resolved.apiBaseUrl).toBe("https://local.example.com")
@@ -88,7 +89,7 @@ describe("config", () => {
       },
       {},
       {},
-      {} as NodeJS.ProcessEnv,
+      {} as NodeJS.ProcessEnv
     )
 
     expect(resolved.apiBaseUrl).toBe("https://caracara.renaissanceai.com")
@@ -104,8 +105,13 @@ describe("config", () => {
         runner: "claude-code",
         model: "gpt-5.6-luna",
         model_reasoning_effort: "low",
+        environments: {
+          development: "http://localhost:3000",
+          preview: "https://preview.example.com/app",
+        },
+        defaultEnvironment: "development",
       },
-      dir,
+      dir
     )
 
     expect(configPath).toBe(join(dir, ".caracara", "config.json"))
@@ -115,14 +121,19 @@ describe("config", () => {
       runner: "claude-code",
       model: "gpt-5.6-luna",
       model_reasoning_effort: "low",
+      environments: {
+        development: "http://localhost:3000/",
+        preview: "https://preview.example.com/app",
+      },
+      defaultEnvironment: "development",
     })
 
     const secretsPath = getLocalSecretsPath(configPath)
     await expect(readFile(secretsPath, "utf8")).resolves.toContain(
-      "# CARACARA_SECRET_USERNAME=",
+      "# CARACARA_SECRET_USERNAME="
     )
     await expect(
-      readFile(join(dir, ".caracara", ".gitignore"), "utf8"),
+      readFile(join(dir, ".caracara", ".gitignore"), "utf8")
     ).resolves.toContain("secrets.env")
     if (process.platform !== "win32") {
       expect((await stat(secretsPath)).mode & 0o077).toBe(0)
@@ -134,7 +145,7 @@ describe("config", () => {
     const nested = join(root, "apps", "web")
     const configPath = await writeLocalConfig(
       { selectedProjectSlug: "demo-project" },
-      root,
+      root
     )
     await mkdir(nested, { recursive: true })
     await writeFile(
@@ -144,7 +155,7 @@ describe("config", () => {
         "CARACARA_SECRET_PASSWORD='correct horse battery staple'",
         "",
       ].join("\n"),
-      "utf8",
+      "utf8"
     )
 
     await expect(readLocalSecrets(nested)).resolves.toEqual({
@@ -157,7 +168,7 @@ describe("config", () => {
     const dir = await mkdtemp(join(tmpdir(), "caracara-secrets-preserve-"))
     const configPath = await writeLocalConfig(
       { selectedProjectSlug: "demo-project" },
-      dir,
+      dir
     )
     const secretsPath = getLocalSecretsPath(configPath)
     await writeFile(secretsPath, "CARACARA_SECRET_PASSWORD=keep-me\n", "utf8")
@@ -165,7 +176,7 @@ describe("config", () => {
     await writeLocalConfig({ selectedProjectSlug: "renamed-project" }, dir)
 
     await expect(readFile(secretsPath, "utf8")).resolves.toBe(
-      "CARACARA_SECRET_PASSWORD=keep-me\n",
+      "CARACARA_SECRET_PASSWORD=keep-me\n"
     )
   })
 
@@ -175,11 +186,11 @@ describe("config", () => {
     await writeFile(
       getLocalSecretsPath(configPath),
       "PASSWORD=do-not-load\n",
-      "utf8",
+      "utf8"
     )
 
     await expect(readLocalSecrets(dir)).rejects.toThrow(
-      "Secret names must start with CARACARA_SECRET_",
+      "Secret names must start with CARACARA_SECRET_"
     )
   })
 
@@ -205,16 +216,16 @@ describe("config", () => {
     await writeFile(
       join(root, ".caracara", "config.json"),
       JSON.stringify({ project: "ignored" }),
-      "utf8",
+      "utf8"
     )
     await writeFile(
       join(root, ".caracara", "config.json"),
       `${JSON.stringify({ selectedProjectSlug: "demo-project" }, null, 2)}\n`,
-      "utf8",
+      "utf8"
     )
 
     await expect(findLocalConfigPath(nested)).resolves.toBe(
-      join(root, ".caracara", "config.json"),
+      join(root, ".caracara", "config.json")
     )
   })
 
@@ -224,7 +235,7 @@ describe("config", () => {
     await writeFile(
       join(dir, ".caracara", "config.json"),
       JSON.stringify({ model_reasoning_effor: "low" }),
-      "utf8",
+      "utf8"
     )
 
     await expect(readLocalConfig(dir)).rejects.toThrow("Unrecognized key")
@@ -236,9 +247,94 @@ describe("config", () => {
     expect(resolveRunner({}, { runner: "codex" }, process.env)).toBe("codex")
     expect(resolveRunner({}, {}, process.env)).toBe("claude-code")
     expect(
-      resolveRunner({ runner: "claude-code" }, {}, {} as NodeJS.ProcessEnv),
+      resolveRunner({ runner: "claude-code" }, {}, {} as NodeJS.ProcessEnv)
     ).toBe("claude-code")
     expect(resolveRunner({}, {}, {} as NodeJS.ProcessEnv)).toBe("codex")
+  })
+
+  it("resolves run environments from flags, env, and the saved default", () => {
+    const config = {
+      environments: {
+        development: "http://localhost:3000/",
+        preview: "https://preview.example.com/",
+        production: "https://app.example.com/",
+      },
+      defaultEnvironment: "development",
+    }
+
+    expect(
+      resolveEnvironment(config, "production", {
+        CARACARA_ENVIRONMENT: "preview",
+      })
+    ).toEqual({
+      name: "production",
+      targetUrl: "https://app.example.com/",
+    })
+    expect(
+      resolveEnvironment(config, undefined, {
+        CARACARA_ENVIRONMENT: "preview",
+      })
+    ).toEqual({
+      name: "preview",
+      targetUrl: "https://preview.example.com/",
+    })
+    expect(resolveEnvironment(config, undefined, {})).toEqual({
+      name: "development",
+      targetUrl: "http://localhost:3000/",
+    })
+  })
+
+  it("rejects missing, unknown, and unsafe environments", async () => {
+    expect(() =>
+      resolveEnvironment(
+        { environments: {}, defaultEnvironment: undefined },
+        undefined,
+        {}
+      )
+    ).toThrow("No environment selected")
+    expect(() =>
+      resolveEnvironment(
+        { environments: { preview: "https://preview.example.com/" } },
+        "production",
+        {}
+      )
+    ).toThrow("Available environments: preview")
+    expect(() =>
+      resolveEnvironment(
+        { environments: { preview: "https://preview.example.com/" } },
+        "constructor",
+        {}
+      )
+    ).toThrow('Environment "constructor" is not configured')
+
+    const dir = await mkdtemp(join(tmpdir(), "caracara-environment-test-"))
+    await expect(
+      writeLocalConfig(
+        {
+          environments: { preview: "https://preview.example.com" },
+          defaultEnvironment: "constructor",
+        },
+        dir
+      )
+    ).rejects.toThrow(/Default environment.*constructor.*is not configured/)
+    await expect(
+      writeLocalConfig(
+        {
+          environments: { production: "ftp://example.com" },
+          defaultEnvironment: "production",
+        },
+        dir
+      )
+    ).rejects.toThrow("Target URL must use HTTP or HTTPS")
+    await expect(
+      writeLocalConfig(
+        {
+          environments: { production: "https://user:pass@example.com" },
+          defaultEnvironment: "production",
+        },
+        dir
+      )
+    ).rejects.toThrow("Target URL must not contain credentials")
   })
 
   it("writes config under the user config directory", () => {

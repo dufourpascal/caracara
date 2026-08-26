@@ -1,5 +1,9 @@
 import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
+import {
+  environmentNameSchema,
+  runEnvironmentSchema,
+} from "@workspace/contracts"
 
 import { mutation, query } from "./_generated/server"
 import {
@@ -36,6 +40,39 @@ const checkResultValidator = v.object({
   evidence: v.string(),
 })
 
+function invalidEnvironment(message: string): never {
+  throw new ConvexError({ code: "validation_error", message })
+}
+
+export function parseRunEnvironment(input: {
+  environment?: string
+  targetUrl?: string
+}) {
+  if (input.environment === undefined && input.targetUrl === undefined) {
+    return null
+  }
+  if ((input.environment === undefined) !== (input.targetUrl === undefined)) {
+    invalidEnvironment("Environment and target URL must be provided together.")
+  }
+
+  const parsed = runEnvironmentSchema.safeParse(input)
+  if (!parsed.success) {
+    invalidEnvironment(
+      parsed.error.issues[0]?.message ?? "Run environment is invalid."
+    )
+  }
+
+  return parsed.data
+}
+
+export function addRunEnvironmentName(names: string[], environment: string) {
+  return names.includes(environment) ? names : [...names, environment].sort()
+}
+
+export function removeRunEnvironmentName(names: string[], environment: string) {
+  return names.filter((name) => name !== environment)
+}
+
 export const listForProject = query({
   args: {
     projectSlug: v.string(),
@@ -63,16 +100,34 @@ export const listForProject = query({
 export const listPageForProject = query({
   args: {
     projectSlug: v.string(),
+    environment: v.optional(v.string()),
     sortDirection: v.union(v.literal("asc"), v.literal("desc")),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const result = await ctx.db
-      .query("runs")
-      .withIndex("by_project_started_at", (query) =>
-        query.eq("projectId", project._id)
-      )
+    const environment =
+      args.environment === undefined
+        ? null
+        : environmentNameSchema.safeParse(args.environment)
+    if (environment && !environment.success) {
+      invalidEnvironment("Environment filter is invalid.")
+    }
+
+    const runs = environment?.success
+      ? ctx.db
+          .query("runs")
+          .withIndex("by_project_environment_started_at", (query) =>
+            query
+              .eq("projectId", project._id)
+              .eq("environment", environment.data)
+          )
+      : ctx.db
+          .query("runs")
+          .withIndex("by_project_started_at", (query) =>
+            query.eq("projectId", project._id)
+          )
+    const result = await runs
       .order(args.sortDirection)
       .paginate(args.paginationOpts)
 
@@ -80,6 +135,14 @@ export const listPageForProject = query({
       ...result,
       page: result.page.map(toRun),
     }
+  },
+})
+
+export const listEnvironmentsForProject = query({
+  args: { projectSlug: v.string() },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    return project.runEnvironmentNames ?? []
   },
 })
 
@@ -134,6 +197,8 @@ export const create = mutation({
     evidencePolicy: v.optional(
       v.union(v.literal("text_only"), v.literal("failed_check_screenshot"))
     ),
+    environment: v.optional(v.string()),
+    targetUrl: v.optional(v.string()),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     startedAt: v.number(),
@@ -143,7 +208,17 @@ export const create = mutation({
       ctx,
       args.projectId
     )
+    const environment = parseRunEnvironment(args)
     const timestamp = Date.now()
+    if (environment) {
+      const runEnvironmentNames = addRunEnvironmentName(
+        project.runEnvironmentNames ?? [],
+        environment.environment
+      )
+      if (runEnvironmentNames !== project.runEnvironmentNames) {
+        await ctx.db.patch(project._id, { runEnvironmentNames })
+      }
+    }
     const runId = await ctx.db.insert("runs", {
       projectId: project._id,
       ownerUserId: identity.subject,
@@ -154,6 +229,7 @@ export const create = mutation({
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
       runnerType: args.runnerType,
       evidencePolicy: args.evidencePolicy ?? "text_only",
+      ...(environment ?? {}),
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,
@@ -491,8 +567,27 @@ export const remove = mutation({
     runId: v.id("runs"),
   },
   handler: async (ctx, args) => {
-    const { run } = await ensureRunOwnership(ctx, args.runId)
+    const { project, run } = await ensureRunOwnership(ctx, args.runId)
     const { deletedResultCount } = await deleteRunAndResults(ctx, run._id)
+
+    if (run.environment) {
+      const remainingRun = await ctx.db
+        .query("runs")
+        .withIndex("by_project_environment_started_at", (query) =>
+          query
+            .eq("projectId", project._id)
+            .eq("environment", run.environment)
+        )
+        .first()
+      if (!remainingRun) {
+        await ctx.db.patch(project._id, {
+          runEnvironmentNames: removeRunEnvironmentName(
+            project.runEnvironmentNames ?? [],
+            run.environment
+          ),
+        })
+      }
+    }
 
     return {
       deletedRunId: run._id,

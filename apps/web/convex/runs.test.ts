@@ -1,6 +1,48 @@
 import { describe, expect, it } from "vitest"
 
 import { deleteRunAndResults } from "./lib"
+import {
+  addRunEnvironmentName,
+  parseRunEnvironment,
+  removeRunEnvironmentName,
+} from "./runs"
+
+describe("run environments", () => {
+  it("validates snapshots and maintains a distinct project summary", () => {
+    expect(
+      parseRunEnvironment({
+        environment: "preview",
+        targetUrl: "https://preview.example.com",
+      })
+    ).toEqual({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+    })
+    expect(() => parseRunEnvironment({ environment: "preview" })).toThrow(
+      "provided together"
+    )
+    let malformedUrlError: unknown
+    try {
+      parseRunEnvironment({ environment: "preview", targetUrl: "not-a-url" })
+    } catch (error) {
+      malformedUrlError = error
+    }
+    expect(malformedUrlError).toMatchObject({
+      data: {
+        code: "validation_error",
+        message: "Target URL must be a valid URL.",
+      },
+    })
+    expect(addRunEnvironmentName(["production"], "preview")).toEqual([
+      "preview",
+      "production",
+    ])
+    expect(addRunEnvironmentName(["preview"], "preview")).toEqual(["preview"])
+    expect(
+      removeRunEnvironmentName(["preview", "production"], "preview")
+    ).toEqual(["production"])
+  })
+})
 
 describe("run deletion helpers", () => {
   it("deletes screenshot storage and rows before results and the run", async () => {

@@ -9,6 +9,7 @@ vi.mock("convex/nextjs", () => ({
 import {
   ApiRouteError,
   authorProject,
+  createRun,
   handleApiError,
   requireCliVersion,
   startScenarioExecution,
@@ -168,6 +169,42 @@ describe("api-route helpers", () => {
     expect(requireCliVersion(requestFor("0.3.0"))).toBe("0.3.0")
     expect(() => requireCliVersion(requestFor("0.2.9"))).toThrow(
       /upgrade required/i
+    )
+  })
+
+  it("stores the CLI environment snapshot when creating a run", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    vi.mocked(fetchMutation).mockResolvedValue({ id: "run-1" })
+
+    await createRun("token", {
+      projectSlug: "demo",
+      evidencePolicy: "text_only",
+      body: {
+        mode: "all",
+        runnerType: "codex",
+        environment: "preview",
+        targetUrl: "https://preview.example.com",
+        startedAt: 1,
+      },
+    })
+
+    expect(fetchMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        projectId: "project-1",
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+      }),
+      { token: "token" }
     )
   })
 

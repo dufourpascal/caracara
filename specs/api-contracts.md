@@ -58,3 +58,8 @@ Contract responses should clearly separate malformed requests, authentication fa
 API v3 exposes one narrow authoring operation endpoint.
 
 `POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eight supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. A running-run authoring lock returns `conflict` rather than queuing the write.
+
+### API_12
+Run creation may include a target environment snapshot.
+
+The environment name and target URL must be supplied together. The backend validates the name and safe HTTP or HTTPS URL, then stores both on the run. Older clients may omit both and create an untracked run.

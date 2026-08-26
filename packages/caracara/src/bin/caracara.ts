@@ -9,6 +9,7 @@ import {
   createScenarioCommand,
   editPhaseCommand,
   initCommand,
+  listEnvironmentsCommand,
   listProjectsCommand,
   loginCommand,
   logoutCommand,
@@ -55,6 +56,13 @@ program
   .option("--api-base-url <url>")
   .action(async (options) => {
     await listProjectsCommand(options.apiBaseUrl)
+  })
+
+program
+  .command("environments:list")
+  .description("list configured target environments")
+  .action(async () => {
+    await listEnvironmentsCommand()
   })
 
 program
@@ -137,6 +145,7 @@ program
   .option("--api-base-url <url>")
   .option("--project <slug>")
   .option("--runner <runner>", "codex or claude-code", "codex")
+  .option("--environment <name>")
   .option("--scenario <slug>")
   .option("--phase <number>")
   .option("--through-phase <number>")

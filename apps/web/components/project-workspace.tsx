@@ -35,7 +35,11 @@ import {
   Wrench,
 } from "lucide-react"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
-import { normalizeSlug, projectInputSchema } from "@workspace/contracts"
+import {
+  environmentNameSchema,
+  normalizeSlug,
+  projectInputSchema,
+} from "@workspace/contracts"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -169,6 +173,36 @@ function getScenarioModeHref({
   }
 
   return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
+}
+
+export function getRunHref({
+  environment,
+  projectSlug,
+  runId,
+  scenarioSlug,
+}: {
+  environment: string | null
+  projectSlug: string
+  runId?: string
+  scenarioSlug?: string
+}) {
+  const searchParams = new URLSearchParams()
+
+  if (environment) {
+    searchParams.set("environment", environment)
+  }
+  if (scenarioSlug) {
+    searchParams.set("scenario", scenarioSlug)
+  }
+
+  const path = `/projects/${projectSlug}/runs${runId ? `/${runId}` : ""}`
+  const query = searchParams.toString()
+  return query ? `${path}?${query}` : path
+}
+
+function normalizeRunEnvironmentFilter(environment?: string | null) {
+  const parsed = environmentNameSchema.safeParse(environment)
+  return parsed.success ? parsed.data : null
 }
 
 function getNewScenarioHref({
@@ -371,6 +405,33 @@ function createEmptyScenarioDraft({
 
 function formatRunDisplayName(name: string) {
   return name.replace(/-\d{8}-\d{6}$/, "").replaceAll("-", " ")
+}
+
+export function RunEnvironmentFilter({
+  environments,
+  value,
+  onChange,
+}: {
+  environments: string[] | undefined
+  value: string | null
+  onChange: (environment: string | null) => void
+}) {
+  return (
+    <select
+      aria-label="Filter runs by environment"
+      className="h-8 max-w-40 min-w-0 border border-input bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={environments === undefined}
+      value={value ?? ""}
+      onChange={(event) => onChange(event.target.value || null)}
+    >
+      <option value="">All environments</option>
+      {environments?.map((environment) => (
+        <option key={environment} value={environment}>
+          {environment}
+        </option>
+      ))}
+    </select>
+  )
 }
 
 function isScenarioStatus(value: string): value is "draft" | "active" {
@@ -838,6 +899,7 @@ function usePersistedPanelLayout(storageKey: string, panelIds: string[]) {
 export function ProjectWorkspace({
   projectSlug,
   workspace,
+  initialRunEnvironment,
   selectedScenarioSlug,
   selectedRunId,
   selectedRunScenarioSlug,
@@ -847,6 +909,7 @@ export function ProjectWorkspace({
 }: {
   projectSlug: string
   workspace: WorkspaceKind
+  initialRunEnvironment?: string | null
   selectedScenarioSlug?: string
   selectedRunId?: string
   selectedRunScenarioSlug?: string
@@ -864,6 +927,7 @@ export function ProjectWorkspace({
       <Authenticated>
         <AuthenticatedProjectWorkspace
           creatingScenario={creatingScenario}
+          initialRunEnvironment={initialRunEnvironment}
           initialScenarioPhaseFilter={initialScenarioPhaseFilter}
           mode={mode}
           projectSlug={projectSlug}
@@ -880,6 +944,7 @@ export function ProjectWorkspace({
 function AuthenticatedProjectWorkspace({
   projectSlug,
   workspace,
+  initialRunEnvironment,
   selectedScenarioSlug,
   selectedRunId,
   selectedRunScenarioSlug,
@@ -889,6 +954,7 @@ function AuthenticatedProjectWorkspace({
 }: {
   projectSlug: string
   workspace: WorkspaceKind
+  initialRunEnvironment?: string | null
   selectedScenarioSlug?: string
   selectedRunId?: string
   selectedRunScenarioSlug?: string
@@ -925,6 +991,9 @@ function AuthenticatedProjectWorkspace({
   const [scenarioPageSize, setScenarioPageSize] = useState<10 | 20 | 50>(20)
   const [runSortAscending, setRunSortAscending] = useState(false)
   const [runPageSize, setRunPageSize] = useState<10 | 20 | 50>(20)
+  const [runEnvironment, setRunEnvironment] = useState<string | null>(() =>
+    normalizeRunEnvironmentFilter(initialRunEnvironment)
+  )
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
   const [phaseError, setPhaseError] = useState<string | null>(null)
@@ -932,6 +1001,9 @@ function AuthenticatedProjectWorkspace({
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
   const runSortDirection = runSortAscending ? "asc" : "desc"
+  useEffect(() => {
+    setRunEnvironment(normalizeRunEnvironmentFilter(initialRunEnvironment))
+  }, [initialRunEnvironment])
   const normalizedInitialScenarioPhaseFilter = normalizeScenarioPhaseFilter({
     initialFilter: initialScenarioPhaseFilter,
     phases: phases ?? [],
@@ -942,7 +1014,9 @@ function AuthenticatedProjectWorkspace({
   const scenarioPager = useCursorPager(
     `${selectedScenarioPhaseFilter ?? "pending"}:${scenarioSortDirection}:${scenarioPageSize}:${normalizedScenarioSearch}`
   )
-  const runPager = useCursorPager(`${runSortDirection}:${runPageSize}`)
+  const runPager = useCursorPager(
+    `${runEnvironment ?? "all"}:${runSortDirection}:${runPageSize}`
+  )
   const scenarioPage = useQuery(
     api.scenarios.listPageForProject,
     !hasDeletedProject &&
@@ -991,6 +1065,7 @@ function AuthenticatedProjectWorkspace({
     !hasDeletedProject && workspace === "runs"
       ? {
           projectSlug,
+          environment: runEnvironment ?? undefined,
           sortDirection: runSortDirection,
           paginationOpts: {
             cursor: runPager.currentCursor,
@@ -998,6 +1073,10 @@ function AuthenticatedProjectWorkspace({
           },
         }
       : "skip"
+  )
+  const runEnvironments = useQuery(
+    api.runs.listEnvironmentsForProject,
+    !hasDeletedProject && workspace === "runs" ? { projectSlug } : "skip"
   )
   const runDetail = useQuery(
     api.runs.getDetail,
@@ -1886,23 +1965,40 @@ function AuthenticatedProjectWorkspace({
                     <History className="mr-2 inline size-3.5" />
                     Run log
                   </p>
-                  <Button
-                    aria-label={
-                      runSortAscending
-                        ? "Sort runs descending"
-                        : "Sort runs ascending"
-                    }
-                    size="icon-sm"
-                    title={
-                      runSortAscending
-                        ? "Sort runs descending"
-                        : "Sort runs ascending"
-                    }
-                    variant="outline"
-                    onClick={() => setRunSortAscending((value) => !value)}
-                  >
-                    {runSortAscending ? <ArrowUp /> : <ArrowDown />}
-                  </Button>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <RunEnvironmentFilter
+                      environments={runEnvironments}
+                      value={runEnvironment}
+                      onChange={(environment) => {
+                        setRunEnvironment(environment)
+                        router.replace(
+                          getRunHref({
+                            environment,
+                            projectSlug,
+                            runId: selectedRunId,
+                            scenarioSlug: selectedRunScenarioSlug,
+                          })
+                        )
+                      }}
+                    />
+                    <Button
+                      aria-label={
+                        runSortAscending
+                          ? "Sort runs descending"
+                          : "Sort runs ascending"
+                      }
+                      size="icon-sm"
+                      title={
+                        runSortAscending
+                          ? "Sort runs descending"
+                          : "Sort runs ascending"
+                      }
+                      variant="outline"
+                      onClick={() => setRunSortAscending((value) => !value)}
+                    >
+                      {runSortAscending ? <ArrowUp /> : <ArrowDown />}
+                    </Button>
+                  </div>
                 </div>
               </div>
               <div className="flex-1 overflow-auto">
@@ -1912,9 +2008,17 @@ function AuthenticatedProjectWorkspace({
                   </div>
                 ) : pagedRuns.length === 0 ? (
                   <NavigationEmptyState
-                    description="Run the CLI against this project and each execution will appear here as a dated log entry."
+                    description={
+                      runEnvironment
+                        ? `No runs have been recorded for ${runEnvironment}.`
+                        : "Run the CLI against this project and each execution will appear here as a dated log entry."
+                    }
                     icon={History}
-                    title="No runs recorded yet"
+                    title={
+                      runEnvironment
+                        ? `No ${runEnvironment} runs`
+                        : "No runs recorded yet"
+                    }
                   />
                 ) : (
                   groupedRuns.map((group) => (
@@ -1940,7 +2044,11 @@ function AuthenticatedProjectWorkspace({
                           )}
                           onClick={() =>
                             router.push(
-                              `/projects/${projectSlug}/runs/${run.id}`
+                              getRunHref({
+                                environment: runEnvironment,
+                                projectSlug,
+                                runId: run.id,
+                              })
                             )
                           }
                           type="button"
@@ -1966,18 +2074,29 @@ function AuthenticatedProjectWorkspace({
                             <span className="mt-1 block text-sm font-medium text-foreground capitalize">
                               {formatRunDisplayName(run.name)}
                             </span>
-                            {run.mode === "single" &&
-                            run.requestedScenarioSlug ? (
-                              <span
-                                className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
-                                title={`Single scenario: ${run.requestedScenarioSlug}`}
+                            <span className="mt-2 flex flex-wrap items-center gap-2">
+                              <Badge
+                                className="max-w-full truncate font-mono tracking-normal normal-case"
+                                title={
+                                  run.environment ?? "Untracked environment"
+                                }
+                                variant="outline"
                               >
-                                <Target className="size-3.5" />
-                                <span className="font-mono">
-                                  {run.requestedScenarioSlug}
+                                {run.environment ?? "untracked"}
+                              </Badge>
+                              {run.mode === "single" &&
+                              run.requestedScenarioSlug ? (
+                                <span
+                                  className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+                                  title={`Single scenario: ${run.requestedScenarioSlug}`}
+                                >
+                                  <Target className="size-3.5 shrink-0" />
+                                  <span className="truncate font-mono">
+                                    {run.requestedScenarioSlug}
+                                  </span>
                                 </span>
-                              </span>
-                            ) : null}
+                              ) : null}
+                            </span>
                           </span>
                         </button>
                       ))}
@@ -2051,7 +2170,12 @@ function AuthenticatedProjectWorkspace({
                               await removeRun({
                                 runId: runDetail.run.id as never,
                               })
-                              router.push(`/projects/${projectSlug}/runs`)
+                              router.push(
+                                getRunHref({
+                                  environment: runEnvironment,
+                                  projectSlug,
+                                })
+                              )
                             } finally {
                               setIsDeletingRun(false)
                             }
@@ -2079,6 +2203,22 @@ function AuthenticatedProjectWorkspace({
                             value={runDetail.run.passRate}
                           />
                         </div>
+                        <div className="col-span-2 bg-background px-3 py-2">
+                          <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                            Environment
+                          </p>
+                          <p className="mt-1 font-mono text-sm text-foreground">
+                            {runDetail.run.environment ?? "untracked"}
+                          </p>
+                          {runDetail.run.targetUrl ? (
+                            <p
+                              className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                              title={runDetail.run.targetUrl}
+                            >
+                              {runDetail.run.targetUrl}
+                            </p>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                     <div className="flex-1 overflow-auto">
@@ -2093,7 +2233,12 @@ function AuthenticatedProjectWorkspace({
                           )}
                           onClick={() =>
                             router.push(
-                              `/projects/${projectSlug}/runs/${runDetail.run.id}?scenario=${result.scenarioSlug}`
+                              getRunHref({
+                                environment: runEnvironment,
+                                projectSlug,
+                                runId: runDetail.run.id,
+                                scenarioSlug: result.scenarioSlug,
+                              })
                             )
                           }
                           type="button"

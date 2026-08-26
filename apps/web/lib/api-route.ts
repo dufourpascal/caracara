@@ -442,6 +442,8 @@ export async function createRun(
       mode: payload.mode,
       runnerType: payload.runnerType,
       evidencePolicy: args.evidencePolicy,
+      environment: payload.environment,
+      targetUrl: payload.targetUrl,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       startedAt: payload.startedAt,

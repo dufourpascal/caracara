@@ -185,6 +185,23 @@ describe("api-route helpers", () => {
     })
   })
 
+  it("maps Convex argument validation failures to validation errors", async () => {
+    const response = handleApiError(
+      new Error(
+        'ArgumentValidationError: Value does not match validator. Value: "not-an-id" Validator: v.id("phases")'
+      )
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      code: "validation_error",
+      message: "Invalid request payload.",
+      details: {
+        reason: expect.stringContaining("ArgumentValidationError:"),
+      },
+    })
+  })
+
   it("includes internal error details outside production", async () => {
     vi.stubEnv("NODE_ENV", "test")
 

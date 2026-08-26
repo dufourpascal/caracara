@@ -152,6 +152,17 @@ export function handleApiError(error: unknown) {
     return jsonError(structured)
   }
 
+  if (
+    error instanceof Error &&
+    error.message.includes("ArgumentValidationError:")
+  ) {
+    return jsonError(
+      new ApiRouteError(400, "validation_error", "Invalid request payload.", {
+        reason: error.message,
+      })
+    )
+  }
+
   if (error instanceof Error && error.message.includes("Authentication")) {
     return jsonError(new ApiRouteError(401, "unauthenticated", error.message))
   }

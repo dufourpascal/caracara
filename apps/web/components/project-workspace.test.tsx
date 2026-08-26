@@ -9,6 +9,8 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  formatRunDuration,
+  getCheckPassRate,
   getRunHref,
   ProjectSettingsPanel,
   RunEnvironmentFilter,
@@ -78,9 +80,16 @@ describe("run environment filter", () => {
         runId: "run-1",
         scenarioSlug: "checkout",
       })
-    ).toBe(
-      "/projects/demo/runs/run-1?environment=preview&scenario=checkout"
-    )
+    ).toBe("/projects/demo/runs/run-1?environment=preview&scenario=checkout")
+  })
+})
+
+describe("run result metrics", () => {
+  it("formats duration and calculates the scenario pass rate", () => {
+    expect(formatRunDuration(1_000, 72_000)).toBe("1m 11s")
+    expect(formatRunDuration(1_000, null)).toBe("In progress")
+    expect(getCheckPassRate(7, 7)).toBe(100)
+    expect(getCheckPassRate(5, 7)).toBe(71)
   })
 })
 

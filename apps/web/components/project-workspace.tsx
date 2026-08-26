@@ -490,6 +490,32 @@ function formatPassRate(value: number | null) {
   return value === null ? "n/a" : `${value}%`
 }
 
+export function formatRunDuration(
+  startedAt: number,
+  finishedAt: number | null
+) {
+  if (finishedAt === null) {
+    return "In progress"
+  }
+
+  const totalSeconds = Math.max(0, Math.round((finishedAt - startedAt) / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  return [
+    hours > 0 ? `${hours}h` : null,
+    minutes > 0 ? `${minutes}m` : null,
+    `${seconds}s`,
+  ]
+    .filter(Boolean)
+    .join(" ")
+}
+
+export function getCheckPassRate(passed: number, total: number) {
+  return total > 0 ? Math.round((100 * passed) / total) : null
+}
+
 function useCursorPager(resetKey: string) {
   const [pageState, setPageState] = useState<{
     key: string
@@ -542,7 +568,7 @@ function SidebarPaginationControls({
   pageSize: 10 | 20 | 50
 }) {
   return (
-    <div className="border-t border-border bg-muted/10 px-4 py-3">
+    <div className="sticky bottom-0 z-10 shrink-0 border-t border-border bg-background px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[11px] tracking-[0.16em] text-muted-foreground uppercase">
           Page {pageNumber} · {pageSize} {itemLabel}
@@ -816,7 +842,10 @@ function ScenarioResultValue({
     (result) => result.verdict === "passed"
   ).length
   return (
-    <span className="font-mono text-xs">
+    <span
+      className="font-mono text-xs"
+      style={getPassRateTextStyle(getCheckPassRate(passed, totalCheckCount))}
+    >
       {passed}/{totalCheckCount}
     </span>
   )
@@ -946,8 +975,8 @@ function AuthenticatedProjectWorkspace({
   workspace,
   initialRunEnvironment,
   selectedScenarioSlug,
-  selectedRunId,
-  selectedRunScenarioSlug,
+  selectedRunId: initialSelectedRunId,
+  selectedRunScenarioSlug: initialSelectedRunScenarioSlug,
   initialScenarioPhaseFilter,
   creatingScenario = false,
   mode,
@@ -994,6 +1023,10 @@ function AuthenticatedProjectWorkspace({
   const [runEnvironment, setRunEnvironment] = useState<string | null>(() =>
     normalizeRunEnvironmentFilter(initialRunEnvironment)
   )
+  const [selectedRunId, setSelectedRunId] = useState(initialSelectedRunId)
+  const [selectedRunScenarioSlug, setSelectedRunScenarioSlug] = useState(
+    initialSelectedRunScenarioSlug
+  )
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
   const [phaseError, setPhaseError] = useState<string | null>(null)
@@ -1004,6 +1037,28 @@ function AuthenticatedProjectWorkspace({
   useEffect(() => {
     setRunEnvironment(normalizeRunEnvironmentFilter(initialRunEnvironment))
   }, [initialRunEnvironment])
+  useEffect(() => {
+    setSelectedRunId(initialSelectedRunId)
+    setSelectedRunScenarioSlug(initialSelectedRunScenarioSlug)
+  }, [initialSelectedRunId, initialSelectedRunScenarioSlug])
+  useEffect(() => {
+    if (workspace !== "runs") {
+      return
+    }
+
+    const restoreRunSelection = () => {
+      const runIdMatch = window.location.pathname.match(/\/runs\/([^/]+)\/?$/)
+      setSelectedRunId(
+        runIdMatch?.[1] ? decodeURIComponent(runIdMatch[1]) : undefined
+      )
+      setSelectedRunScenarioSlug(
+        new URLSearchParams(window.location.search).get("scenario") ?? undefined
+      )
+    }
+
+    window.addEventListener("popstate", restoreRunSelection)
+    return () => window.removeEventListener("popstate", restoreRunSelection)
+  }, [workspace])
   const normalizedInitialScenarioPhaseFilter = normalizeScenarioPhaseFilter({
     initialFilter: initialScenarioPhaseFilter,
     phases: phases ?? [],
@@ -1297,8 +1352,13 @@ function AuthenticatedProjectWorkspace({
   }
 
   return (
-    <main className="flex min-h-svh flex-col bg-background">
-      <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-3 sm:px-6">
+    <main
+      className={cn(
+        "flex min-h-svh flex-col bg-background",
+        workspace === "runs" && "h-svh overflow-hidden"
+      )}
+    >
+      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <AppBrand labelClassName="text-sm" />
           <div className="flex min-w-0 items-center gap-2 text-sm">
@@ -1952,7 +2012,7 @@ function AuthenticatedProjectWorkspace({
         />
       ) : (
         <ResizablePanelGroup
-          className="flex-1"
+          className="min-h-0 flex-1 overflow-hidden"
           defaultLayout={runPanelLayout.defaultLayout}
           onLayoutChanged={runPanelLayout.onLayoutChanged}
           orientation="horizontal"
@@ -1971,7 +2031,9 @@ function AuthenticatedProjectWorkspace({
                       value={runEnvironment}
                       onChange={(environment) => {
                         setRunEnvironment(environment)
-                        router.replace(
+                        window.history.replaceState(
+                          null,
+                          "",
                           getRunHref({
                             environment,
                             projectSlug,
@@ -2001,7 +2063,7 @@ function AuthenticatedProjectWorkspace({
                   </div>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 {runPage === undefined ? (
                   <div className="px-4 py-5 text-sm text-muted-foreground">
                     Loading runs...
@@ -2042,15 +2104,19 @@ function AuthenticatedProjectWorkspace({
                             index !== group.runs.length - 1 &&
                               "border-b border-border/70"
                           )}
-                          onClick={() =>
-                            router.push(
+                          onClick={() => {
+                            setSelectedRunId(run.id)
+                            setSelectedRunScenarioSlug(undefined)
+                            window.history.pushState(
+                              null,
+                              "",
                               getRunHref({
                                 environment: runEnvironment,
                                 projectSlug,
                                 runId: run.id,
                               })
                             )
-                          }
+                          }}
                           type="button"
                         >
                           <span className="relative flex justify-center pt-0.5">
@@ -2128,7 +2194,7 @@ function AuthenticatedProjectWorkspace({
           <ResizablePanel id={runDetailPanelId}>
             {runDetail ? (
               <ResizablePanelGroup
-                className="h-full"
+                className="h-full min-h-0 overflow-hidden"
                 defaultLayout={runDetailPanelLayout.defaultLayout}
                 onLayoutChanged={runDetailPanelLayout.onLayoutChanged}
                 orientation="horizontal"
@@ -2170,7 +2236,11 @@ function AuthenticatedProjectWorkspace({
                               await removeRun({
                                 runId: runDetail.run.id as never,
                               })
-                              router.push(
+                              setSelectedRunId(undefined)
+                              setSelectedRunScenarioSlug(undefined)
+                              window.history.pushState(
+                                null,
+                                "",
                                 getRunHref({
                                   environment: runEnvironment,
                                   projectSlug,
@@ -2221,7 +2291,7 @@ function AuthenticatedProjectWorkspace({
                         </div>
                       </div>
                     </div>
-                    <div className="flex-1 overflow-auto">
+                    <div className="min-h-0 flex-1 overflow-y-auto">
                       {runDetail.results.map((result) => (
                         <button
                           key={result.id}
@@ -2231,8 +2301,11 @@ function AuthenticatedProjectWorkspace({
                               ? "bg-muted/40"
                               : "hover:bg-muted/20"
                           )}
-                          onClick={() =>
-                            router.push(
+                          onClick={() => {
+                            setSelectedRunScenarioSlug(result.scenarioSlug)
+                            window.history.pushState(
+                              null,
+                              "",
                               getRunHref({
                                 environment: runEnvironment,
                                 projectSlug,
@@ -2240,7 +2313,7 @@ function AuthenticatedProjectWorkspace({
                                 scenarioSlug: result.scenarioSlug,
                               })
                             )
-                          }
+                          }}
                           type="button"
                         >
                           <div className="flex size-5 items-center justify-center text-muted-foreground">
@@ -3273,7 +3346,7 @@ function RunResultDetail({
   ).length
 
   return (
-    <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
+    <div className="grid h-full min-h-0 content-start gap-6 overflow-y-auto px-6 py-6">
       <div>
         <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
           Run result
@@ -3289,7 +3362,16 @@ function RunResultDetail({
             {formatStatusLabel(result.status)}
           </Badge>
           {result.status === "completed" ? (
-            <Badge className="font-mono" variant="outline">
+            <Badge
+              className="font-mono"
+              style={getPassRateTextStyle(
+                getCheckPassRate(
+                  passedCheckCount,
+                  result.evaluationChecks.length
+                )
+              )}
+              variant="outline"
+            >
               {passedCheckCount}/{result.evaluationChecks.length} passed
             </Badge>
           ) : null}
@@ -3308,68 +3390,78 @@ function RunResultDetail({
                 : formatTimestamp(result.finishedAt)
             }
           />
+          <RunHeaderMeta
+            label="Duration"
+            value={formatRunDuration(result.startedAt, result.finishedAt)}
+          />
         </dl>
       </div>
 
-      <section className="grid gap-3">
+      <section>
         <div className="flex items-center justify-between gap-3">
           <Label>Evaluation checks</Label>
-          <span className="font-mono text-xs text-muted-foreground">
+          <span
+            className="font-mono text-xs"
+            style={getPassRateTextStyle(
+              getCheckPassRate(passedCheckCount, result.evaluationChecks.length)
+            )}
+          >
             {passedCheckCount}/{result.evaluationChecks.length}
           </span>
         </div>
-        <div className="border border-border">
-          {result.evaluationChecks.map((check) => {
-            const checkResult = result.checkResults.find(
-              (candidate) => candidate.checkId === check.id
-            )
-            const screenshot = result.evidence.find(
-              (candidate) => candidate.checkId === check.id
-            )
-            return (
-              <article
-                className="grid gap-2 border-b border-border px-4 py-4 last:border-b-0"
-                key={check.id}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-medium text-foreground">
-                      {check.name}
-                    </h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {check.expectation}
-                    </p>
-                  </div>
-                  <Badge
-                    variant={
-                      checkResult?.verdict === "passed"
-                        ? "success"
-                        : checkResult
-                          ? "warning"
-                          : "outline"
-                    }
-                  >
-                    {checkResult
-                      ? formatStatusLabel(checkResult.verdict)
-                      : "pending"}
-                  </Badge>
-                </div>
-                {checkResult ? (
-                  <p className="border-l-2 border-border pl-3 text-sm text-foreground">
-                    {checkResult.evidence}
+        {result.evaluationChecks.map((check, index) => {
+          const checkResult = result.checkResults.find(
+            (candidate) => candidate.checkId === check.id
+          )
+          const screenshot = result.evidence.find(
+            (candidate) => candidate.checkId === check.id
+          )
+          return (
+            <article
+              className={cn(
+                "grid gap-2 border-t border-border py-4",
+                index === 0 && "mt-3"
+              )}
+              key={check.id}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {check.name}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {check.expectation}
                   </p>
-                ) : null}
-                {checkResult?.verdict === "failed" && screenshot ? (
-                  <CheckScreenshotEvidence
-                    evidenceId={screenshot.id}
-                    checkName={check.name}
-                    key={screenshot.id}
-                  />
-                ) : null}
-              </article>
-            )
-          })}
-        </div>
+                </div>
+                <Badge
+                  variant={
+                    checkResult?.verdict === "passed"
+                      ? "success"
+                      : checkResult
+                        ? "warning"
+                        : "outline"
+                  }
+                >
+                  {checkResult
+                    ? formatStatusLabel(checkResult.verdict)
+                    : "pending"}
+                </Badge>
+              </div>
+              {checkResult ? (
+                <p className="border-l-2 border-border pl-3 text-sm text-foreground">
+                  {checkResult.evidence}
+                </p>
+              ) : null}
+              {checkResult?.verdict === "failed" && screenshot ? (
+                <CheckScreenshotEvidence
+                  evidenceId={screenshot.id}
+                  checkName={check.name}
+                  key={screenshot.id}
+                />
+              ) : null}
+            </article>
+          )
+        })}
       </section>
 
       <Field label="Execution summary">

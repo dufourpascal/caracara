@@ -139,6 +139,23 @@ export async function listProjectsCommand(apiBaseUrl?: string) {
   }
 }
 
+export async function listEnvironmentsCommand(startDir = process.cwd()) {
+  const config = await readResolvedConfig({}, process.env, startDir)
+  const environments = Object.entries(config.environments).sort(
+    ([left], [right]) => left.localeCompare(right)
+  )
+
+  if (environments.length === 0) {
+    process.stdout.write("No environments configured.\n")
+    return
+  }
+
+  for (const [name, targetUrl] of environments) {
+    const marker = name === config.defaultEnvironment ? "\t(default)" : ""
+    process.stdout.write(`${name}\t${targetUrl}${marker}\n`)
+  }
+}
+
 type AuthoringCommandOptions = {
   apiBaseUrl?: string
   project?: string

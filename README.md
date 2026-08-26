@@ -83,6 +83,8 @@ Define any number of named application targets in `.caracara/config.json`:
 
 A plain `caracara run` uses `defaultEnvironment`. Override it for one run with `caracara run --environment preview` or `CARACARA_ENVIRONMENT=preview caracara run`. Environment names are lowercase slugs. Target URLs must use HTTP or HTTPS and must not contain credentials; keep credentials in `.caracara/secrets.env`.
 
+Run `caracara environments:list` to print every configured environment and mark the default.
+
 Each run stores the selected environment and normalized target URL so the web app can label and filter run history without changing older results when the local config changes. Runs created by older CLIs appear as `untracked`.
 
 ## Codex model configuration

@@ -45,7 +45,7 @@ The frontend should present run history and per-scenario results using reusable 
 
 Users can inspect pass rates and every scenario's ordered check verdicts and browser evidence. Execution failures remain visually separate from failed product checks. Run history uses the generated run name as its primary label.
 
-The run log labels tracked runs with their environment and filters by that environment before pagination. The run detail shows the snapshotted target URL. Legacy runs remain visible as untracked.
+The run log labels tracked runs with their environment and filters by that environment before pagination. The selected filter is stored in the URL and remains active while opening run and scenario details. The run detail shows the snapshotted target URL. Legacy runs remain visible as untracked.
 
 When a failed check has screenshot evidence, the result view shows a small uncropped thumbnail below its text evidence. The thumbnail opens the authenticated full-size image in an accessible shared dialog. Historical text-only results do not show an empty screenshot frame.
 

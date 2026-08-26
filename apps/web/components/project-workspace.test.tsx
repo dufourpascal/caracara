@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  getRunHref,
   ProjectSettingsPanel,
   RunEnvironmentFilter,
   ScenarioEditor,
@@ -67,6 +68,19 @@ describe("run environment filter", () => {
 
     await user.selectOptions(filter, "preview")
     expect(onChange).toHaveBeenCalledWith("preview")
+  })
+
+  it("preserves the environment in run detail links", () => {
+    expect(
+      getRunHref({
+        environment: "preview",
+        projectSlug: "demo",
+        runId: "run-1",
+        scenarioSlug: "checkout",
+      })
+    ).toBe(
+      "/projects/demo/runs/run-1?environment=preview&scenario=checkout"
+    )
   })
 })
 

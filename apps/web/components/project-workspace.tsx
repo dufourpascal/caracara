@@ -35,7 +35,11 @@ import {
   Wrench,
 } from "lucide-react"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
-import { normalizeSlug, projectInputSchema } from "@workspace/contracts"
+import {
+  environmentNameSchema,
+  normalizeSlug,
+  projectInputSchema,
+} from "@workspace/contracts"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -169,6 +173,36 @@ function getScenarioModeHref({
   }
 
   return `/projects/${projectSlug}/scenarios?${searchParams.toString()}`
+}
+
+export function getRunHref({
+  environment,
+  projectSlug,
+  runId,
+  scenarioSlug,
+}: {
+  environment: string | null
+  projectSlug: string
+  runId?: string
+  scenarioSlug?: string
+}) {
+  const searchParams = new URLSearchParams()
+
+  if (environment) {
+    searchParams.set("environment", environment)
+  }
+  if (scenarioSlug) {
+    searchParams.set("scenario", scenarioSlug)
+  }
+
+  const path = `/projects/${projectSlug}/runs${runId ? `/${runId}` : ""}`
+  const query = searchParams.toString()
+  return query ? `${path}?${query}` : path
+}
+
+function normalizeRunEnvironmentFilter(environment?: string | null) {
+  const parsed = environmentNameSchema.safeParse(environment)
+  return parsed.success ? parsed.data : null
 }
 
 function getNewScenarioHref({
@@ -865,6 +899,7 @@ function usePersistedPanelLayout(storageKey: string, panelIds: string[]) {
 export function ProjectWorkspace({
   projectSlug,
   workspace,
+  initialRunEnvironment,
   selectedScenarioSlug,
   selectedRunId,
   selectedRunScenarioSlug,
@@ -874,6 +909,7 @@ export function ProjectWorkspace({
 }: {
   projectSlug: string
   workspace: WorkspaceKind
+  initialRunEnvironment?: string | null
   selectedScenarioSlug?: string
   selectedRunId?: string
   selectedRunScenarioSlug?: string
@@ -891,6 +927,7 @@ export function ProjectWorkspace({
       <Authenticated>
         <AuthenticatedProjectWorkspace
           creatingScenario={creatingScenario}
+          initialRunEnvironment={initialRunEnvironment}
           initialScenarioPhaseFilter={initialScenarioPhaseFilter}
           mode={mode}
           projectSlug={projectSlug}
@@ -907,6 +944,7 @@ export function ProjectWorkspace({
 function AuthenticatedProjectWorkspace({
   projectSlug,
   workspace,
+  initialRunEnvironment,
   selectedScenarioSlug,
   selectedRunId,
   selectedRunScenarioSlug,
@@ -916,6 +954,7 @@ function AuthenticatedProjectWorkspace({
 }: {
   projectSlug: string
   workspace: WorkspaceKind
+  initialRunEnvironment?: string | null
   selectedScenarioSlug?: string
   selectedRunId?: string
   selectedRunScenarioSlug?: string
@@ -952,7 +991,9 @@ function AuthenticatedProjectWorkspace({
   const [scenarioPageSize, setScenarioPageSize] = useState<10 | 20 | 50>(20)
   const [runSortAscending, setRunSortAscending] = useState(false)
   const [runPageSize, setRunPageSize] = useState<10 | 20 | 50>(20)
-  const [runEnvironment, setRunEnvironment] = useState<string | null>(null)
+  const [runEnvironment, setRunEnvironment] = useState<string | null>(() =>
+    normalizeRunEnvironmentFilter(initialRunEnvironment)
+  )
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
   const [phaseError, setPhaseError] = useState<string | null>(null)
@@ -960,6 +1001,9 @@ function AuthenticatedProjectWorkspace({
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
   const runSortDirection = runSortAscending ? "asc" : "desc"
+  useEffect(() => {
+    setRunEnvironment(normalizeRunEnvironmentFilter(initialRunEnvironment))
+  }, [initialRunEnvironment])
   const normalizedInitialScenarioPhaseFilter = normalizeScenarioPhaseFilter({
     initialFilter: initialScenarioPhaseFilter,
     phases: phases ?? [],
@@ -1925,7 +1969,17 @@ function AuthenticatedProjectWorkspace({
                     <RunEnvironmentFilter
                       environments={runEnvironments}
                       value={runEnvironment}
-                      onChange={setRunEnvironment}
+                      onChange={(environment) => {
+                        setRunEnvironment(environment)
+                        router.replace(
+                          getRunHref({
+                            environment,
+                            projectSlug,
+                            runId: selectedRunId,
+                            scenarioSlug: selectedRunScenarioSlug,
+                          })
+                        )
+                      }}
                     />
                     <Button
                       aria-label={
@@ -1990,7 +2044,11 @@ function AuthenticatedProjectWorkspace({
                           )}
                           onClick={() =>
                             router.push(
-                              `/projects/${projectSlug}/runs/${run.id}`
+                              getRunHref({
+                                environment: runEnvironment,
+                                projectSlug,
+                                runId: run.id,
+                              })
                             )
                           }
                           type="button"
@@ -2112,7 +2170,12 @@ function AuthenticatedProjectWorkspace({
                               await removeRun({
                                 runId: runDetail.run.id as never,
                               })
-                              router.push(`/projects/${projectSlug}/runs`)
+                              router.push(
+                                getRunHref({
+                                  environment: runEnvironment,
+                                  projectSlug,
+                                })
+                              )
                             } finally {
                               setIsDeletingRun(false)
                             }
@@ -2170,7 +2233,12 @@ function AuthenticatedProjectWorkspace({
                           )}
                           onClick={() =>
                             router.push(
-                              `/projects/${projectSlug}/runs/${runDetail.run.id}?scenario=${result.scenarioSlug}`
+                              getRunHref({
+                                environment: runEnvironment,
+                                projectSlug,
+                                runId: runDetail.run.id,
+                                scenarioSlug: result.scenarioSlug,
+                              })
                             )
                           }
                           type="button"

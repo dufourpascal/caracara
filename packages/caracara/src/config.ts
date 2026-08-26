@@ -12,8 +12,10 @@ import { parseEnv } from "node:util"
 
 import {
   cliConfigSchema,
+  environmentNameSchema,
   runnerTypeSchema,
   slugSchema,
+  targetUrlSchema,
   type CliConfig,
   type RunnerType,
 } from "@workspace/contracts"
@@ -51,8 +53,22 @@ const localConfigSchema = z
     runner: runnerTypeSchema.optional(),
     model: z.string().trim().min(1).optional(),
     model_reasoning_effort: modelReasoningEffortSchema.optional(),
+    environments: z.record(environmentNameSchema, targetUrlSchema).optional(),
+    defaultEnvironment: environmentNameSchema.optional(),
   })
   .strict()
+  .superRefine((config, ctx) => {
+    if (
+      config.defaultEnvironment &&
+      !config.environments?.[config.defaultEnvironment]
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultEnvironment"],
+        message: `Default environment ${JSON.stringify(config.defaultEnvironment)} is not configured.`,
+      })
+    }
+  })
 
 const defaultConfig: CliConfig = {
   accessToken: null,
@@ -65,13 +81,18 @@ const defaultConfig: CliConfig = {
 const defaultLocalConfig: LocalConfig = {}
 
 export type LocalConfig = z.infer<typeof localConfigSchema>
-export type ModelReasoningEffort = z.infer<
-  typeof modelReasoningEffortSchema
->
+export type ModelReasoningEffort = z.infer<typeof modelReasoningEffortSchema>
 export type ResolvedConfig = CliConfig & {
   runner: RunnerType
   model?: string
   model_reasoning_effort?: ModelReasoningEffort
+  environments: Record<string, string>
+  defaultEnvironment?: string
+}
+
+export type ResolvedEnvironment = {
+  name: string
+  targetUrl: string
 }
 
 export async function ensureConfigDir() {
@@ -95,7 +116,11 @@ export async function readConfig() {
 
 export async function writeConfig(config: CliConfig) {
   await ensureConfigDir()
-  await writeFile(USER_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf8")
+  await writeFile(
+    USER_CONFIG_PATH,
+    `${JSON.stringify(config, null, 2)}\n`,
+    "utf8"
+  )
   await chmod(USER_CONFIG_PATH, 0o600)
 }
 
@@ -113,7 +138,7 @@ export function resolveConfig(
   userConfig: CliConfig,
   localConfig: LocalConfig,
   overrides: Partial<ResolvedConfig>,
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.ProcessEnv
 ) {
   return cliConfigSchema.parse({
     apiBaseUrl:
@@ -135,12 +160,40 @@ export function resolveConfig(
 export function resolveRunner(
   localConfig: LocalConfig,
   overrides: { runner?: RunnerType },
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.ProcessEnv
 ) {
   const candidate =
     overrides.runner ?? env.CARACARA_RUNNER ?? localConfig.runner ?? "codex"
 
   return runnerTypeSchema.parse(candidate)
+}
+
+export function resolveEnvironment(
+  config: Pick<ResolvedConfig, "environments" | "defaultEnvironment">,
+  override: string | undefined,
+  env: NodeJS.ProcessEnv
+): ResolvedEnvironment {
+  const name = override ?? env.CARACARA_ENVIRONMENT ?? config.defaultEnvironment
+  const available = Object.keys(config.environments).sort()
+
+  if (!name) {
+    throw new Error(
+      "No environment selected. Set defaultEnvironment in .caracara/config.json or pass --environment."
+    )
+  }
+
+  const targetUrl = config.environments[name]
+  if (!targetUrl) {
+    const suffix =
+      available.length > 0
+        ? ` Available environments: ${available.join(", ")}.`
+        : " No environments are configured in .caracara/config.json."
+    throw new Error(
+      `Environment ${JSON.stringify(name)} is not configured.${suffix}`
+    )
+  }
+
+  return { name, targetUrl }
 }
 
 export async function findLocalConfigPath(startDir = process.cwd()) {
@@ -150,7 +203,7 @@ export async function findLocalConfigPath(startDir = process.cwd()) {
     const candidate = join(
       currentDir,
       LOCAL_CONFIG_DIR_NAME,
-      LOCAL_CONFIG_FILE_NAME,
+      LOCAL_CONFIG_FILE_NAME
     )
 
     try {
@@ -187,7 +240,7 @@ async function assertPrivateFile(filePath: string) {
   const fileMode = (await stat(filePath)).mode & 0o777
   if ((fileMode & 0o077) !== 0) {
     throw new Error(
-      `${filePath} must only be readable and writable by its owner. Run \`chmod 600 ${filePath}\`.`,
+      `${filePath} must only be readable and writable by its owner. Run \`chmod 600 ${filePath}\`.`
     )
   }
 }
@@ -226,7 +279,7 @@ async function ensureLocalSecretsFiles(configPath: string) {
     await writeFile(
       ignorePath,
       `${ignoreContents}${prefix}${LOCAL_SECRETS_FILE_NAME}\n`,
-      "utf8",
+      "utf8"
     )
   }
 
@@ -269,7 +322,7 @@ export async function readLocalSecrets(startDir = process.cwd()) {
   for (const [key, value] of Object.entries(parseEnv(raw))) {
     if (!/^CARACARA_SECRET_[A-Z0-9_]+$/.test(key)) {
       throw new Error(
-        `${secretsPath} contains invalid key ${key}. Secret names must start with CARACARA_SECRET_.`,
+        `${secretsPath} contains invalid key ${key}. Secret names must start with CARACARA_SECRET_.`
       )
     }
     if (!value) {
@@ -283,7 +336,7 @@ export async function readLocalSecrets(startDir = process.cwd()) {
 
 export async function writeLocalConfig(
   config: LocalConfig,
-  startDir = process.cwd(),
+  startDir = process.cwd()
 ) {
   const configPath =
     (await findLocalConfigPath(startDir)) ?? getDefaultLocalConfigPath(startDir)
@@ -293,7 +346,7 @@ export async function writeLocalConfig(
   await writeFile(
     configPath,
     `${JSON.stringify(localConfigSchema.parse(config), null, 2)}\n`,
-    "utf8",
+    "utf8"
   )
   await ensureLocalSecretsFiles(configPath)
   return configPath
@@ -302,7 +355,7 @@ export async function writeLocalConfig(
 export async function readResolvedConfig(
   overrides: Partial<ResolvedConfig>,
   env: NodeJS.ProcessEnv,
-  startDir = process.cwd(),
+  startDir = process.cwd()
 ) {
   const [userConfig, localConfig] = await Promise.all([
     readConfig(),
@@ -317,6 +370,8 @@ export async function readResolvedConfig(
     model: overrides.model ?? localConfig.model,
     model_reasoning_effort:
       overrides.model_reasoning_effort ?? localConfig.model_reasoning_effort,
+    environments: localConfig.environments ?? {},
+    defaultEnvironment: localConfig.defaultEnvironment,
   }
 }
 

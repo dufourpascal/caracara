@@ -9,6 +9,7 @@ import {
   authoringResponseSchema,
   authTokenResponseSchema,
   cliConfigSchema,
+  createRunRequestSchema,
   executionPlanResponseSchema,
   finalizeRunResponseSchema,
   createUniqueSlug,
@@ -21,6 +22,7 @@ import {
   phaseSchema,
   runSchema,
   scenarioResultSchema,
+  targetUrlSchema,
   versionMismatchErrorSchema,
 } from "./index.js"
 
@@ -188,6 +190,32 @@ describe("contracts", () => {
         userEmail: null,
       })
     ).toThrow()
+  })
+
+  it("validates environment-aware run creation", () => {
+    expect(
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        environment: "preview",
+        targetUrl: "https://preview.example.com",
+        startedAt: 1,
+      })
+    ).toMatchObject({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+    })
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        environment: "preview",
+        startedAt: 1,
+      })
+    ).toThrow("provided together")
+    expect(() =>
+      targetUrlSchema.parse("https://user:pass@example.com")
+    ).toThrow("must not contain credentials")
   })
 
   it("validates the eight narrow authoring operations", () => {

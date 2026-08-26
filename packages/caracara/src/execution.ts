@@ -59,6 +59,8 @@ export type ScreenshotEvidence = {
 
 export type RunnerScenarioInput = {
   cwd: string
+  environment: string
+  targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
 }
@@ -68,6 +70,7 @@ export type RunnerSecrets = Record<string, string>
 type RunnerStartInput = {
   cwd: string
   secrets: RunnerSecrets
+  targetUrl: string
   model?: string
   modelReasoningEffort?: ModelReasoningEffort
 }
@@ -329,6 +332,8 @@ export function parseClaudeJsonResult(stdout: string) {
 }
 
 export function buildRunnerPrompt(input: {
+  environment: string
+  targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
   secretNames?: string[]
@@ -337,7 +342,11 @@ export function buildRunnerPrompt(input: {
   const secretNames = [...(input.secretNames ?? [])].sort()
 
   return [
-    "You are executing a Caracara evaluation scenario against a local application.",
+    "You are executing a Caracara evaluation scenario against an application.",
+    "",
+    `Target environment: ${input.environment}`,
+    `Application URL: ${input.targetUrl}`,
+    "Use this URL as the application origin. If project or scenario text names another origin, keep its path but use the URL above.",
     "",
     "Project context:",
     input.projectPrompt.trim(),
@@ -638,7 +647,7 @@ function delay(ms: number) {
   })
 }
 
-function buildChromiumArgs(input: {
+export function buildChromiumArgs(input: {
   userDataDir: string
   initialUrl?: string
 }) {
@@ -729,7 +738,10 @@ async function terminateBrowserProcess(browser: ChildProcess) {
   await waitForExit
 }
 
-async function launchSharedChromium(input: { cwd: string }) {
+async function launchSharedChromium(input: {
+  cwd: string
+  initialUrl: string
+}) {
   const runDir = await mkdtemp(join(tmpdir(), "caracara-codex-run-"))
   const userDataDir = join(runDir, "chrome-profile")
   const chromeDevtoolsLogPath = join(runDir, "chrome-devtools-mcp.log")
@@ -739,6 +751,7 @@ async function launchSharedChromium(input: { cwd: string }) {
     getChromeExecutablePath(),
     buildChromiumArgs({
       userDataDir,
+      initialUrl: input.initialUrl,
     }),
     {
       cwd: input.cwd,
@@ -779,7 +792,10 @@ class CodexRunner implements RunnerAdapter {
   readonly type = "codex" as const
 
   async startRun(input: RunnerStartInput) {
-    const sharedBrowser = await launchSharedChromium({ cwd: input.cwd })
+    const sharedBrowser = await launchSharedChromium({
+      cwd: input.cwd,
+      initialUrl: input.targetUrl,
+    })
     const runnerEnv = { ...process.env, ...input.secrets }
     const secretNames = Object.keys(input.secrets)
     let codex: Codex
@@ -909,7 +925,10 @@ class ClaudeRunner implements RunnerAdapter {
   readonly type = "claude-code" as const
 
   async startRun(runInput: RunnerStartInput) {
-    const sharedBrowser = await launchSharedChromium({ cwd: runInput.cwd })
+    const sharedBrowser = await launchSharedChromium({
+      cwd: runInput.cwd,
+      initialUrl: runInput.targetUrl,
+    })
     const runnerEnv = { ...process.env, ...runInput.secrets }
     const secretNames = Object.keys(runInput.secrets)
     return {

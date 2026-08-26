@@ -35,6 +35,23 @@ export const slugSchema = z
   .min(1)
   .max(SLUG_MAX_LENGTH)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+export const environmentNameSchema = slugSchema
+export const targetUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value)
+    return url.protocol === "http:" || url.protocol === "https:"
+  }, "Target URL must use HTTP or HTTPS.")
+  .refine((value) => {
+    const url = new URL(value)
+    return url.username === "" && url.password === ""
+  }, "Target URL must not contain credentials.")
+  .transform((value) => new URL(value).toString())
+export const runEnvironmentSchema = z.object({
+  environment: environmentNameSchema,
+  targetUrl: targetUrlSchema,
+})
 export const projectNameSchema = z
   .string()
   .trim()
@@ -133,6 +150,8 @@ export const runSchema = z.object({
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   runnerType: runnerTypeSchema.nullable(),
   evidencePolicy: evidencePolicySchema,
+  environment: environmentNameSchema.nullable().optional(),
+  targetUrl: targetUrlSchema.nullable().optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),

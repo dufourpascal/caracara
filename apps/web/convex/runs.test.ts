@@ -1,6 +1,32 @@
 import { describe, expect, it } from "vitest"
 
 import { deleteRunAndResults } from "./lib"
+import { listRunEnvironmentNames, parseRunEnvironment } from "./runs"
+
+describe("run environments", () => {
+  it("validates snapshots and ignores legacy runs in filter options", () => {
+    expect(
+      parseRunEnvironment({
+        environment: "preview",
+        targetUrl: "https://preview.example.com",
+      })
+    ).toEqual({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+    })
+    expect(() => parseRunEnvironment({ environment: "preview" })).toThrow(
+      "provided together"
+    )
+    expect(
+      listRunEnvironmentNames([
+        {},
+        { environment: "production" },
+        { environment: "preview" },
+        { environment: "preview" },
+      ])
+    ).toEqual(["preview", "production"])
+  })
+})
 
 describe("run deletion helpers", () => {
   it("deletes screenshot storage and rows before results and the run", async () => {

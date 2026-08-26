@@ -66,6 +66,25 @@ CARACARA_SECRET_PASSWORD=replace-me
 
 `caracara run` loads the nearest project secrets automatically and makes them available only to the selected local runner. Project and scenario prompts may refer to the variable names, but must never contain their values. The CLI redacts exact secret values from runner errors and submitted result text. The local agent may still receive a secret in model context when it reads the value to enter it into the application under test.
 
+## Target environments
+
+Define any number of named application targets in `.caracara/config.json`:
+
+```json
+{
+  "environments": {
+    "development": "http://localhost:3000",
+    "preview": "https://preview.example.com",
+    "production": "https://app.example.com"
+  },
+  "defaultEnvironment": "development"
+}
+```
+
+A plain `caracara run` uses `defaultEnvironment`. Override it for one run with `caracara run --environment preview` or `CARACARA_ENVIRONMENT=preview caracara run`. Environment names are lowercase slugs. Target URLs must use HTTP or HTTPS and must not contain credentials; keep credentials in `.caracara/secrets.env`.
+
+Each run stores the selected environment and normalized target URL so the web app can label and filter run history without changing older results when the local config changes. Runs created by older CLIs appear as `untracked`.
+
 ## Codex model configuration
 
 Set the Codex model and reasoning effort in `.caracara/config.json`:

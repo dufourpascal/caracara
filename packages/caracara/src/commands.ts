@@ -33,6 +33,7 @@ import {
   readConfig,
   readLocalSecrets,
   readResolvedConfig,
+  resolveEnvironment,
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
@@ -46,7 +47,7 @@ import {
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.4.0"
+const CLI_VERSION = "0.5.0"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
@@ -438,6 +439,8 @@ export async function initCommand(options: InitCommandOptions) {
     runner: config.runner,
     model: config.model,
     model_reasoning_effort: config.model_reasoning_effort,
+    environments: config.environments,
+    defaultEnvironment: config.defaultEnvironment,
   })
 
   process.stdout.write(`Saved local config to ${configPath}\n`)
@@ -453,6 +456,9 @@ export async function initCommand(options: InitCommandOptions) {
     process.stdout.write(
       `  model_reasoning_effort: ${config.model_reasoning_effort}\n`
     )
+  }
+  if (config.defaultEnvironment) {
+    process.stdout.write(`  environment: ${config.defaultEnvironment}\n`)
   }
   process.stdout.write(`  secrets: ${getLocalSecretsPath(configPath)}\n`)
 }
@@ -543,6 +549,12 @@ export async function runCommand(options: RunCommandOptions) {
     )
   }
 
+  const environment = resolveEnvironment(
+    config,
+    options.environment,
+    process.env
+  )
+
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
@@ -622,11 +634,16 @@ export async function runCommand(options: RunCommandOptions) {
       requestedScenarioSlug: runSelection.requestedScenarioSlug,
       requestedPhaseOrder: runSelection.requestedPhaseOrder,
       runnerType,
+      environment: environment.name,
+      targetUrl: environment.targetUrl,
       startedAt: Date.now(),
     },
   })
 
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
+  process.stdout.write(
+    `Environment ${environment.name} (${environment.targetUrl})\n`
+  )
 
   const buildScenarioSnapshot = (args: {
     phase: RunnablePhase | null
@@ -719,12 +736,15 @@ export async function runCommand(options: RunCommandOptions) {
         runSession ??= await runner.startRun({
           cwd,
           secrets,
+          targetUrl: environment.targetUrl,
           model: config.model,
           modelReasoningEffort: config.model_reasoning_effort,
         })
 
         const execution = await runSession.executeScenario({
           cwd,
+          environment: environment.name,
+          targetUrl: environment.targetUrl,
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
         })

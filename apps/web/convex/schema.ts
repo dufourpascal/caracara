@@ -95,6 +95,8 @@ export default defineSchema({
     evidencePolicy: v.optional(
       v.union(v.literal("text_only"), v.literal("failed_check_screenshot"))
     ),
+    environment: v.optional(v.string()),
+    targetUrl: v.optional(v.string()),
     passedCheckCount: v.number(),
     totalCheckCount: v.number(),
     startedAt: v.number(),
@@ -102,6 +104,11 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_project_started_at", ["projectId", "startedAt"])
+    .index("by_project_environment_started_at", [
+      "projectId",
+      "environment",
+      "startedAt",
+    ])
     .index("by_project", ["projectId"])
     .index("by_project_status", ["projectId", "status"]),
   scenarioResults: defineTable({

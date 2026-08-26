@@ -137,6 +137,7 @@ program
   .option("--api-base-url <url>")
   .option("--project <slug>")
   .option("--runner <runner>", "codex or claude-code", "codex")
+  .option("--environment <name>")
   .option("--scenario <slug>")
   .option("--phase <number>")
   .option("--through-phase <number>")

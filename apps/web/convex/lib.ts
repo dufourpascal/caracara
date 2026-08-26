@@ -234,6 +234,8 @@ export function toRun(run: Doc<"runs">) {
     requestedPhaseOrder: run.requestedPhaseOrder ?? null,
     runnerType: run.runnerType,
     evidencePolicy: run.evidencePolicy ?? "text_only",
+    environment: run.environment ?? null,
+    targetUrl: run.targetUrl ?? null,
     passedCheckCount: run.passedCheckCount,
     totalCheckCount: run.totalCheckCount,
     passRate:

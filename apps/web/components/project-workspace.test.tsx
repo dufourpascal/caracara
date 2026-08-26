@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   ProjectSettingsPanel,
+  RunEnvironmentFilter,
   ScenarioEditor,
   readStoredPanelLayout,
 } from "./project-workspace"
@@ -40,6 +41,32 @@ describe("workspace panel layout", () => {
     expect(
       readStoredPanelLayout("missing-layout", ["list", "detail"])
     ).toBeUndefined()
+  })
+})
+
+describe("run environment filter", () => {
+  afterEach(cleanup)
+
+  it("supports all configured run environments", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+
+    render(
+      <RunEnvironmentFilter
+        environments={["development", "preview", "production"]}
+        value={null}
+        onChange={onChange}
+      />
+    )
+
+    const filter = screen.getByRole("combobox", {
+      name: "Filter runs by environment",
+    })
+    expect(filter.textContent).toContain("All environments")
+    expect(filter.textContent).toContain("preview")
+
+    await user.selectOptions(filter, "preview")
+    expect(onChange).toHaveBeenCalledWith("preview")
   })
 })
 

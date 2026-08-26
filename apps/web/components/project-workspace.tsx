@@ -92,6 +92,16 @@ type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
 const SIDEBAR_PAGE_SIZES = [10, 20, 50] as const
 const UNTITLED_SCENARIO_SLUG_PATTERN = /^untitled(?:-\d+)?$/
+const PRIMARY_NAV_PANEL_SIZES = {
+  defaultSize: "320px",
+  minSize: "260px",
+  maxSize: "420px",
+} as const
+const RUN_DETAIL_NAV_PANEL_SIZES = {
+  defaultSize: "280px",
+  minSize: "220px",
+  maxSize: "360px",
+} as const
 const WORKSPACE_NAVIGATION_ORDER = [
   "project",
   "phases",
@@ -765,19 +775,19 @@ function getPanelLayoutToken({
   return `project-workspace:${projectSlug}:${workspace}:${scope}`
 }
 
-function readStoredPanelLayout(
+export function readStoredPanelLayout(
   storageKey: string,
-  fallbackLayout: PanelLayout
-): PanelLayout {
+  panelIds: string[]
+): PanelLayout | undefined {
   if (typeof window === "undefined") {
-    return fallbackLayout
+    return undefined
   }
 
   try {
     const storedValue = window.localStorage.getItem(storageKey)
 
     if (!storedValue) {
-      return fallbackLayout
+      return undefined
     }
 
     const parsedValue = JSON.parse(storedValue)
@@ -787,25 +797,21 @@ function readStoredPanelLayout(
       typeof parsedValue !== "object" ||
       Array.isArray(parsedValue)
     ) {
-      return fallbackLayout
+      return undefined
     }
 
-    const nextLayout = Object.keys(fallbackLayout).reduce<PanelLayout>(
-      (layout, panelId) => {
-        const fallbackSize = fallbackLayout[panelId]!
-        const storedSize = parsedValue[panelId]
-
-        layout[panelId] =
-          typeof storedSize === "number" ? storedSize : fallbackSize
-
-        return layout
-      },
-      {}
-    )
+    const nextLayout: PanelLayout = {}
+    for (const panelId of panelIds) {
+      const storedSize = parsedValue[panelId]
+      if (typeof storedSize !== "number") {
+        return undefined
+      }
+      nextLayout[panelId] = storedSize
+    }
 
     return nextLayout
   } catch {
-    return fallbackLayout
+    return undefined
   }
 }
 
@@ -817,12 +823,9 @@ function persistPanelLayout(storageKey: string, layout: PanelLayout) {
   }
 }
 
-function usePersistedPanelLayout(
-  storageKey: string,
-  fallbackLayout: PanelLayout
-) {
-  const [defaultLayout] = useState<PanelLayout>(() =>
-    readStoredPanelLayout(storageKey, fallbackLayout)
+function usePersistedPanelLayout(storageKey: string, panelIds: string[]) {
+  const [defaultLayout] = useState<PanelLayout | undefined>(() =>
+    readStoredPanelLayout(storageKey, panelIds)
   )
 
   return {
@@ -1038,10 +1041,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "scenarios",
       scope: "layout",
     }),
-    {
-      [scenarioListPanelId]: 28,
-      [scenarioDetailPanelId]: 72,
-    }
+    [scenarioListPanelId, scenarioDetailPanelId]
   )
   const runPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1049,10 +1049,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "runs",
       scope: "layout",
     }),
-    {
-      [runListPanelId]: 28,
-      [runDetailPanelId]: 72,
-    }
+    [runListPanelId, runDetailPanelId]
   )
   const runDetailPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1060,10 +1057,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "runs",
       scope: "detail-layout",
     }),
-    {
-      [runSummaryPanelId]: 32,
-      [runResultPanelId]: 68,
-    }
+    [runSummaryPanelId, runResultPanelId]
   )
   const hasTriggeredScenarioMetadataEnsure = useRef(false)
 
@@ -1384,12 +1378,7 @@ function AuthenticatedProjectWorkspace({
           onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
-          <ResizablePanel
-            defaultSize="28%"
-            id={scenarioListPanelId}
-            maxSize="38%"
-            minSize="20%"
-          >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={scenarioListPanelId}>
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border bg-muted/10 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -1691,7 +1680,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
+          <ResizablePanel id={scenarioDetailPanelId}>
             {mode === "graph" ? (
               <ScenarioGraph scenarios={graphScenarios ?? []} />
             ) : creatingScenario ? (
@@ -1739,12 +1728,7 @@ function AuthenticatedProjectWorkspace({
           onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
-          <ResizablePanel
-            defaultSize="28%"
-            id={scenarioListPanelId}
-            maxSize="38%"
-            minSize="20%"
-          >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={scenarioListPanelId}>
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border bg-muted/10 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -1856,7 +1840,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
+          <ResizablePanel id={scenarioDetailPanelId}>
             {selectedPhase ? (
               <PhaseEditor
                 allScenarios={scenarioSummaries ?? []}
@@ -1894,12 +1878,7 @@ function AuthenticatedProjectWorkspace({
           onLayoutChanged={runPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
-          <ResizablePanel
-            defaultSize="28%"
-            id={runListPanelId}
-            maxSize="38%"
-            minSize="20%"
-          >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={runListPanelId}>
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border bg-muted/10 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -2027,7 +2006,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%" id={runDetailPanelId}>
+          <ResizablePanel id={runDetailPanelId}>
             {runDetail ? (
               <ResizablePanelGroup
                 className="h-full"
@@ -2036,10 +2015,8 @@ function AuthenticatedProjectWorkspace({
                 orientation="horizontal"
               >
                 <ResizablePanel
-                  defaultSize="32%"
+                  {...RUN_DETAIL_NAV_PANEL_SIZES}
                   id={runSummaryPanelId}
-                  maxSize="40%"
-                  minSize="22%"
                 >
                   <div className="flex h-full flex-col border-r border-border">
                     <div className="border-b border-border bg-muted/10 px-4 py-4">
@@ -2154,7 +2131,7 @@ function AuthenticatedProjectWorkspace({
 
                 <ResizableHandle withHandle />
 
-                <ResizablePanel defaultSize="68%" id={runResultPanelId}>
+                <ResizablePanel id={runResultPanelId}>
                   {selectedRunScenarioSlug ? (
                     <RunResultDetail
                       result={

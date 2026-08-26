@@ -2,7 +2,14 @@
 
 import type { ReactNode } from "react"
 import { useState } from "react"
-import { projectInputSchema, type ProjectInput } from "@workspace/contracts"
+import {
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH,
+  PROJECT_PROMPT_MAX_LENGTH,
+  SLUG_MAX_LENGTH,
+  projectInputSchema,
+  type ProjectInput,
+} from "@workspace/contracts"
 
 import { getErrorData, getErrorMessage } from "@/lib/errors"
 import { Button } from "@workspace/ui/components/button"
@@ -110,6 +117,7 @@ export function ProjectCreateForm({
           aria-describedby={errors.name ? "project-name-error" : undefined}
           aria-invalid={Boolean(errors.name)}
           id="project-name"
+          maxLength={PROJECT_NAME_MAX_LENGTH}
           onChange={(event) => updateField("name", event.target.value)}
           value={form.name}
         />
@@ -130,6 +138,7 @@ export function ProjectCreateForm({
           aria-invalid={Boolean(errors.slug)}
           className="font-mono"
           id="project-slug"
+          maxLength={SLUG_MAX_LENGTH}
           onChange={(event) => updateField("slug", event.target.value)}
           placeholder="my-project"
           value={form.slug}
@@ -152,6 +161,7 @@ export function ProjectCreateForm({
           }
           aria-invalid={Boolean(errors.description)}
           id="project-description"
+          maxLength={PROJECT_DESCRIPTION_MAX_LENGTH}
           onChange={(event) => updateField("description", event.target.value)}
           value={form.description}
         />
@@ -175,6 +185,7 @@ export function ProjectCreateForm({
           aria-invalid={Boolean(errors.projectPrompt)}
           className="font-mono"
           id="project-prompt"
+          maxLength={PROJECT_PROMPT_MAX_LENGTH}
           onChange={(event) => updateField("projectPrompt", event.target.value)}
           value={form.projectPrompt}
         />

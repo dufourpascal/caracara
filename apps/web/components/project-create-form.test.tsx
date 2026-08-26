@@ -8,6 +8,12 @@ import {
 } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH,
+  PROJECT_PROMPT_MAX_LENGTH,
+  SLUG_MAX_LENGTH,
+} from "@workspace/contracts"
 
 import { ProjectCreateForm } from "./project-create-form"
 import { ProjectCreateScreen } from "./project-create-screen"
@@ -51,6 +57,16 @@ describe("project creation forms", () => {
     expect(form.className).toContain("max-w-3xl")
     expect(slug.className).toContain("font-mono")
     expect(prompt.className).toContain("font-mono")
+    expect(
+      screen.getByLabelText("Project name").getAttribute("maxlength")
+    ).toBe(String(PROJECT_NAME_MAX_LENGTH))
+    expect(slug.getAttribute("maxlength")).toBe(String(SLUG_MAX_LENGTH))
+    expect(screen.getByLabelText("Description").getAttribute("maxlength")).toBe(
+      String(PROJECT_DESCRIPTION_MAX_LENGTH)
+    )
+    expect(prompt.getAttribute("maxlength")).toBe(
+      String(PROJECT_PROMPT_MAX_LENGTH)
+    )
     expect(
       screen.getByText(/leave blank to derive it from the project name/i)
     ).toBeTruthy()
@@ -152,5 +168,27 @@ describe("project creation forms", () => {
     expect((screen.getByLabelText("Slug") as HTMLInputElement).value).toBe(
       "saved-draft"
     )
+  })
+
+  it("preserves values and allows retry after a submission error", async () => {
+    const user = userEvent.setup()
+    const onCreate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Project creation unavailable."))
+      .mockResolvedValueOnce(undefined)
+    render(<ProjectCreateForm onCreate={onCreate} />)
+
+    await user.type(screen.getByLabelText("Project name"), "Retry project")
+    await user.click(screen.getByRole("button", { name: "Create project" }))
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Project creation unavailable."
+    )
+    expect(
+      (screen.getByLabelText("Project name") as HTMLInputElement).value
+    ).toBe("Retry project")
+
+    await user.click(screen.getByRole("button", { name: "Create project" }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(2))
   })
 })

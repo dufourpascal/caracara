@@ -1,5 +1,12 @@
 import { z } from "zod"
 
+import {
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH,
+  PROJECT_PROMPT_MAX_LENGTH,
+  SLUG_MAX_LENGTH,
+} from "./constants.js"
+
 export const scenarioStatusSchema = z.enum(["draft", "active"])
 export const runStatusSchema = z.enum([
   "pending",
@@ -26,19 +33,25 @@ export const timestampSchema = z.number().int().nonnegative()
 export const slugSchema = z
   .string()
   .min(1)
-  .max(120)
+  .max(SLUG_MAX_LENGTH)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 export const projectNameSchema = z
   .string()
   .trim()
   .min(1, "Project name is required.")
-  .max(120, "Project name must be 120 characters or fewer.")
+  .max(PROJECT_NAME_MAX_LENGTH, "Project name must be 120 characters or fewer.")
 export const projectDescriptionSchema = z
   .string()
-  .max(1_500, "Description must be 1,500 characters or fewer.")
+  .max(
+    PROJECT_DESCRIPTION_MAX_LENGTH,
+    "Description must be 1,500 characters or fewer."
+  )
 export const projectPromptSchema = z
   .string()
-  .max(12_000, "Project prompt must be 12,000 characters or fewer.")
+  .max(
+    PROJECT_PROMPT_MAX_LENGTH,
+    "Project prompt must be 12,000 characters or fewer."
+  )
 export const projectInputSchema = z.object({
   name: projectNameSchema,
   slug: z.preprocess(
@@ -47,7 +60,7 @@ export const projectInputSchema = z.object({
     z
       .string()
       .trim()
-      .max(120, "Slug must be 120 characters or fewer.")
+      .max(SLUG_MAX_LENGTH, "Slug must be 120 characters or fewer.")
       .optional()
   ),
   description: projectDescriptionSchema,

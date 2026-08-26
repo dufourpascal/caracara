@@ -2489,8 +2489,10 @@ function ScenarioEditor({
                   return
                 }
 
-                await removeScenario?.({ scenarioId: scenario.id as never })
-                router.push(`/projects/${projectSlug}/scenarios?mode=edit`)
+                await runWithErrorMessage(async () => {
+                  await removeScenario?.({ scenarioId: scenario.id as never })
+                  router.push(`/projects/${projectSlug}/scenarios?mode=edit`)
+                }, setSaveError)
               }}
             >
               <Trash2 />

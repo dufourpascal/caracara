@@ -38,15 +38,31 @@ export const slugSchema = z
 export const environmentNameSchema = slugSchema
 export const targetUrlSchema = z
   .string()
-  .url()
-  .refine((value) => {
-    const url = new URL(value)
-    return url.protocol === "http:" || url.protocol === "https:"
-  }, "Target URL must use HTTP or HTTPS.")
-  .refine((value) => {
-    const url = new URL(value)
-    return url.username === "" && url.password === ""
-  }, "Target URL must not contain credentials.")
+  .superRefine((value, ctx) => {
+    let url: URL
+    try {
+      url = new URL(value)
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Target URL must be a valid URL.",
+      })
+      return
+    }
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Target URL must use HTTP or HTTPS.",
+      })
+    }
+    if (url.username !== "" || url.password !== "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Target URL must not contain credentials.",
+      })
+    }
+  })
   .transform((value) => new URL(value).toString())
 export const runEnvironmentSchema = z.object({
   environment: environmentNameSchema,

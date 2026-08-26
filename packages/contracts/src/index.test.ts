@@ -216,6 +216,7 @@ describe("contracts", () => {
     expect(() =>
       targetUrlSchema.parse("https://user:pass@example.com")
     ).toThrow("must not contain credentials")
+    expect(targetUrlSchema.safeParse("not-a-url").success).toBe(false)
   })
 
   it("validates the eight narrow authoring operations", () => {

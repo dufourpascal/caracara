@@ -21,6 +21,18 @@ describe("run environments", () => {
     expect(() => parseRunEnvironment({ environment: "preview" })).toThrow(
       "provided together"
     )
+    let malformedUrlError: unknown
+    try {
+      parseRunEnvironment({ environment: "preview", targetUrl: "not-a-url" })
+    } catch (error) {
+      malformedUrlError = error
+    }
+    expect(malformedUrlError).toMatchObject({
+      data: {
+        code: "validation_error",
+        message: "Target URL must be a valid URL.",
+      },
+    })
     expect(addRunEnvironmentName(["production"], "preview")).toEqual([
       "preview",
       "production",

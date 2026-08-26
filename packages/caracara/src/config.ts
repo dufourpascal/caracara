@@ -60,7 +60,8 @@ const localConfigSchema = z
   .superRefine((config, ctx) => {
     if (
       config.defaultEnvironment &&
-      !config.environments?.[config.defaultEnvironment]
+      (!config.environments ||
+        !Object.hasOwn(config.environments, config.defaultEnvironment))
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -182,8 +183,7 @@ export function resolveEnvironment(
     )
   }
 
-  const targetUrl = config.environments[name]
-  if (!targetUrl) {
+  if (!Object.hasOwn(config.environments, name)) {
     const suffix =
       available.length > 0
         ? ` Available environments: ${available.join(", ")}.`
@@ -193,6 +193,7 @@ export function resolveEnvironment(
     )
   }
 
+  const targetUrl = config.environments[name]!
   return { name, targetUrl }
 }
 

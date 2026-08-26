@@ -299,8 +299,24 @@ describe("config", () => {
         {}
       )
     ).toThrow("Available environments: preview")
+    expect(() =>
+      resolveEnvironment(
+        { environments: { preview: "https://preview.example.com/" } },
+        "constructor",
+        {}
+      )
+    ).toThrow('Environment "constructor" is not configured')
 
     const dir = await mkdtemp(join(tmpdir(), "caracara-environment-test-"))
+    await expect(
+      writeLocalConfig(
+        {
+          environments: { preview: "https://preview.example.com" },
+          defaultEnvironment: "constructor",
+        },
+        dir
+      )
+    ).rejects.toThrow(/Default environment.*constructor.*is not configured/)
     await expect(
       writeLocalConfig(
         {

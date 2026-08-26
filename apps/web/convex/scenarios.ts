@@ -292,7 +292,10 @@ export const create = mutation({
       selectedPhaseId !== null &&
       !phases.some((phase) => phase._id === selectedPhaseId)
     ) {
-      throw new Error("Selected phase does not belong to this project")
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Selected phase does not belong to this project.",
+      })
     }
 
     const scenarioId = await ctx.db.insert("scenarios", {
@@ -388,7 +391,10 @@ export const update = mutation({
       selectedPhaseId !== null &&
       !phases.some((phase) => phase._id === selectedPhaseId)
     ) {
-      throw new Error("Selected phase does not belong to this project")
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Selected phase does not belong to this project.",
+      })
     }
 
     const currentPhaseId = scenario.phaseId ?? null

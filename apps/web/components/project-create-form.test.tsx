@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ProjectCreateForm } from "./project-create-form"
 import { ProjectCreateScreen } from "./project-create-screen"
+import { ProjectsScreen } from "./projects-screen"
 
 const mocks = vi.hoisted(() => ({
   createProject: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("convex/react", () => ({
   Authenticated: ({ children }: { children: ReactNode }) => children,
   AuthLoading: () => null,
   useMutation: () => mocks.createProject,
+  useQuery: () => [],
 }))
 
 describe("project creation forms", () => {
@@ -130,6 +132,25 @@ describe("project creation forms", () => {
         description: "Valid description",
         projectPrompt: "",
       })
+    )
+  })
+
+  it("preserves quick-create values while the form is hidden", async () => {
+    const user = userEvent.setup()
+    render(<ProjectsScreen />)
+
+    await user.click(screen.getByRole("button", { name: "Show" }))
+    await user.type(screen.getByLabelText("Project name"), "Saved draft")
+    await user.type(screen.getByLabelText("Slug"), "saved-draft")
+
+    await user.click(screen.getByRole("button", { name: "Hide" }))
+    await user.click(screen.getByRole("button", { name: "Show" }))
+
+    expect(
+      (screen.getByLabelText("Project name") as HTMLInputElement).value
+    ).toBe("Saved draft")
+    expect((screen.getByLabelText("Slug") as HTMLInputElement).value).toBe(
+      "saved-draft"
     )
   })
 })

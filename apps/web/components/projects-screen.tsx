@@ -142,7 +142,7 @@ function ProjectsContent() {
             </Button>
           </div>
 
-          {isCreating ? (
+          <div hidden={!isCreating}>
             <ProjectCreateForm
               className="mt-6 gap-4"
               onCreate={async (form) => {
@@ -150,7 +150,8 @@ function ProjectsContent() {
                 router.push(`/projects/${project.slug}/scenarios?mode=edit`)
               }}
             />
-          ) : (
+          </div>
+          {isCreating ? null : (
             <p className="mt-6 text-sm leading-7 text-muted-foreground">
               Use the full form for a new workspace, or expand quick create when
               you already know the basic metadata.

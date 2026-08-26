@@ -8,7 +8,7 @@ import {
 import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { ScenarioEditor } from "./project-workspace"
+import { ProjectSettingsPanel, ScenarioEditor } from "./project-workspace"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
@@ -65,5 +65,53 @@ describe("scenario dependency feedback", () => {
     await waitFor(() =>
       expect((name as HTMLInputElement).value).toBe("Unsaved scenario name")
     )
+  })
+})
+
+describe("project settings validation", () => {
+  afterEach(cleanup)
+
+  it("shows client and server validation errors without losing edits", async () => {
+    const user = userEvent.setup()
+    const updateProject = vi.fn().mockRejectedValue({
+      data: {
+        code: "validation_error",
+        message: "The server rejected these project settings.",
+      },
+    })
+
+    render(
+      <ProjectSettingsPanel
+        onProjectDeleted={vi.fn()}
+        project={{
+          id: "project-1",
+          name: "Original project",
+          slug: "original-project",
+          description: "Description",
+          projectPrompt: "Prompt",
+        }}
+        removeProject={vi.fn() as never}
+        updateProject={updateProject as never}
+      />
+    )
+
+    const name = screen.getByDisplayValue("Original project")
+    fireEvent.change(name, { target: { value: "n".repeat(121) } })
+    await user.click(screen.getByRole("button", { name: "Save project" }))
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Project name must be 120 characters or fewer."
+    )
+    expect(updateProject).not.toHaveBeenCalled()
+    expect((name as HTMLInputElement).value).toBe("n".repeat(121))
+
+    fireEvent.change(name, { target: { value: "Updated project" } })
+    expect(screen.queryByRole("alert")).toBeNull()
+    await user.click(screen.getByRole("button", { name: "Save project" }))
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The server rejected these project settings."
+    )
+    expect((name as HTMLInputElement).value).toBe("Updated project")
   })
 })

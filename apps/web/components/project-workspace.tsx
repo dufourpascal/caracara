@@ -35,7 +35,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
-import { normalizeSlug } from "@workspace/contracts"
+import { normalizeSlug, projectInputSchema } from "@workspace/contracts"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -2187,7 +2187,7 @@ function AuthenticatedProjectWorkspace({
   )
 }
 
-function ProjectSettingsPanel({
+export function ProjectSettingsPanel({
   onProjectDeleted,
   project,
   removeProject,
@@ -2211,6 +2211,7 @@ function ProjectSettingsPanel({
   const [form, setForm] = useState(() => createProjectFormState(project))
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
@@ -2237,7 +2238,10 @@ function ProjectSettingsPanel({
             size="sm"
             variant="outline"
             disabled={!isDirty}
-            onClick={() => setForm(savedForm)}
+            onClick={() => {
+              setForm(savedForm)
+              setSaveError(null)
+            }}
           >
             <RotateCcw />
             Revert
@@ -2246,14 +2250,29 @@ function ProjectSettingsPanel({
             size="sm"
             disabled={!isDirty}
             onClick={async () => {
-              const updatedProject = await updateProject({
-                projectId: project.id as never,
-                ...form,
-              })
-              const nextForm = createProjectFormState(updatedProject)
-              setSavedForm(nextForm)
-              setForm(nextForm)
-              router.replace(`/projects/${updatedProject.slug}/project`)
+              setSaveError(null)
+
+              const validation = projectInputSchema.safeParse(form)
+              if (!validation.success) {
+                setSaveError(
+                  validation.error.issues[0]?.message ??
+                    "Project settings are invalid."
+                )
+                return
+              }
+
+              try {
+                const updatedProject = await updateProject({
+                  projectId: project.id as never,
+                  ...form,
+                })
+                const nextForm = createProjectFormState(updatedProject)
+                setSavedForm(nextForm)
+                setForm(nextForm)
+                router.replace(`/projects/${updatedProject.slug}/project`)
+              } catch (error) {
+                setSaveError(getErrorMessage(error))
+              }
             }}
           >
             <Save />
@@ -2262,42 +2281,52 @@ function ProjectSettingsPanel({
         </div>
       </div>
 
+      {saveError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {saveError}
+        </p>
+      ) : null}
+
       <div className="grid gap-5">
         <Field label="Name">
           <Input
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({ ...current, name: event.target.value }))
-            }
+            }}
             value={form.name}
           />
         </Field>
         <Field label="Slug">
           <Input
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({ ...current, slug: event.target.value }))
-            }
+            }}
             value={form.slug}
           />
         </Field>
         <Field label="Description">
           <Textarea
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({
                 ...current,
                 description: event.target.value,
               }))
-            }
+            }}
             value={form.description}
           />
         </Field>
         <Field label="Project prompt">
           <Textarea
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({
                 ...current,
                 projectPrompt: event.target.value,
               }))
-            }
+            }}
             value={form.projectPrompt}
           />
         </Field>

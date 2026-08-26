@@ -36,7 +36,13 @@ import {
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
-import { getRunnerAdapter } from "./execution.js"
+import {
+  formatRunnerUsage,
+  getRunnerAdapter,
+  mergeRunnerUsage,
+  RunnerExecutionError,
+  type RunnerUsageReport,
+} from "./execution.js"
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
@@ -646,6 +652,7 @@ export async function runCommand(options: RunCommandOptions) {
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
   let runError: unknown = null
+  let runUsage: RunnerUsageReport = { complete: true }
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
   let lastPrintedPhaseId: string | null = null
@@ -721,6 +728,10 @@ export async function runCommand(options: RunCommandOptions) {
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
         })
+        runUsage = mergeRunnerUsage(
+          runUsage,
+          execution.usage ?? { complete: false }
+        )
 
         if (
           createRunResponse.run.evidencePolicy === "failed_check_screenshot"
@@ -769,6 +780,9 @@ export async function runCommand(options: RunCommandOptions) {
           `  ${passed}/${execution.checkResults.length} checks passed\n`
         )
       } catch (error) {
+        if (error instanceof RunnerExecutionError) {
+          runUsage = mergeRunnerUsage(runUsage, error.usage)
+        }
         runFailed = true
         await submitScenarioResult({
           apiBaseUrl: config.apiBaseUrl,
@@ -834,6 +848,10 @@ export async function runCommand(options: RunCommandOptions) {
       await runSession?.close()
     } catch (error) {
       closeError = error
+    }
+
+    if (runUsage.usage || !runUsage.complete) {
+      process.stdout.write(`\n${formatRunnerUsage(runUsage)}\n`)
     }
 
     if (finalRunStatus && finalFinishedAt !== null) {

@@ -9,6 +9,7 @@ import {
   type CodexOptions,
   type SandboxMode,
   type ThreadOptions,
+  type Usage,
 } from "@openai/codex-sdk"
 import type {
   CheckResult,
@@ -22,6 +23,31 @@ export type RunnerExecution = {
   executionSummary: string
   checkResults: CheckResult[]
   screenshotEvidence?: ScreenshotEvidence[]
+  usage?: RunnerUsageReport
+}
+
+export type RunnerUsage = {
+  inputTokens: number
+  cachedInputTokens: number
+  cacheWriteInputTokens: number
+  outputTokens: number
+  reasoningOutputTokens: number
+  estimatedCostUsd: number | null
+}
+
+export type RunnerUsageReport = {
+  usage?: RunnerUsage
+  complete: boolean
+}
+
+export class RunnerExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly usage: RunnerUsageReport
+  ) {
+    super(message)
+    this.name = "RunnerExecutionError"
+  }
 }
 
 export type ScreenshotEvidence = {
@@ -116,6 +142,191 @@ export function validateRunnerExecution(
 const defaultCodexSandbox = "read-only"
 const defaultChromeExecutablePath = "/usr/bin/chromium"
 const defaultChromiumStartupTimeoutMs = 15_000
+
+const codexPricingPerMillionTokens: Record<
+  string,
+  {
+    input: number
+    cachedInput: number
+    cacheWriteInput: number
+    output: number
+  }
+> = {
+  "gpt-5.6": { input: 4, cachedInput: 0.4, cacheWriteInput: 5, output: 20 },
+  "gpt-5.6-sol": {
+    input: 4,
+    cachedInput: 0.4,
+    cacheWriteInput: 5,
+    output: 20,
+  },
+  "gpt-5.6-terra": {
+    input: 2,
+    cachedInput: 0.2,
+    cacheWriteInput: 2.5,
+    output: 12,
+  },
+  "gpt-5.6-luna": {
+    input: 0.2,
+    cachedInput: 0.02,
+    cacheWriteInput: 0.25,
+    output: 1.2,
+  },
+}
+
+export function toCodexRunnerUsage(
+  usage: Usage | null,
+  model?: string
+): RunnerUsage | undefined {
+  if (!usage) {
+    return undefined
+  }
+
+  const pricing = model ? codexPricingPerMillionTokens[model] : undefined
+  const uncachedInputTokens = Math.max(
+    0,
+    usage.input_tokens -
+      usage.cached_input_tokens -
+      usage.cache_write_input_tokens
+  )
+  const estimatedCostUsd = pricing
+    ? (uncachedInputTokens * pricing.input +
+        usage.cached_input_tokens * pricing.cachedInput +
+        usage.cache_write_input_tokens * pricing.cacheWriteInput +
+        usage.output_tokens * pricing.output) /
+      1_000_000
+    : null
+
+  return {
+    inputTokens: usage.input_tokens,
+    cachedInputTokens: usage.cached_input_tokens,
+    cacheWriteInputTokens: usage.cache_write_input_tokens,
+    outputTokens: usage.output_tokens,
+    reasoningOutputTokens: usage.reasoning_output_tokens,
+    estimatedCostUsd,
+  }
+}
+
+export function mergeRunnerUsage(
+  current: RunnerUsageReport,
+  next: RunnerUsageReport
+): RunnerUsageReport {
+  const currentUsage = current.usage
+  const nextUsage = next.usage
+
+  if (!currentUsage || !nextUsage) {
+    return {
+      usage: currentUsage ?? nextUsage,
+      complete: current.complete && next.complete,
+    }
+  }
+
+  return {
+    usage: {
+      inputTokens: currentUsage.inputTokens + nextUsage.inputTokens,
+      cachedInputTokens:
+        currentUsage.cachedInputTokens + nextUsage.cachedInputTokens,
+      cacheWriteInputTokens:
+        currentUsage.cacheWriteInputTokens + nextUsage.cacheWriteInputTokens,
+      outputTokens: currentUsage.outputTokens + nextUsage.outputTokens,
+      reasoningOutputTokens:
+        currentUsage.reasoningOutputTokens + nextUsage.reasoningOutputTokens,
+      estimatedCostUsd:
+        currentUsage.estimatedCostUsd === null ||
+        nextUsage.estimatedCostUsd === null
+          ? null
+          : currentUsage.estimatedCostUsd + nextUsage.estimatedCostUsd,
+    },
+    complete: current.complete && next.complete,
+  }
+}
+
+const tokenNumber = new Intl.NumberFormat("en-US")
+
+export function formatRunnerUsage(report: RunnerUsageReport) {
+  const usage = report.usage
+  if (!usage) {
+    return "Tokens: unavailable (runner usage incomplete)\nEstimated API-equivalent cost: unavailable"
+  }
+
+  const inputDetails = [
+    `${tokenNumber.format(usage.cachedInputTokens)} cached`,
+    ...(usage.cacheWriteInputTokens > 0
+      ? [`${tokenNumber.format(usage.cacheWriteInputTokens)} cache write`]
+      : []),
+  ].join(", ")
+  const outputDetails =
+    usage.reasoningOutputTokens > 0
+      ? `, ${tokenNumber.format(usage.reasoningOutputTokens)} reasoning`
+      : ""
+  const totalTokens = usage.inputTokens + usage.outputTokens
+  const tokens = `Tokens: ${tokenNumber.format(totalTokens)} total${report.complete ? "" : " (partial)"} (${tokenNumber.format(usage.inputTokens)} input, ${inputDetails}; ${tokenNumber.format(usage.outputTokens)} output${outputDetails})`
+  const cost = !report.complete
+    ? "Estimated API-equivalent cost: unavailable because token usage is incomplete"
+    : usage.estimatedCostUsd === null
+      ? "Estimated API-equivalent cost: unavailable for this model"
+      : `Estimated API-equivalent cost: $${usage.estimatedCostUsd.toFixed(4)}`
+
+  return `${tokens}\n${cost}`
+}
+
+type ClaudeJsonResult = {
+  structured_output?: unknown
+  result?: unknown
+  total_cost_usd?: unknown
+  usage?: {
+    input_tokens?: unknown
+    cache_read_input_tokens?: unknown
+    cache_creation_input_tokens?: unknown
+    output_tokens?: unknown
+  }
+}
+
+function nonnegativeNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0
+}
+
+export function parseClaudeJsonResult(stdout: string) {
+  const result = JSON.parse(stdout) as ClaudeJsonResult
+  let execution: unknown = result.structured_output ?? result
+  if (execution === result && typeof result.result === "string") {
+    try {
+      execution = JSON.parse(result.result) as unknown
+    } catch {
+      // The validation error below is more useful than a nested JSON parse error.
+    }
+  }
+
+  const usage = result.usage
+  const cachedInputTokens = nonnegativeNumber(usage?.cache_read_input_tokens)
+  const cacheWriteInputTokens = nonnegativeNumber(
+    usage?.cache_creation_input_tokens
+  )
+  const uncachedInputTokens = nonnegativeNumber(usage?.input_tokens)
+  const outputTokens = nonnegativeNumber(usage?.output_tokens)
+  const estimatedCostUsd =
+    typeof result.total_cost_usd === "number" &&
+    Number.isFinite(result.total_cost_usd) &&
+    result.total_cost_usd >= 0
+      ? result.total_cost_usd
+      : null
+
+  return {
+    execution: execution as RunnerExecution,
+    usage: usage
+      ? {
+          inputTokens:
+            uncachedInputTokens + cachedInputTokens + cacheWriteInputTokens,
+          cachedInputTokens,
+          cacheWriteInputTokens,
+          outputTokens,
+          reasoningOutputTokens: 0,
+          estimatedCostUsd,
+        }
+      : undefined,
+  }
+}
 
 export function buildRunnerPrompt(input: {
   projectPrompt: string
@@ -591,6 +802,8 @@ class CodexRunner implements RunnerAdapter {
         return await withTempFiles(async (dir) => {
           const evidenceDirectory = join(dir, "evidence")
           await mkdir(evidenceDirectory)
+          let usage: RunnerUsageReport = { complete: true }
+          let waitingForUsage = false
           try {
             const thread = codex.startThread(
               buildCodexThreadOptions({
@@ -599,6 +812,7 @@ class CodexRunner implements RunnerAdapter {
                 modelReasoningEffort: input.modelReasoningEffort,
               })
             )
+            waitingForUsage = true
             const turn = await thread.run(
               buildRunnerPrompt({
                 ...scenarioInput,
@@ -611,6 +825,12 @@ class CodexRunner implements RunnerAdapter {
                 ),
               }
             )
+            waitingForUsage = false
+            const turnUsage = toCodexRunnerUsage(turn.usage, input.model)
+            usage = mergeRunnerUsage(usage, {
+              usage: turnUsage,
+              complete: turnUsage !== undefined,
+            })
 
             const validated = validateRunnerExecution(
               scenarioInput.scenario,
@@ -625,13 +845,23 @@ class CodexRunner implements RunnerAdapter {
             })
 
             if (screenshots.missingCheckIds.length > 0) {
-              await thread.run(
+              waitingForUsage = true
+              const correction = await thread.run(
                 buildMissingScreenshotPrompt({
                   scenario: scenarioInput.scenario,
                   evidenceDirectory,
                   missingCheckIds: screenshots.missingCheckIds,
                 })
               )
+              waitingForUsage = false
+              const correctionUsage = toCodexRunnerUsage(
+                correction.usage,
+                input.model
+              )
+              usage = mergeRunnerUsage(usage, {
+                usage: correctionUsage,
+                complete: correctionUsage !== undefined,
+              })
               screenshots = await readScreenshotEvidence({
                 evidenceDirectory,
                 checkIds: failedCheckIds,
@@ -650,14 +880,21 @@ class CodexRunner implements RunnerAdapter {
                 input.secrets
               ),
               screenshotEvidence: screenshots.evidence,
+              usage,
             }
           } catch (error) {
+            if (waitingForUsage) {
+              usage = { ...usage, complete: false }
+            }
             const message = (
               error instanceof Error ? error.message : "Codex SDK failed."
             )
               .split(evidenceDirectory)
               .join("[LOCAL_EVIDENCE_DIR]")
-            throw new Error(redactSecretValues(message, input.secrets))
+            throw new RunnerExecutionError(
+              redactSecretValues(message, input.secrets),
+              usage
+            )
           }
         })
       },
@@ -694,37 +931,54 @@ class ClaudeRunner implements RunnerAdapter {
             }),
             "utf8"
           )
-          const execution = await runCommand({
-            command: "claude",
-            cwd: scenarioInput.cwd,
-            env: runnerEnv,
-            secrets: runInput.secrets,
-            commandArgs: [
-              "-p",
-              "--permission-mode",
-              process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
-                "bypassPermissions",
-              "--output-format",
-              "json",
-              "--mcp-config",
-              mcpConfigPath,
-              "--strict-mcp-config",
-              "--json-schema",
-              JSON.stringify(
-                buildExecutionResultSchema(scenarioInput.scenario)
+          let usage: RunnerUsageReport = { complete: false }
+          try {
+            const execution = await runCommand({
+              command: "claude",
+              cwd: scenarioInput.cwd,
+              env: runnerEnv,
+              secrets: runInput.secrets,
+              commandArgs: [
+                "-p",
+                "--permission-mode",
+                process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
+                  "bypassPermissions",
+                "--output-format",
+                "json",
+                "--mcp-config",
+                mcpConfigPath,
+                "--strict-mcp-config",
+                "--json-schema",
+                JSON.stringify(
+                  buildExecutionResultSchema(scenarioInput.scenario)
+                ),
+                buildRunnerPrompt({ ...scenarioInput, secretNames }),
+              ],
+            })
+            const parsed = parseClaudeJsonResult(execution.stdout)
+            usage = {
+              usage: parsed.usage,
+              complete: parsed.usage !== undefined,
+            }
+            return {
+              ...redactRunnerExecution(
+                validateRunnerExecution(
+                  scenarioInput.scenario,
+                  parsed.execution
+                ),
+                runInput.secrets
               ),
-              buildRunnerPrompt({ ...scenarioInput, secretNames }),
-            ],
-          })
-          return {
-            ...redactRunnerExecution(
-              validateRunnerExecution(
-                scenarioInput.scenario,
-                JSON.parse(execution.stdout) as RunnerExecution
+              screenshotEvidence: [],
+              usage,
+            }
+          } catch (error) {
+            throw new RunnerExecutionError(
+              redactSecretValues(
+                error instanceof Error ? error.message : "Claude Code failed.",
+                runInput.secrets
               ),
-              runInput.secrets
-            ),
-            screenshotEvidence: [],
+              usage
+            )
           }
         })
       },

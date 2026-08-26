@@ -9,9 +9,13 @@ import {
   buildExecutionResultSchema,
   buildMissingScreenshotPrompt,
   buildRunnerPrompt,
+  formatRunnerUsage,
   hasWebpSignature,
+  mergeRunnerUsage,
+  parseClaudeJsonResult,
   redactRunnerExecution,
   redactSecretValues,
+  toCodexRunnerUsage,
   validateRunnerExecution,
 } from "./execution.js"
 
@@ -272,6 +276,130 @@ describe("Codex SDK configuration", () => {
           evidence: "The URL ended in /hello-world.",
         },
       ],
+    })
+  })
+})
+
+describe("runner usage", () => {
+  it("calculates and formats GPT-5.6 Luna usage", () => {
+    const usage = toCodexRunnerUsage(
+      {
+        input_tokens: 1_000_000,
+        cached_input_tokens: 400_000,
+        cache_write_input_tokens: 100_000,
+        output_tokens: 100_000,
+        reasoning_output_tokens: 25_000,
+      },
+      "gpt-5.6-luna"
+    )
+
+    expect(usage).toMatchObject({
+      inputTokens: 1_000_000,
+      cachedInputTokens: 400_000,
+      cacheWriteInputTokens: 100_000,
+      outputTokens: 100_000,
+      reasoningOutputTokens: 25_000,
+      estimatedCostUsd: 0.253,
+    })
+    expect(formatRunnerUsage({ usage, complete: true })).toBe(
+      "Tokens: 1,100,000 total (1,000,000 input, 400,000 cached, 100,000 cache write; 100,000 output, 25,000 reasoning)\nEstimated API-equivalent cost: $0.2530"
+    )
+  })
+
+  it("aggregates turns without inventing a partial cost", () => {
+    expect(
+      mergeRunnerUsage(
+        {
+          usage: {
+            inputTokens: 100,
+            cachedInputTokens: 20,
+            cacheWriteInputTokens: 0,
+            outputTokens: 10,
+            reasoningOutputTokens: 2,
+            estimatedCostUsd: 0.01,
+          },
+          complete: true,
+        },
+        {
+          usage: {
+            inputTokens: 200,
+            cachedInputTokens: 40,
+            cacheWriteInputTokens: 5,
+            outputTokens: 20,
+            reasoningOutputTokens: 4,
+            estimatedCostUsd: null,
+          },
+          complete: false,
+        }
+      )
+    ).toEqual({
+      usage: {
+        inputTokens: 300,
+        cachedInputTokens: 60,
+        cacheWriteInputTokens: 5,
+        outputTokens: 30,
+        reasoningOutputTokens: 6,
+        estimatedCostUsd: null,
+      },
+      complete: false,
+    })
+  })
+
+  it("labels partial usage and withholds its cost", () => {
+    expect(
+      formatRunnerUsage({
+        usage: {
+          inputTokens: 100,
+          cachedInputTokens: 20,
+          cacheWriteInputTokens: 0,
+          outputTokens: 10,
+          reasoningOutputTokens: 0,
+          estimatedCostUsd: 0.01,
+        },
+        complete: false,
+      })
+    ).toBe(
+      "Tokens: 110 total (partial) (100 input, 20 cached; 10 output)\nEstimated API-equivalent cost: unavailable because token usage is incomplete"
+    )
+
+    expect(formatRunnerUsage({ complete: false })).toBe(
+      "Tokens: unavailable (runner usage incomplete)\nEstimated API-equivalent cost: unavailable"
+    )
+  })
+
+  it("reads Claude structured output and its reported cost", () => {
+    const parsed = parseClaudeJsonResult(
+      JSON.stringify({
+        structured_output: {
+          executionSummary: "Created the article.",
+          checkResults: [
+            {
+              checkId: "00000000-0000-4000-8000-000000000001",
+              verdict: "passed",
+              evidence: "The article is visible.",
+            },
+          ],
+        },
+        total_cost_usd: 0.0123,
+        usage: {
+          input_tokens: 1_000,
+          cache_read_input_tokens: 8_000,
+          cache_creation_input_tokens: 2_000,
+          output_tokens: 500,
+        },
+      })
+    )
+
+    expect(parsed.execution).toMatchObject({
+      executionSummary: "Created the article.",
+    })
+    expect(parsed.usage).toEqual({
+      inputTokens: 11_000,
+      cachedInputTokens: 8_000,
+      cacheWriteInputTokens: 2_000,
+      outputTokens: 500,
+      reasoningOutputTokens: 0,
+      estimatedCostUsd: 0.0123,
     })
   })
 })

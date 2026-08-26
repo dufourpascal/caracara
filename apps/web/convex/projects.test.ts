@@ -1,6 +1,59 @@
 import { describe, expect, it } from "vitest"
 
+import { parseProjectInput } from "./projects"
 import { deleteProjectCascade } from "./lib"
+
+describe("project input validation", () => {
+  it("trims names and omits blank slugs", () => {
+    expect(
+      parseProjectInput({
+        name: "  Blank Slug Derivation  ",
+        slug: " \t ",
+        description: "Description",
+        projectPrompt: "Prompt",
+      })
+    ).toEqual({
+      name: "Blank Slug Derivation",
+      slug: undefined,
+      description: "Description",
+      projectPrompt: "Prompt",
+    })
+  })
+
+  it("returns field-specific validation errors", () => {
+    expect(() =>
+      parseProjectInput({
+        name: "n".repeat(121),
+        slug: "project",
+        description: "d".repeat(1_501),
+        projectPrompt: "p".repeat(12_001),
+      })
+    ).toThrow()
+
+    try {
+      parseProjectInput({
+        name: "   ",
+        slug: "project",
+        description: "d".repeat(1_501),
+        projectPrompt: "p".repeat(12_001),
+      })
+    } catch (error) {
+      expect(error).toMatchObject({
+        data: {
+          code: "validation_error",
+          message: "Check the highlighted project fields.",
+          fieldErrors: {
+            name: ["Project name is required."],
+            description: ["Description must be 1,500 characters or fewer."],
+            projectPrompt: [
+              "Project prompt must be 12,000 characters or fewer.",
+            ],
+          },
+        },
+      })
+    }
+  })
+})
 
 describe("project deletion helpers", () => {
   it("deletes project runs, results, dependencies, and scenarios before the project", async () => {

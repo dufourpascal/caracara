@@ -9,10 +9,8 @@ import { useState } from "react"
 
 import { api } from "@/convex/_generated/api"
 import { AppBrand } from "@/components/app-brand"
+import { ProjectCreateForm } from "@/components/project-create-form"
 import { Button } from "@workspace/ui/components/button"
-import { Input } from "@workspace/ui/components/input"
-import { Label } from "@workspace/ui/components/label"
-import { Textarea } from "@workspace/ui/components/textarea"
 
 export function ProjectsScreen() {
   return (
@@ -35,12 +33,6 @@ function ProjectsContent() {
   const router = useRouter()
   const [search, setSearch] = useState("")
   const [isCreating, setIsCreating] = useState(false)
-  const [form, setForm] = useState({
-    name: "",
-    slug: "",
-    description: "",
-    projectPrompt: "",
-  })
 
   const filteredProjects =
     projects?.filter((project) => {
@@ -150,70 +142,16 @@ function ProjectsContent() {
             </Button>
           </div>
 
-          {isCreating ? (
-            <form
-              className="mt-6 grid gap-4"
-              onSubmit={async (event) => {
-                event.preventDefault()
+          <div hidden={!isCreating}>
+            <ProjectCreateForm
+              className="mt-6 gap-4"
+              onCreate={async (form) => {
                 const project = await createProject(form)
                 router.push(`/projects/${project.slug}/scenarios?mode=edit`)
               }}
-            >
-              <div className="grid gap-2">
-                <Label htmlFor="quick-project-name">Project name</Label>
-                <Input
-                  id="quick-project-name"
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  value={form.name}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="quick-project-slug">Slug</Label>
-                <Input
-                  id="quick-project-slug"
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      slug: event.target.value,
-                    }))
-                  }
-                  value={form.slug}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="quick-project-description">Description</Label>
-                <Textarea
-                  id="quick-project-description"
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  value={form.description}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="quick-project-prompt">Project prompt</Label>
-                <Textarea
-                  id="quick-project-prompt"
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      projectPrompt: event.target.value,
-                    }))
-                  }
-                  value={form.projectPrompt}
-                />
-              </div>
-              <Button type="submit">Create project</Button>
-            </form>
-          ) : (
+            />
+          </div>
+          {isCreating ? null : (
             <p className="mt-6 text-sm leading-7 text-muted-foreground">
               Use the full form for a new workspace, or expand quick create when
               you already know the basic metadata.

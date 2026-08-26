@@ -35,7 +35,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { type CSSProperties, useEffect, useRef, useState } from "react"
-import { normalizeSlug } from "@workspace/contracts"
+import { normalizeSlug, projectInputSchema } from "@workspace/contracts"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -85,12 +85,23 @@ import {
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
+import { getErrorMessage } from "@/lib/errors"
 import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
 type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
 const SIDEBAR_PAGE_SIZES = [10, 20, 50] as const
 const UNTITLED_SCENARIO_SLUG_PATTERN = /^untitled(?:-\d+)?$/
+const PRIMARY_NAV_PANEL_SIZES = {
+  defaultSize: "320px",
+  minSize: "260px",
+  maxSize: "420px",
+} as const
+const RUN_DETAIL_NAV_PANEL_SIZES = {
+  defaultSize: "280px",
+  minSize: "220px",
+  maxSize: "360px",
+} as const
 const WORKSPACE_NAVIGATION_ORDER = [
   "project",
   "phases",
@@ -368,10 +379,6 @@ function isScenarioStatus(value: string): value is "draft" | "active" {
 
 function getAutoScenarioSlug(name: string) {
   return name.trim() === "" ? "" : normalizeSlug(name)
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong."
 }
 
 async function runWithErrorMessage(
@@ -768,19 +775,19 @@ function getPanelLayoutToken({
   return `project-workspace:${projectSlug}:${workspace}:${scope}`
 }
 
-function readStoredPanelLayout(
+export function readStoredPanelLayout(
   storageKey: string,
-  fallbackLayout: PanelLayout
-): PanelLayout {
+  panelIds: string[]
+): PanelLayout | undefined {
   if (typeof window === "undefined") {
-    return fallbackLayout
+    return undefined
   }
 
   try {
     const storedValue = window.localStorage.getItem(storageKey)
 
     if (!storedValue) {
-      return fallbackLayout
+      return undefined
     }
 
     const parsedValue = JSON.parse(storedValue)
@@ -790,25 +797,21 @@ function readStoredPanelLayout(
       typeof parsedValue !== "object" ||
       Array.isArray(parsedValue)
     ) {
-      return fallbackLayout
+      return undefined
     }
 
-    const nextLayout = Object.keys(fallbackLayout).reduce<PanelLayout>(
-      (layout, panelId) => {
-        const fallbackSize = fallbackLayout[panelId]!
-        const storedSize = parsedValue[panelId]
-
-        layout[panelId] =
-          typeof storedSize === "number" ? storedSize : fallbackSize
-
-        return layout
-      },
-      {}
-    )
+    const nextLayout: PanelLayout = {}
+    for (const panelId of panelIds) {
+      const storedSize = parsedValue[panelId]
+      if (typeof storedSize !== "number") {
+        return undefined
+      }
+      nextLayout[panelId] = storedSize
+    }
 
     return nextLayout
   } catch {
-    return fallbackLayout
+    return undefined
   }
 }
 
@@ -820,12 +823,9 @@ function persistPanelLayout(storageKey: string, layout: PanelLayout) {
   }
 }
 
-function usePersistedPanelLayout(
-  storageKey: string,
-  fallbackLayout: PanelLayout
-) {
-  const [defaultLayout] = useState<PanelLayout>(() =>
-    readStoredPanelLayout(storageKey, fallbackLayout)
+function usePersistedPanelLayout(storageKey: string, panelIds: string[]) {
+  const [defaultLayout] = useState<PanelLayout | undefined>(() =>
+    readStoredPanelLayout(storageKey, panelIds)
   )
 
   return {
@@ -1041,10 +1041,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "scenarios",
       scope: "layout",
     }),
-    {
-      [scenarioListPanelId]: 28,
-      [scenarioDetailPanelId]: 72,
-    }
+    [scenarioListPanelId, scenarioDetailPanelId]
   )
   const runPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1052,10 +1049,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "runs",
       scope: "layout",
     }),
-    {
-      [runListPanelId]: 28,
-      [runDetailPanelId]: 72,
-    }
+    [runListPanelId, runDetailPanelId]
   )
   const runDetailPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1063,10 +1057,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "runs",
       scope: "detail-layout",
     }),
-    {
-      [runSummaryPanelId]: 32,
-      [runResultPanelId]: 68,
-    }
+    [runSummaryPanelId, runResultPanelId]
   )
   const hasTriggeredScenarioMetadataEnsure = useRef(false)
 
@@ -1387,12 +1378,7 @@ function AuthenticatedProjectWorkspace({
           onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
-          <ResizablePanel
-            defaultSize="28%"
-            id={scenarioListPanelId}
-            maxSize="38%"
-            minSize="20%"
-          >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={scenarioListPanelId}>
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border bg-muted/10 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -1694,7 +1680,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
+          <ResizablePanel id={scenarioDetailPanelId}>
             {mode === "graph" ? (
               <ScenarioGraph scenarios={graphScenarios ?? []} />
             ) : creatingScenario ? (
@@ -1742,12 +1728,7 @@ function AuthenticatedProjectWorkspace({
           onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
-          <ResizablePanel
-            defaultSize="28%"
-            id={scenarioListPanelId}
-            maxSize="38%"
-            minSize="20%"
-          >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={scenarioListPanelId}>
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border bg-muted/10 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -1859,7 +1840,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%" id={scenarioDetailPanelId}>
+          <ResizablePanel id={scenarioDetailPanelId}>
             {selectedPhase ? (
               <PhaseEditor
                 allScenarios={scenarioSummaries ?? []}
@@ -1897,12 +1878,7 @@ function AuthenticatedProjectWorkspace({
           onLayoutChanged={runPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
-          <ResizablePanel
-            defaultSize="28%"
-            id={runListPanelId}
-            maxSize="38%"
-            minSize="20%"
-          >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={runListPanelId}>
             <div className="flex h-full flex-col border-r border-border">
               <div className="border-b border-border bg-muted/10 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -2030,7 +2006,7 @@ function AuthenticatedProjectWorkspace({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize="72%" id={runDetailPanelId}>
+          <ResizablePanel id={runDetailPanelId}>
             {runDetail ? (
               <ResizablePanelGroup
                 className="h-full"
@@ -2039,10 +2015,8 @@ function AuthenticatedProjectWorkspace({
                 orientation="horizontal"
               >
                 <ResizablePanel
-                  defaultSize="32%"
+                  {...RUN_DETAIL_NAV_PANEL_SIZES}
                   id={runSummaryPanelId}
-                  maxSize="40%"
-                  minSize="22%"
                 >
                   <div className="flex h-full flex-col border-r border-border">
                     <div className="border-b border-border bg-muted/10 px-4 py-4">
@@ -2157,7 +2131,7 @@ function AuthenticatedProjectWorkspace({
 
                 <ResizableHandle withHandle />
 
-                <ResizablePanel defaultSize="68%" id={runResultPanelId}>
+                <ResizablePanel id={runResultPanelId}>
                   {selectedRunScenarioSlug ? (
                     <RunResultDetail
                       result={
@@ -2190,7 +2164,7 @@ function AuthenticatedProjectWorkspace({
   )
 }
 
-function ProjectSettingsPanel({
+export function ProjectSettingsPanel({
   onProjectDeleted,
   project,
   removeProject,
@@ -2214,6 +2188,7 @@ function ProjectSettingsPanel({
   const [form, setForm] = useState(() => createProjectFormState(project))
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
@@ -2240,7 +2215,10 @@ function ProjectSettingsPanel({
             size="sm"
             variant="outline"
             disabled={!isDirty}
-            onClick={() => setForm(savedForm)}
+            onClick={() => {
+              setForm(savedForm)
+              setSaveError(null)
+            }}
           >
             <RotateCcw />
             Revert
@@ -2249,14 +2227,29 @@ function ProjectSettingsPanel({
             size="sm"
             disabled={!isDirty}
             onClick={async () => {
-              const updatedProject = await updateProject({
-                projectId: project.id as never,
-                ...form,
-              })
-              const nextForm = createProjectFormState(updatedProject)
-              setSavedForm(nextForm)
-              setForm(nextForm)
-              router.replace(`/projects/${updatedProject.slug}/project`)
+              setSaveError(null)
+
+              const validation = projectInputSchema.safeParse(form)
+              if (!validation.success) {
+                setSaveError(
+                  validation.error.issues[0]?.message ??
+                    "Project settings are invalid."
+                )
+                return
+              }
+
+              try {
+                const updatedProject = await updateProject({
+                  projectId: project.id as never,
+                  ...form,
+                })
+                const nextForm = createProjectFormState(updatedProject)
+                setSavedForm(nextForm)
+                setForm(nextForm)
+                router.replace(`/projects/${updatedProject.slug}/project`)
+              } catch (error) {
+                setSaveError(getErrorMessage(error))
+              }
             }}
           >
             <Save />
@@ -2265,42 +2258,52 @@ function ProjectSettingsPanel({
         </div>
       </div>
 
+      {saveError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {saveError}
+        </p>
+      ) : null}
+
       <div className="grid gap-5">
         <Field label="Name">
           <Input
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({ ...current, name: event.target.value }))
-            }
+            }}
             value={form.name}
           />
         </Field>
         <Field label="Slug">
           <Input
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({ ...current, slug: event.target.value }))
-            }
+            }}
             value={form.slug}
           />
         </Field>
         <Field label="Description">
           <Textarea
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({
                 ...current,
                 description: event.target.value,
               }))
-            }
+            }}
             value={form.description}
           />
         </Field>
         <Field label="Project prompt">
           <Textarea
-            onChange={(event) =>
+            onChange={(event) => {
+              setSaveError(null)
               setForm((current) => ({
                 ...current,
                 projectPrompt: event.target.value,
               }))
-            }
+            }}
             value={form.projectPrompt}
           />
         </Field>
@@ -2398,7 +2401,7 @@ function ProjectSettingsPanel({
   )
 }
 
-function ScenarioEditor({
+export function ScenarioEditor({
   scenario,
   allScenarios,
   allPhases,

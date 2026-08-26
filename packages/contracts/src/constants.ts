@@ -5,3 +5,7 @@ export const MIN_SUPPORTED_CLI_VERSION = "0.3.0"
 export const CONVEX_TOKEN_TEMPLATE = "convex"
 export const OAUTH_CODE_TTL_MS = 5 * 60 * 1000
 export const OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7
+export const SLUG_MAX_LENGTH = 120
+export const PROJECT_NAME_MAX_LENGTH = 120
+export const PROJECT_DESCRIPTION_MAX_LENGTH = 1_500
+export const PROJECT_PROMPT_MAX_LENGTH = 12_000

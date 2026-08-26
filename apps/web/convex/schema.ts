@@ -24,6 +24,7 @@ export default defineSchema({
     slug: v.string(),
     description: v.string(),
     projectPrompt: v.string(),
+    runEnvironmentNames: v.optional(v.array(v.string())),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -65,8 +65,12 @@ export function parseRunEnvironment(input: {
   return parsed.data
 }
 
-export function listRunEnvironmentNames(runs: Array<{ environment?: string }>) {
-  return [...new Set(runs.flatMap((run) => run.environment ?? []))].sort()
+export function addRunEnvironmentName(names: string[], environment: string) {
+  return names.includes(environment) ? names : [...names, environment].sort()
+}
+
+export function removeRunEnvironmentName(names: string[], environment: string) {
+  return names.filter((name) => name !== environment)
 }
 
 export const listForProject = query({
@@ -138,12 +142,7 @@ export const listEnvironmentsForProject = query({
   args: { projectSlug: v.string() },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const runs = await ctx.db
-      .query("runs")
-      .withIndex("by_project", (query) => query.eq("projectId", project._id))
-      .collect()
-
-    return listRunEnvironmentNames(runs)
+    return project.runEnvironmentNames ?? []
   },
 })
 
@@ -211,6 +210,15 @@ export const create = mutation({
     )
     const environment = parseRunEnvironment(args)
     const timestamp = Date.now()
+    if (environment) {
+      const runEnvironmentNames = addRunEnvironmentName(
+        project.runEnvironmentNames ?? [],
+        environment.environment
+      )
+      if (runEnvironmentNames !== project.runEnvironmentNames) {
+        await ctx.db.patch(project._id, { runEnvironmentNames })
+      }
+    }
     const runId = await ctx.db.insert("runs", {
       projectId: project._id,
       ownerUserId: identity.subject,
@@ -559,8 +567,27 @@ export const remove = mutation({
     runId: v.id("runs"),
   },
   handler: async (ctx, args) => {
-    const { run } = await ensureRunOwnership(ctx, args.runId)
+    const { project, run } = await ensureRunOwnership(ctx, args.runId)
     const { deletedResultCount } = await deleteRunAndResults(ctx, run._id)
+
+    if (run.environment) {
+      const remainingRun = await ctx.db
+        .query("runs")
+        .withIndex("by_project_environment_started_at", (query) =>
+          query
+            .eq("projectId", project._id)
+            .eq("environment", run.environment)
+        )
+        .first()
+      if (!remainingRun) {
+        await ctx.db.patch(project._id, {
+          runEnvironmentNames: removeRunEnvironmentName(
+            project.runEnvironmentNames ?? [],
+            run.environment
+          ),
+        })
+      }
+    }
 
     return {
       deletedRunId: run._id,

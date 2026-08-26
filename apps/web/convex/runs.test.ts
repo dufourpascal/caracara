@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest"
 
 import { deleteRunAndResults } from "./lib"
-import { listRunEnvironmentNames, parseRunEnvironment } from "./runs"
+import {
+  addRunEnvironmentName,
+  parseRunEnvironment,
+  removeRunEnvironmentName,
+} from "./runs"
 
 describe("run environments", () => {
-  it("validates snapshots and ignores legacy runs in filter options", () => {
+  it("validates snapshots and maintains a distinct project summary", () => {
     expect(
       parseRunEnvironment({
         environment: "preview",
@@ -17,14 +21,14 @@ describe("run environments", () => {
     expect(() => parseRunEnvironment({ environment: "preview" })).toThrow(
       "provided together"
     )
+    expect(addRunEnvironmentName(["production"], "preview")).toEqual([
+      "preview",
+      "production",
+    ])
+    expect(addRunEnvironmentName(["preview"], "preview")).toEqual(["preview"])
     expect(
-      listRunEnvironmentNames([
-        {},
-        { environment: "production" },
-        { environment: "preview" },
-        { environment: "preview" },
-      ])
-    ).toEqual(["preview", "production"])
+      removeRunEnvironmentName(["preview", "production"], "preview")
+    ).toEqual(["production"])
   })
 })
 

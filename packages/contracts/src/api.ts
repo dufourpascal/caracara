@@ -143,13 +143,19 @@ const removePhaseRequestSchema = z.object({
   phaseId: z.string().min(1),
 })
 
+const scenarioDependencyIdsSchema = z
+  .array(z.string().min(1))
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "Dependency IDs must be unique.",
+  })
+
 const createScenarioRequestSchema = z.object({
   operation: z.literal("createScenario"),
   name: z.string().trim().min(1).max(120),
   slug: slugSchema.optional(),
   instructions: z.string().trim().min(1).max(20_000),
   phaseId: z.string().min(1).nullable().optional(),
-  dependsOnScenarioIds: z.array(z.string().min(1)).default([]),
+  dependsOnScenarioIds: scenarioDependencyIdsSchema.default([]),
 })
 
 const updateScenarioRequestSchema = z.object({
@@ -160,7 +166,7 @@ const updateScenarioRequestSchema = z.object({
   status: z.enum(["draft", "active"]).optional(),
   instructions: z.string().trim().min(1).max(20_000).optional(),
   phaseId: z.string().min(1).nullable().optional(),
-  dependsOnScenarioIds: z.array(z.string().min(1)).optional(),
+  dependsOnScenarioIds: scenarioDependencyIdsSchema.optional(),
 })
 
 const addCheckRequestSchema = z.object({

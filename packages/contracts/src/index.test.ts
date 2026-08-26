@@ -239,6 +239,23 @@ describe("contracts", () => {
         checkId,
       })
     ).toThrow(/name or expectation/i)
+    for (const request of [
+      {
+        operation: "createScenario",
+        name: "Pay",
+        instructions: "Complete checkout.",
+        dependsOnScenarioIds: ["scenario_1", "scenario_1"],
+      },
+      {
+        operation: "updateScenario",
+        scenarioId: "scenario_2",
+        dependsOnScenarioIds: ["scenario_1", "scenario_1"],
+      },
+    ]) {
+      expect(() => authoringRequestSchema.parse(request)).toThrow(
+        /dependency ids must be unique/i
+      )
+    }
 
     expect(
       authoringResponseSchema.parse({

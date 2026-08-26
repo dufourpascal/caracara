@@ -616,6 +616,13 @@ export async function ensureScenarioDependenciesReusable(
   projectId: Id<"projects">,
   scenarioIds: Id<"scenarios">[]
 ) {
+  if (new Set(scenarioIds).size !== scenarioIds.length) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Dependency IDs must be unique.",
+    })
+  }
+
   const scenarios = await getProjectScenarios(ctx, projectId)
   const scenarioIdSet = new Set(scenarios.map((scenario) => scenario._id))
 

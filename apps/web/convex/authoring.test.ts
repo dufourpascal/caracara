@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   assertProjectAuthoringUnlocked,
   ensurePhaseOwnership,
+  ensureScenarioDependenciesReusable,
   ensureScenarioOwnership,
   validateProjectDependencyGraph,
 } from "./lib"
@@ -117,6 +118,24 @@ describe("authoring validation", () => {
         data: {
           code: "validation_error",
           message: expect.stringMatching(/1 to 20 evaluation checks/i),
+        },
+      })
+    }
+  })
+
+  it("rejects duplicate dependency IDs before persisting them", async () => {
+    try {
+      await ensureScenarioDependenciesReusable(
+        {} as never,
+        "project-1" as never,
+        ["scenario-1", "scenario-1"] as never
+      )
+      throw new Error("Expected duplicate dependency validation to fail")
+    } catch (error) {
+      expect(error).toMatchObject({
+        data: {
+          code: "validation_error",
+          message: expect.stringMatching(/dependency ids must be unique/i),
         },
       })
     }

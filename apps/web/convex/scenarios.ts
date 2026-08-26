@@ -1,8 +1,9 @@
-import { v } from "convex/values"
+import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import {
+  assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
@@ -31,15 +32,21 @@ const evaluationCheckValidator = v.object({
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function validateEvaluationChecks(
+export function validateEvaluationChecks(
   status: "draft" | "active",
   checks: Array<{ id: string; name: string; expectation: string }>
 ) {
   if (checks.length > 20 || (status === "active" && checks.length === 0)) {
-    throw new Error("Active scenarios require 1 to 20 evaluation checks.")
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Active scenarios require 1 to 20 evaluation checks.",
+    })
   }
   if (new Set(checks.map((check) => check.id)).size !== checks.length) {
-    throw new Error("Evaluation check IDs must be unique.")
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Evaluation check IDs must be unique.",
+    })
   }
   for (const check of checks) {
     if (
@@ -49,9 +56,11 @@ function validateEvaluationChecks(
       check.expectation.trim() === "" ||
       check.expectation.length > 2_000
     ) {
-      throw new Error(
-        "Evaluation checks must have a valid ID, name, and expectation."
-      )
+      throw new ConvexError({
+        code: "validation_error",
+        message:
+          "Evaluation checks must have a valid ID, name, and expectation.",
+      })
     }
   }
 }
@@ -98,6 +107,7 @@ export const listSummariesForProject = query({
       name: scenario.name,
       slug: scenario.slug,
       status: scenario.status,
+      dependencyIds: scenario.dependencyIds,
       phaseId: scenario.phaseId ?? null,
       phaseName: scenario.phaseId
         ? (phaseById.get(scenario.phaseId as Id<"phases">)?.name ?? null)
@@ -263,6 +273,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     validateEvaluationChecks(args.status, args.evaluationChecks)
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const slug = await ensureUniqueScenarioSlug(
@@ -281,7 +292,10 @@ export const create = mutation({
       selectedPhaseId !== null &&
       !phases.some((phase) => phase._id === selectedPhaseId)
     ) {
-      throw new Error("Selected phase does not belong to this project")
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Selected phase does not belong to this project.",
+      })
     }
 
     const scenarioId = await ctx.db.insert("scenarios", {
@@ -323,6 +337,7 @@ export const ensureNavigationMetadataForProject = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
     const needsRebuild = scenarios.some(
       (scenario) =>
@@ -361,6 +376,7 @@ export const update = mutation({
       ctx,
       args.scenarioId
     )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const slug = await ensureUniqueScenarioSlug(
       ctx,
@@ -375,7 +391,10 @@ export const update = mutation({
       selectedPhaseId !== null &&
       !phases.some((phase) => phase._id === selectedPhaseId)
     ) {
-      throw new Error("Selected phase does not belong to this project")
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Selected phase does not belong to this project.",
+      })
     }
 
     const currentPhaseId = scenario.phaseId ?? null
@@ -419,6 +438,251 @@ export const update = mutation({
   },
 })
 
+export const updateDetails = mutation({
+  args: {
+    projectId: v.id("projects"),
+    scenarioId: v.id("scenarios"),
+    name: v.optional(v.string()),
+    slug: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("draft"), v.literal("active"))),
+    instructions: v.optional(v.string()),
+    phaseId: v.optional(v.union(v.null(), v.id("phases"))),
+    dependsOnScenarioIds: v.optional(v.array(v.id("scenarios"))),
+  },
+  handler: async (ctx, args) => {
+    if (
+      args.name === undefined &&
+      args.slug === undefined &&
+      args.status === undefined &&
+      args.instructions === undefined &&
+      args.phaseId === undefined &&
+      args.dependsOnScenarioIds === undefined
+    ) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "updateScenario requires at least one change.",
+      })
+    }
+
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId,
+      args.projectId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+    const phases = await getProjectPhases(ctx, project._id)
+    const status = args.status ?? scenario.status
+    const selectedPhaseId =
+      args.phaseId !== undefined ? args.phaseId : (scenario.phaseId ?? null)
+
+    validateEvaluationChecks(status, scenario.evaluationChecks)
+
+    if (
+      selectedPhaseId !== null &&
+      !phases.some((phase) => phase._id === selectedPhaseId)
+    ) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Selected phase does not belong to this project.",
+      })
+    }
+
+    const slug =
+      args.slug === undefined
+        ? scenario.slug
+        : await ensureUniqueScenarioSlug(
+            ctx,
+            project._id,
+            args.slug,
+            scenario._id
+          )
+    const isChangingPhase = (scenario.phaseId ?? null) !== selectedPhaseId
+
+    await ctx.db.patch(scenario._id, {
+      name: args.name ?? scenario.name,
+      slug,
+      status,
+      instructions: args.instructions ?? scenario.instructions,
+      phaseId: selectedPhaseId,
+      updatedAt: Date.now(),
+    })
+
+    if (isChangingPhase) {
+      await deleteDependenciesTouchingScenarioIds(ctx, project._id, [
+        scenario._id,
+      ])
+    }
+
+    if (args.dependsOnScenarioIds !== undefined) {
+      await replaceScenarioDependencies(ctx, {
+        projectId: project._id,
+        scenarioId: scenario._id,
+        dependsOnScenarioIds: args.dependsOnScenarioIds,
+      })
+    }
+
+    await validateProjectDependencyGraph(ctx, project._id)
+    await rebuildScenarioNavigationMetadata(ctx, project._id)
+
+    const updatedScenario = await ctx.db.get(scenario._id)
+    if (!updatedScenario) {
+      throw new Error("Failed to update scenario")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === selectedPhaseId) ?? null
+    )
+  },
+})
+
+export const addCheck = mutation({
+  args: {
+    projectId: v.id("projects"),
+    scenarioId: v.id("scenarios"),
+    check: evaluationCheckValidator,
+  },
+  handler: async (ctx, args) => {
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId,
+      args.projectId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+    const evaluationChecks = [...scenario.evaluationChecks, args.check]
+    validateEvaluationChecks(scenario.status, evaluationChecks)
+    await ctx.db.patch(scenario._id, {
+      evaluationChecks,
+      updatedAt: Date.now(),
+    })
+    const [updatedScenario, phases] = await Promise.all([
+      ctx.db.get(scenario._id),
+      getProjectPhases(ctx, project._id),
+    ])
+
+    if (!updatedScenario) {
+      throw new Error("Failed to add evaluation check")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === (updatedScenario.phaseId ?? null)) ??
+        null
+    )
+  },
+})
+
+export const removeCheck = mutation({
+  args: {
+    projectId: v.id("projects"),
+    scenarioId: v.id("scenarios"),
+    checkId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId,
+      args.projectId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+
+    if (!scenario.evaluationChecks.some((check) => check.id === args.checkId)) {
+      throw new ConvexError({
+        code: "not_found",
+        message: "Evaluation check not found.",
+      })
+    }
+
+    const evaluationChecks = scenario.evaluationChecks.filter(
+      (check) => check.id !== args.checkId
+    )
+    validateEvaluationChecks(scenario.status, evaluationChecks)
+    await ctx.db.patch(scenario._id, {
+      evaluationChecks,
+      updatedAt: Date.now(),
+    })
+    const [updatedScenario, phases] = await Promise.all([
+      ctx.db.get(scenario._id),
+      getProjectPhases(ctx, project._id),
+    ])
+
+    if (!updatedScenario) {
+      throw new Error("Failed to remove evaluation check")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === (updatedScenario.phaseId ?? null)) ??
+        null
+    )
+  },
+})
+
+export const updateCheck = mutation({
+  args: {
+    projectId: v.id("projects"),
+    scenarioId: v.id("scenarios"),
+    checkId: v.string(),
+    name: v.optional(v.string()),
+    expectation: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.name === undefined && args.expectation === undefined) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "updateCheck requires a name or expectation.",
+      })
+    }
+
+    const { project, scenario } = await ensureScenarioOwnership(
+      ctx,
+      args.scenarioId,
+      args.projectId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
+    let found = false
+    const evaluationChecks = scenario.evaluationChecks.map((check) => {
+      if (check.id !== args.checkId) {
+        return check
+      }
+
+      found = true
+      return {
+        ...check,
+        name: args.name ?? check.name,
+        expectation: args.expectation ?? check.expectation,
+      }
+    })
+
+    if (!found) {
+      throw new ConvexError({
+        code: "not_found",
+        message: "Evaluation check not found.",
+      })
+    }
+
+    validateEvaluationChecks(scenario.status, evaluationChecks)
+    await ctx.db.patch(scenario._id, {
+      evaluationChecks,
+      updatedAt: Date.now(),
+    })
+    const [updatedScenario, phases] = await Promise.all([
+      ctx.db.get(scenario._id),
+      getProjectPhases(ctx, project._id),
+    ])
+
+    if (!updatedScenario) {
+      throw new Error("Failed to update evaluation check")
+    }
+
+    return toScenario(
+      updatedScenario,
+      phases.find((phase) => phase._id === (updatedScenario.phaseId ?? null)) ??
+        null
+    )
+  },
+})
+
 export const remove = mutation({
   args: {
     scenarioId: v.id("scenarios"),
@@ -428,6 +692,7 @@ export const remove = mutation({
       ctx,
       args.scenarioId
     )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
 
     const dependencies = await getProjectDependencies(ctx, project._id)
     const relatedDependencies = dependencies.filter(

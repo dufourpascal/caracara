@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   fetchProjects,
+  submitAuthoringOperation,
   submitScenarioResult,
   uploadRunEvidence,
 } from "./api.js"
@@ -75,6 +76,42 @@ describe("api client", () => {
           "x-caracara-run-id": "run-1",
           "x-caracara-result-id": "result-1",
           "x-caracara-byte-size": "12",
+        }),
+      })
+    )
+  })
+
+  it("submits a validated authoring operation", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        operation: "removePhase",
+        result: {
+          deletedPhaseId: "phase-1",
+          deletedPhaseName: "Setup",
+          unassignedScenarioCount: 1,
+        },
+      }),
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await submitAuthoringOperation({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.4.0",
+      projectSlug: "demo",
+      payload: { operation: "removePhase", phaseId: "phase-1" },
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/api/v3/projects/demo/authoring",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          operation: "removePhase",
+          phaseId: "phase-1",
         }),
       })
     )

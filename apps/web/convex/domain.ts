@@ -79,30 +79,7 @@ export function assertValidDependencies(
     }
   }
 
-  const groupedScenarios = new Map<string, ScenarioNode[]>()
-
-  for (const scenario of scenarios) {
-    const phaseId = normalizePhaseId(scenario.phaseId)
-
-    if (!phaseId) {
-      continue
-    }
-
-    const current = groupedScenarios.get(phaseId) ?? []
-    current.push(scenario)
-    groupedScenarios.set(phaseId, current)
-  }
-
-  for (const phaseScenarios of groupedScenarios.values()) {
-    const scenarioIds = new Set(phaseScenarios.map((scenario) => scenario.id))
-    const phaseDependencies = dependencies.filter(
-      (dependency) =>
-        scenarioIds.has(dependency.scenarioId) &&
-        scenarioIds.has(dependency.dependsOnScenarioId)
-    )
-
-    buildExecutionOrder(phaseScenarios, phaseDependencies)
-  }
+  buildExecutionOrder(scenarios, dependencies)
 }
 
 export function filterDependenciesForPhaseExecution(

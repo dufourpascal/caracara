@@ -56,3 +56,8 @@ Run and project deletion remove screenshot objects before their attachment and r
 Checks remain embedded in their parent documents.
 
 Authored checks have no independent lifecycle, so scenarios store them as an array. Scenario results store an immutable copy and a result array keyed by check ID.
+
+### DATA_12
+Authored scenarios have one live copy.
+
+CLI and web authoring overwrite the current scenario or phase record. The data model has no scenario-version, proposal, activation, audit, or undo tables. Existing scenario-result snapshots remain execution records and are not an authoring history.

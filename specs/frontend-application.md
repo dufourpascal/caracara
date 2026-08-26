@@ -33,7 +33,7 @@ The editor provides an ordered check list with add, edit, delete, and move contr
 ### FRONTEND_07
 Dependencies are managed through a searchable dropdown-style control built from shadcn primitives.
 
-In v1, users should assign scenario dependencies through a simple searchable selection UI, likely based on shadcn `Popover` plus `Command` or an equivalent shared combobox pattern, rather than through a full graph editor or visualization workflow.
+In v1, users should assign scenario dependencies through a simple searchable selection UI, likely based on shadcn `Popover` plus `Command` or an equivalent shared combobox pattern, rather than through a full graph editor or visualization workflow. The control disables dependencies that would create a direct or transitive cycle, and the editor shows backend validation failures if the graph changes concurrently.
 
 ### FRONTEND_08
 The UI must expose draft versus active scenario state.

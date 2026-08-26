@@ -5,6 +5,8 @@ import birdNames from "./birds-safe.json" with { type: "json" }
 import {
   API_VERSION,
   MIN_SUPPORTED_CLI_VERSION,
+  authoringRequestSchema,
+  authoringResponseSchema,
   authTokenResponseSchema,
   cliConfigSchema,
   executionPlanResponseSchema,
@@ -185,6 +187,86 @@ describe("contracts", () => {
         userEmail: null,
       })
     ).toThrow()
+  })
+
+  it("validates the eight narrow authoring operations", () => {
+    const checkId = "00000000-0000-4000-8000-000000000001"
+    const requests = [
+      { operation: "addPhase", name: "Checkout" },
+      { operation: "editPhase", phaseId: "phase_1", name: "Purchase" },
+      { operation: "removePhase", phaseId: "phase_1" },
+      {
+        operation: "createScenario",
+        name: "Pay",
+        instructions: "Complete checkout.",
+      },
+      {
+        operation: "updateScenario",
+        scenarioId: "scenario_1",
+        status: "active",
+      },
+      {
+        operation: "addCheck",
+        scenarioId: "scenario_1",
+        check: {
+          id: checkId,
+          name: "Receipt",
+          expectation: "The receipt is visible.",
+        },
+      },
+      { operation: "removeCheck", scenarioId: "scenario_1", checkId },
+      {
+        operation: "updateCheck",
+        scenarioId: "scenario_1",
+        checkId,
+        expectation: "The VAT total is visible.",
+      },
+    ]
+
+    expect(
+      requests.map((request) => authoringRequestSchema.parse(request))
+    ).toHaveLength(8)
+    expect(() =>
+      authoringRequestSchema.parse({
+        operation: "updateScenario",
+        scenarioId: "scenario_1",
+      })
+    ).toThrow(/at least one change/i)
+    expect(() =>
+      authoringRequestSchema.parse({
+        operation: "updateCheck",
+        scenarioId: "scenario_1",
+        checkId,
+      })
+    ).toThrow(/name or expectation/i)
+    for (const request of [
+      {
+        operation: "createScenario",
+        name: "Pay",
+        instructions: "Complete checkout.",
+        dependsOnScenarioIds: ["scenario_1", "scenario_1"],
+      },
+      {
+        operation: "updateScenario",
+        scenarioId: "scenario_2",
+        dependsOnScenarioIds: ["scenario_1", "scenario_1"],
+      },
+    ]) {
+      expect(() => authoringRequestSchema.parse(request)).toThrow(
+        /dependency ids must be unique/i
+      )
+    }
+
+    expect(
+      authoringResponseSchema.parse({
+        operation: "removePhase",
+        result: {
+          deletedPhaseId: "phase_1",
+          deletedPhaseName: "Checkout",
+          unassignedScenarioCount: 2,
+        },
+      }).operation
+    ).toBe("removePhase")
   })
 
   it("normalizes and deduplicates slugs", () => {

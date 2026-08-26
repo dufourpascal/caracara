@@ -2,6 +2,8 @@ import {
   type ApiError,
   API_NAMESPACE,
   API_VERSION_HEADER,
+  authoringRequestSchema,
+  authoringResponseSchema,
   createRunRequestSchema,
   createRunResponseSchema,
   executionPlanResponseSchema,
@@ -32,10 +34,7 @@ function isRetryableStatus(status: number) {
   return status === 408 || status === 429 || status >= 500
 }
 
-async function fetchWithTransientRetries(
-  input: string,
-  init: RequestInit
-) {
+async function fetchWithTransientRetries(input: string, init: RequestInit) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await fetch(input, init)
@@ -152,6 +151,25 @@ export async function fetchSingleScenario(args: {
     version: args.version,
     accessToken: args.accessToken,
     schema: singleScenarioResponseSchema,
+  })
+}
+
+export async function submitAuthoringOperation(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  payload: Parameters<typeof authoringRequestSchema.parse>[0]
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/authoring`,
+    version: args.version,
+    accessToken: args.accessToken,
+    init: {
+      method: "POST",
+      body: JSON.stringify(authoringRequestSchema.parse(args.payload)),
+    },
+    schema: authoringResponseSchema,
   })
 }
 

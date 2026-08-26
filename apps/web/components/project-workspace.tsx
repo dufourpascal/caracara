@@ -85,6 +85,7 @@ import {
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
+import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
 type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
@@ -371,6 +372,18 @@ function getAutoScenarioSlug(name: string) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong."
+}
+
+async function runWithErrorMessage(
+  action: () => Promise<void>,
+  setError: (message: string | null) => void
+) {
+  setError(null)
+  try {
+    await action()
+  } catch (error) {
+    setError(getErrorMessage(error))
+  }
 }
 
 function formatTimestamp(value: number | null) {
@@ -914,6 +927,7 @@ function AuthenticatedProjectWorkspace({
   const [runPageSize, setRunPageSize] = useState<10 | 20 | 50>(20)
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
+  const [phaseError, setPhaseError] = useState<string | null>(null)
   const normalizedScenarioSearch = scenarioSearch.trim()
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
@@ -1743,16 +1757,23 @@ function AuthenticatedProjectWorkspace({
                   <Button
                     size="icon-sm"
                     onClick={async () => {
-                      const created = await createPhase({
-                        projectId: project.id as never,
-                        name: `Phase ${(phases?.length ?? 0) + 1}`,
-                      })
-                      setSelectedPhaseId(created.id)
+                      await runWithErrorMessage(async () => {
+                        const created = await createPhase({
+                          projectId: project.id as never,
+                          name: `Phase ${(phases?.length ?? 0) + 1}`,
+                        })
+                        setSelectedPhaseId(created.id)
+                      }, setPhaseError)
                     }}
                   >
                     <Plus />
                   </Button>
                 </div>
+                {phaseError ? (
+                  <p className="mt-3 text-sm text-destructive" role="alert">
+                    {phaseError}
+                  </p>
+                ) : null}
               </div>
               <div className="flex-1 overflow-auto px-3 py-3">
                 {phases === undefined ? (
@@ -1768,11 +1789,13 @@ function AuthenticatedProjectWorkspace({
                       <Button
                         size="sm"
                         onClick={async () => {
-                          const created = await createPhase({
-                            projectId: project.id as never,
-                            name: "Phase 1",
-                          })
-                          setSelectedPhaseId(created.id)
+                          await runWithErrorMessage(async () => {
+                            const created = await createPhase({
+                              projectId: project.id as never,
+                              name: "Phase 1",
+                            })
+                            setSelectedPhaseId(created.id)
+                          }, setPhaseError)
                         }}
                       >
                         <Plus />
@@ -1784,13 +1807,15 @@ function AuthenticatedProjectWorkspace({
                   <SortableList
                     items={phases}
                     onReorder={async (items) => {
-                      const updated = await reorderPhases({
-                        projectId: project.id as never,
-                        phaseIds: items.map((item) => item.id as never),
-                      })
-                      if (!selectedPhaseId) {
-                        setSelectedPhaseId(updated[0]?.id ?? null)
-                      }
+                      await runWithErrorMessage(async () => {
+                        const updated = await reorderPhases({
+                          projectId: project.id as never,
+                          phaseIds: items.map((item) => item.id as never),
+                        })
+                        if (!selectedPhaseId) {
+                          setSelectedPhaseId(updated[0]?.id ?? null)
+                        }
+                      }, setPhaseError)
                     }}
                     renderItem={({ dragHandle, isDragging, item }) => (
                       <div
@@ -1839,6 +1864,7 @@ function AuthenticatedProjectWorkspace({
               <PhaseEditor
                 allScenarios={scenarioSummaries ?? []}
                 key={`${selectedPhase.id}:${selectedPhase.updatedAt}`}
+                onError={setPhaseError}
                 phase={selectedPhase}
                 removePhase={removePhase}
                 setSelectedPhaseId={setSelectedPhaseId}
@@ -2402,6 +2428,7 @@ function ScenarioEditor({
     id: string
     name: string
     slug: string
+    dependencyIds: string[]
     phaseId?: string | null
   }>
   allPhases: Array<{
@@ -2421,6 +2448,7 @@ function ScenarioEditor({
   )
   const [form, setForm] = useState(() => createScenarioFormState(scenario))
   const [dependencySearch, setDependencySearch] = useState("")
+  const [saveError, setSaveError] = useState<string | null>(null)
   const isDraftScenario = !scenario.id
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
@@ -2441,8 +2469,13 @@ function ScenarioEditor({
 
   return (
     <div className="grid h-full content-start gap-6 px-6 py-6">
-      <div className="flex items-center justify-end gap-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        {saveError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {saveError}
+          </p>
+        ) : null}
+        <div className="ml-auto flex items-center gap-2">
           {isDraftScenario ? null : (
             <Button
               size="sm"
@@ -2456,8 +2489,10 @@ function ScenarioEditor({
                   return
                 }
 
-                await removeScenario?.({ scenarioId: scenario.id as never })
-                router.push(`/projects/${projectSlug}/scenarios?mode=edit`)
+                await runWithErrorMessage(async () => {
+                  await removeScenario?.({ scenarioId: scenario.id as never })
+                  router.push(`/projects/${projectSlug}/scenarios?mode=edit`)
+                }, setSaveError)
               }}
             >
               <Trash2 />
@@ -2468,7 +2503,10 @@ function ScenarioEditor({
             size="sm"
             variant="outline"
             disabled={!isDirty}
-            onClick={() => setForm(savedForm)}
+            onClick={() => {
+              setForm(savedForm)
+              setSaveError(null)
+            }}
           >
             <RotateCcw />
             Revert
@@ -2477,11 +2515,38 @@ function ScenarioEditor({
             size="sm"
             disabled={!isDirty || hasInvalidEvaluationChecks}
             onClick={async () => {
-              if (isDraftScenario) {
-                const created = await createScenario({
-                  projectId: projectId as never,
+              setSaveError(null)
+
+              try {
+                if (isDraftScenario) {
+                  const created = await createScenario({
+                    projectId: projectId as never,
+                    name: form.name,
+                    slug: form.slug.trim() === "" ? undefined : form.slug,
+                    status: form.status,
+                    instructions: form.instructions,
+                    evaluationChecks: form.evaluationChecks,
+                    phaseId: form.phaseId ? (form.phaseId as never) : null,
+                    dependsOnScenarioIds: form.dependencyIds.map(
+                      (dependencyId) => dependencyId as never
+                    ),
+                  })
+                  router.replace(
+                    getScenarioSelectionHref({
+                      mode: "edit",
+                      phaseFilter:
+                        created.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
+                      projectSlug,
+                      scenarioSlug: created.slug,
+                    })
+                  )
+                  return
+                }
+
+                const updated = await updateScenario({
+                  scenarioId: scenario.id as never,
                   name: form.name,
-                  slug: form.slug.trim() === "" ? undefined : form.slug,
+                  slug: form.slug,
                   status: form.status,
                   instructions: form.instructions,
                   evaluationChecks: form.evaluationChecks,
@@ -2490,40 +2555,19 @@ function ScenarioEditor({
                     (dependencyId) => dependencyId as never
                   ),
                 })
+                setSavedForm(form)
                 router.replace(
                   getScenarioSelectionHref({
                     mode: "edit",
                     phaseFilter:
-                      created.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
+                      updated.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
                     projectSlug,
-                    scenarioSlug: created.slug,
+                    scenarioSlug: updated.slug,
                   })
                 )
-                return
+              } catch (error) {
+                setSaveError(getErrorMessage(error))
               }
-
-              const updated = await updateScenario({
-                scenarioId: scenario.id as never,
-                name: form.name,
-                slug: form.slug,
-                status: form.status,
-                instructions: form.instructions,
-                evaluationChecks: form.evaluationChecks,
-                phaseId: form.phaseId ? (form.phaseId as never) : null,
-                dependsOnScenarioIds: form.dependencyIds.map(
-                  (dependencyId) => dependencyId as never
-                ),
-              })
-              setSavedForm(form)
-              router.replace(
-                getScenarioSelectionHref({
-                  mode: "edit",
-                  phaseFilter:
-                    updated.phaseId ?? UNASSIGNED_SCENARIO_PHASE_FILTER,
-                  projectSlug,
-                  scenarioSlug: updated.slug,
-                })
-              )
             }}
           >
             <Save />
@@ -2832,11 +2876,22 @@ function ScenarioEditor({
               ) : (
                 visibleDependencies.map((dependency) => {
                   const checked = form.dependencyIds.includes(dependency.id)
+                  const createsCycle =
+                    !checked &&
+                    wouldCreateDependencyCycle(
+                      allScenarios,
+                      scenario.id,
+                      dependency.id
+                    )
+                  const cycleWarningId = `dependency-${dependency.id}-cycle`
 
                   return (
                     <label
                       key={dependency.id}
-                      className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
+                      className={cn(
+                        "flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0",
+                        createsCycle && "text-muted-foreground"
+                      )}
                     >
                       <span>
                         <span className="block text-foreground">
@@ -2845,9 +2900,21 @@ function ScenarioEditor({
                         <span className="font-mono text-[11px] text-muted-foreground">
                           {dependency.slug}
                         </span>
+                        {createsCycle ? (
+                          <span
+                            className="block text-xs text-destructive"
+                            id={cycleWarningId}
+                          >
+                            Would create a cycle
+                          </span>
+                        ) : null}
                       </span>
                       <input
+                        aria-describedby={
+                          createsCycle ? cycleWarningId : undefined
+                        }
                         checked={checked}
+                        disabled={createsCycle}
                         onChange={(event) =>
                           setForm((current) => ({
                             ...current,
@@ -2876,6 +2943,7 @@ function ScenarioEditor({
 function PhaseEditor({
   phase,
   allScenarios,
+  onError,
   removePhase,
   setSelectedPhaseId,
   updatePhase,
@@ -2892,6 +2960,7 @@ function PhaseEditor({
     slug: string
     phaseId?: string | null
   }>
+  onError: (message: string | null) => void
   removePhase: ReturnType<typeof useMutation<typeof api.phases.remove>>
   setSelectedPhaseId: (value: string | null) => void
   updatePhase: ReturnType<typeof useMutation<typeof api.phases.update>>
@@ -2919,8 +2988,10 @@ function PhaseEditor({
                 return
               }
 
-              await removePhase({ phaseId: phase.id as never })
-              setSelectedPhaseId(null)
+              await runWithErrorMessage(async () => {
+                await removePhase({ phaseId: phase.id as never })
+                setSelectedPhaseId(null)
+              }, onError)
             }}
           >
             <Trash2 />
@@ -2930,7 +3001,10 @@ function PhaseEditor({
             size="sm"
             variant="outline"
             disabled={!isDirty}
-            onClick={() => setForm(savedForm)}
+            onClick={() => {
+              setForm(savedForm)
+              onError(null)
+            }}
           >
             <RotateCcw />
             Revert
@@ -2939,13 +3013,15 @@ function PhaseEditor({
             size="sm"
             disabled={!isDirty}
             onClick={async () => {
-              const updated = await updatePhase({
-                phaseId: phase.id as never,
-                name: form.name,
-              })
-              const nextForm = createPhaseFormState(updated)
-              setSavedForm(nextForm)
-              setForm(nextForm)
+              await runWithErrorMessage(async () => {
+                const updated = await updatePhase({
+                  phaseId: phase.id as never,
+                  name: form.name,
+                })
+                const nextForm = createPhaseFormState(updated)
+                setSavedForm(nextForm)
+                setForm(nextForm)
+              }, onError)
             }}
           >
             <Save />

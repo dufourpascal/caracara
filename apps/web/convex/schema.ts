@@ -102,7 +102,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_project_started_at", ["projectId", "startedAt"])
-    .index("by_project", ["projectId"]),
+    .index("by_project", ["projectId"])
+    .index("by_project_status", ["projectId", "status"]),
   scenarioResults: defineTable({
     runId: v.id("runs"),
     scenarioId: v.id("scenarios"),

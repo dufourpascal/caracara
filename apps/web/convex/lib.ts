@@ -142,6 +142,25 @@ export async function requireProjectOwnerBySlug(ctx: Ctx, slug: string) {
   return { identity, project }
 }
 
+export async function assertProjectAuthoringUnlocked(
+  ctx: Ctx,
+  projectId: Id<"projects">
+) {
+  const runningRun = await ctx.db
+    .query("runs")
+    .withIndex("by_project_status", (query) =>
+      query.eq("projectId", projectId).eq("status", "running")
+    )
+    .first()
+
+  if (runningRun) {
+    throw new ConvexError({
+      code: "conflict",
+      message: `Authoring is unavailable while run ${runningRun.name} is running.`,
+    })
+  }
+}
+
 export function toProject(project: Doc<"projects">) {
   return {
     id: project._id,
@@ -597,6 +616,13 @@ export async function ensureScenarioDependenciesReusable(
   projectId: Id<"projects">,
   scenarioIds: Id<"scenarios">[]
 ) {
+  if (new Set(scenarioIds).size !== scenarioIds.length) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Dependency IDs must be unique.",
+    })
+  }
+
   const scenarios = await getProjectScenarios(ctx, projectId)
   const scenarioIdSet = new Set(scenarios.map((scenario) => scenario._id))
 
@@ -684,7 +710,21 @@ export async function validateProjectDependencyGraph(
   ctx: Ctx,
   projectId: Id<"projects">
 ) {
-  await getExecutionPlan(ctx, projectId)
+  try {
+    await getExecutionPlan(ctx, projectId)
+  } catch (error) {
+    if (error instanceof ConvexError) {
+      throw error
+    }
+
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Scenario dependencies are invalid.",
+    })
+  }
 }
 
 export async function getScenarioBySlug(
@@ -728,17 +768,36 @@ export async function getRunById(ctx: Ctx, runId: Id<"runs">) {
 
 export async function ensureScenarioOwnership(
   ctx: Ctx,
-  scenarioId: Id<"scenarios">
+  scenarioId: Id<"scenarios">,
+  expectedProjectId?: Id<"projects">
 ) {
   const scenario = await getScenarioById(ctx, scenarioId)
   const { project } = await requireProjectOwnerById(ctx, scenario.projectId)
 
+  if (expectedProjectId !== undefined && project._id !== expectedProjectId) {
+    throw new ConvexError({
+      code: "unauthorized",
+      message: "Scenario does not belong to this project.",
+    })
+  }
+
   return { project, scenario }
 }
 
-export async function ensurePhaseOwnership(ctx: Ctx, phaseId: Id<"phases">) {
+export async function ensurePhaseOwnership(
+  ctx: Ctx,
+  phaseId: Id<"phases">,
+  expectedProjectId?: Id<"projects">
+) {
   const phase = await getPhaseById(ctx, phaseId)
   const { project } = await requireProjectOwnerById(ctx, phase.projectId)
+
+  if (expectedProjectId !== undefined && project._id !== expectedProjectId) {
+    throw new ConvexError({
+      code: "unauthorized",
+      message: "Phase does not belong to this project.",
+    })
+  }
 
   return { project, phase }
 }

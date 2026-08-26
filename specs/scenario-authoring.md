@@ -49,3 +49,18 @@ In normal mode, a scenario's dependencies must run fully before the scenario its
 Scenario edits should preserve historical execution integrity.
 
 When a scenario is changed, the system must ensure past runs still reference the exact scenario content that was executed at that time so scenario definitions remain maintainable durable assets.
+
+### AUTHORING_11
+The CLI exposes eight narrow authoring commands.
+
+The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. They update live records directly and return structured results. The CLI does not expose a generic patch or scenario deletion command.
+
+### AUTHORING_12
+CLI authoring does not add a version or review workflow.
+
+Commands do not create proposals, authored versions, delayed activations, or undo records. The existing scenario `draft` status still describes whether a live scenario is runnable; it is not an authoring proposal.
+
+### AUTHORING_13
+Authoring is locked while a project run is running.
+
+Every phase and scenario write is rejected while the project has a running run. Changes apply immediately when no run is active. This server-side rule applies to both web and CLI callers so an evaluation agent cannot change its own requirements.

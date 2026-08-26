@@ -2,6 +2,7 @@ import { z } from "zod"
 
 import { API_VERSION, MIN_SUPPORTED_CLI_VERSION } from "./constants.js"
 import {
+  evaluationCheckSchema,
   nullableStringSchema,
   phaseSchema,
   projectSchema,
@@ -125,6 +126,138 @@ export const singleScenarioResponseSchema = z.object({
   }),
   scenario: orderedScenarioSchema,
 })
+
+const addPhaseRequestSchema = z.object({
+  operation: z.literal("addPhase"),
+  name: z.string().trim().min(1).max(120),
+})
+
+const editPhaseRequestSchema = z.object({
+  operation: z.literal("editPhase"),
+  phaseId: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+})
+
+const removePhaseRequestSchema = z.object({
+  operation: z.literal("removePhase"),
+  phaseId: z.string().min(1),
+})
+
+const scenarioDependencyIdsSchema = z
+  .array(z.string().min(1))
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "Dependency IDs must be unique.",
+  })
+
+const createScenarioRequestSchema = z.object({
+  operation: z.literal("createScenario"),
+  name: z.string().trim().min(1).max(120),
+  slug: slugSchema.optional(),
+  instructions: z.string().trim().min(1).max(20_000),
+  phaseId: z.string().min(1).nullable().optional(),
+  dependsOnScenarioIds: scenarioDependencyIdsSchema.default([]),
+})
+
+const updateScenarioRequestSchema = z.object({
+  operation: z.literal("updateScenario"),
+  scenarioId: z.string().min(1),
+  name: z.string().trim().min(1).max(120).optional(),
+  slug: slugSchema.optional(),
+  status: z.enum(["draft", "active"]).optional(),
+  instructions: z.string().trim().min(1).max(20_000).optional(),
+  phaseId: z.string().min(1).nullable().optional(),
+  dependsOnScenarioIds: scenarioDependencyIdsSchema.optional(),
+})
+
+const addCheckRequestSchema = z.object({
+  operation: z.literal("addCheck"),
+  scenarioId: z.string().min(1),
+  check: evaluationCheckSchema,
+})
+
+const removeCheckRequestSchema = z.object({
+  operation: z.literal("removeCheck"),
+  scenarioId: z.string().min(1),
+  checkId: z.string().uuid(),
+})
+
+const updateCheckRequestSchema = z.object({
+  operation: z.literal("updateCheck"),
+  scenarioId: z.string().min(1),
+  checkId: z.string().uuid(),
+  name: z.string().trim().min(1).max(120).optional(),
+  expectation: z.string().trim().min(1).max(2_000).optional(),
+})
+
+export const authoringRequestSchema = z
+  .discriminatedUnion("operation", [
+    addPhaseRequestSchema,
+    editPhaseRequestSchema,
+    removePhaseRequestSchema,
+    createScenarioRequestSchema,
+    updateScenarioRequestSchema,
+    addCheckRequestSchema,
+    removeCheckRequestSchema,
+    updateCheckRequestSchema,
+  ])
+  .superRefine((value, ctx) => {
+    if (
+      value.operation === "updateScenario" &&
+      value.name === undefined &&
+      value.slug === undefined &&
+      value.status === undefined &&
+      value.instructions === undefined &&
+      value.phaseId === undefined &&
+      value.dependsOnScenarioIds === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "updateScenario requires at least one change.",
+      })
+    }
+
+    if (
+      value.operation === "updateCheck" &&
+      value.name === undefined &&
+      value.expectation === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "updateCheck requires a name or expectation.",
+      })
+    }
+  })
+
+const phaseAuthoringResponseSchema = z.object({
+  operation: z.enum(["addPhase", "editPhase"]),
+  result: phaseSchema,
+})
+
+const removePhaseResponseSchema = z.object({
+  operation: z.literal("removePhase"),
+  result: z.object({
+    deletedPhaseId: z.string().min(1),
+    deletedPhaseName: z.string().min(1),
+    unassignedScenarioCount: z.number().int().nonnegative(),
+  }),
+})
+
+const scenarioAuthoringResponseSchema = z.object({
+  operation: z.enum([
+    "createScenario",
+    "updateScenario",
+    "addCheck",
+    "removeCheck",
+    "updateCheck",
+  ]),
+  result: scenarioSchema,
+})
+
+export const authoringResponseSchema = z.union([
+  phaseAuthoringResponseSchema,
+  removePhaseResponseSchema,
+  scenarioAuthoringResponseSchema,
+])
 
 export const createRunRequestSchema = z.object({
   mode: runModeSchema,
@@ -256,6 +389,8 @@ export function parseApiError(input: unknown) {
 export type ApiError = z.infer<typeof apiErrorSchema>
 export type CliConfig = z.infer<typeof cliConfigSchema>
 export type ProjectSummary = z.infer<typeof projectSummarySchema>
+export type AuthoringRequest = z.infer<typeof authoringRequestSchema>
+export type AuthoringResponse = z.infer<typeof authoringResponseSchema>
 export type OrderedScenario = z.infer<typeof orderedScenarioSchema>
 export type RunnablePhase = z.infer<typeof runnablePhaseSchema>
 export type RunEvidenceUploadResponse = z.infer<

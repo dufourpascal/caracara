@@ -13,7 +13,7 @@ Caracara Score repeatedly evaluates whether an application behaves correctly und
 ### SCOPE_03
 The product consists of two primary surfaces: a web app and a local CLI.
 
-The web app is used to author, organize, version, and inspect scenarios and results, while the local `caracara` npm package is used to fetch scenarios, execute them against a locally running application, and return results.
+The web app is used to author, organize, and inspect scenarios and results. The local `caracara` npm package can also author scenarios through narrow commands, fetch scenarios, execute them against a locally running application, and return results.
 
 ### SCOPE_04
 Scenarios are the core unit of evaluation.
@@ -56,9 +56,9 @@ The product stores scenario definitions and evaluation records as durable assets
 Users can treat scenarios, checks, dependencies, and run outcomes as persistent project artifacts.
 
 ### SCOPE_12
-The initial version focuses on human-authored scenarios.
+The initial version keeps scenario authoring under direct user control.
 
-In v1, scenarios are explicitly created and edited by users in the web app rather than automatically generated from codebases, logs, or documentation, though future versions may add assisted generation.
+Users can author scenarios in the web app or direct an interactive AI agent to invoke the narrow CLI authoring commands. Evaluation agents cannot author while their project has a running run.
 
 ### SCOPE_13
 The initial version focuses on single-tenant execution ownership per user or workspace.

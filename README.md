@@ -84,6 +84,21 @@ Caracara runs Codex through `@openai/codex-sdk`. The SDK uses the existing local
 
 When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
 
+## CLI scenario authoring
+
+The logged-in CLI can update the selected project directly:
+
+```bash
+caracara addPhase --name "Checkout"
+caracara createScenario --name "Complete checkout" --instructions "Buy one item."
+caracara addCheck --scenario complete-checkout --name "Receipt" --expectation "The receipt is visible."
+caracara updateCheck --scenario complete-checkout --check "Receipt" --expectation "The receipt shows VAT."
+```
+
+The complete mutation set is `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. Phase references accept an ID, order, or exact name. Check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous.
+
+Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. The server rejects phase and scenario writes while the project has a running run.
+
 ## Verify the flow
 
 1. Visit `/` and confirm the signed-out shell renders.

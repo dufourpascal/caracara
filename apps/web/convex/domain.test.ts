@@ -72,6 +72,19 @@ describe("convex domain helpers", () => {
         { scenarioId: "b", dependsOnScenarioId: "a" },
       ])
     ).toThrow(/cycle/i)
+
+    expect(() =>
+      assertValidDependencies(
+        scenarios.slice(0, 2).map((scenario) => ({
+          ...scenario,
+          phaseId: null,
+        })),
+        [
+          { scenarioId: "a", dependsOnScenarioId: "b" },
+          { scenarioId: "b", dependsOnScenarioId: "a" },
+        ]
+      )
+    ).toThrow(/cycle/i)
   })
 
   it("ignores unassigned dependencies for phase execution", () => {

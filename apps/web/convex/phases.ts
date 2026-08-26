@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
 import {
+  assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
   ensurePhaseOwnership,
   getProjectPhases,
@@ -41,6 +42,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const phaseId = await ctx.db.insert("phases", {
@@ -62,11 +64,17 @@ export const create = mutation({
 
 export const update = mutation({
   args: {
+    projectId: v.optional(v.id("projects")),
     phaseId: v.id("phases"),
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const { phase } = await ensurePhaseOwnership(ctx, args.phaseId)
+    const { project, phase } = await ensurePhaseOwnership(
+      ctx,
+      args.phaseId,
+      args.projectId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     await ctx.db.patch(phase._id, {
       name: args.name,
       updatedAt: Date.now(),
@@ -88,6 +96,7 @@ export const reorder = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
 
     if (phases.length !== args.phaseIds.length) {
@@ -132,10 +141,16 @@ export const reorder = mutation({
 
 export const remove = mutation({
   args: {
+    projectId: v.optional(v.id("projects")),
     phaseId: v.id("phases"),
   },
   handler: async (ctx, args) => {
-    const { project, phase } = await ensurePhaseOwnership(ctx, args.phaseId)
+    const { project, phase } = await ensurePhaseOwnership(
+      ctx,
+      args.phaseId,
+      args.projectId
+    )
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
     const affectedScenarios = scenarios.filter(
       (scenario) => (scenario.phaseId ?? null) === phase._id

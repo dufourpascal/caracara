@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
 import {
+  assertProjectAuthoringUnlocked,
   deleteProjectCascade,
   ensureUniqueProjectSlug,
   requireIdentity,
@@ -120,6 +121,7 @@ export const remove = mutation({
       })
     }
 
+    await assertProjectAuthoringUnlocked(ctx, project._id)
     const result = await deleteProjectCascade(ctx, project._id)
 
     return {

@@ -13,6 +13,7 @@ import {
   getCheckPassRate,
   getRunHref,
   ProjectSettingsPanel,
+  readRunSelectionFromLocation,
   RunEnvironmentFilter,
   ScenarioEditor,
   readStoredPanelLayout,
@@ -81,6 +82,19 @@ describe("run environment filter", () => {
         scenarioSlug: "checkout",
       })
     ).toBe("/projects/demo/runs/run-1?environment=preview&scenario=checkout")
+  })
+
+  it("restores the full run selection from browser history", () => {
+    expect(
+      readRunSelectionFromLocation(
+        "/projects/demo/runs/run-1",
+        "?environment=preview&scenario=checkout"
+      )
+    ).toEqual({
+      environment: "preview",
+      runId: "run-1",
+      scenarioSlug: "checkout",
+    })
   })
 })
 

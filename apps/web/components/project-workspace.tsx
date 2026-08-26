@@ -205,6 +205,17 @@ function normalizeRunEnvironmentFilter(environment?: string | null) {
   return parsed.success ? parsed.data : null
 }
 
+export function readRunSelectionFromLocation(pathname: string, search: string) {
+  const runIdMatch = pathname.match(/\/runs\/([^/]+)\/?$/)
+  const searchParams = new URLSearchParams(search)
+
+  return {
+    environment: normalizeRunEnvironmentFilter(searchParams.get("environment")),
+    runId: runIdMatch?.[1] ? decodeURIComponent(runIdMatch[1]) : undefined,
+    scenarioSlug: searchParams.get("scenario") ?? undefined,
+  }
+}
+
 function getNewScenarioHref({
   projectSlug,
   phaseFilter,
@@ -1047,15 +1058,16 @@ function AuthenticatedProjectWorkspace({
     }
 
     const restoreRunSelection = () => {
-      const runIdMatch = window.location.pathname.match(/\/runs\/([^/]+)\/?$/)
-      setSelectedRunId(
-        runIdMatch?.[1] ? decodeURIComponent(runIdMatch[1]) : undefined
+      const selection = readRunSelectionFromLocation(
+        window.location.pathname,
+        window.location.search
       )
-      setSelectedRunScenarioSlug(
-        new URLSearchParams(window.location.search).get("scenario") ?? undefined
-      )
+      setRunEnvironment(selection.environment)
+      setSelectedRunId(selection.runId)
+      setSelectedRunScenarioSlug(selection.scenarioSlug)
     }
 
+    restoreRunSelection()
     window.addEventListener("popstate", restoreRunSelection)
     return () => window.removeEventListener("popstate", restoreRunSelection)
   }, [workspace])

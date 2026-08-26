@@ -374,6 +374,18 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong."
 }
 
+async function runWithErrorMessage(
+  action: () => Promise<void>,
+  setError: (message: string | null) => void
+) {
+  setError(null)
+  try {
+    await action()
+  } catch (error) {
+    setError(getErrorMessage(error))
+  }
+}
+
 function formatTimestamp(value: number | null) {
   if (value === null) {
     return "n/a"
@@ -915,6 +927,7 @@ function AuthenticatedProjectWorkspace({
   const [runPageSize, setRunPageSize] = useState<10 | 20 | 50>(20)
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
+  const [phaseError, setPhaseError] = useState<string | null>(null)
   const normalizedScenarioSearch = scenarioSearch.trim()
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
@@ -1744,16 +1757,23 @@ function AuthenticatedProjectWorkspace({
                   <Button
                     size="icon-sm"
                     onClick={async () => {
-                      const created = await createPhase({
-                        projectId: project.id as never,
-                        name: `Phase ${(phases?.length ?? 0) + 1}`,
-                      })
-                      setSelectedPhaseId(created.id)
+                      await runWithErrorMessage(async () => {
+                        const created = await createPhase({
+                          projectId: project.id as never,
+                          name: `Phase ${(phases?.length ?? 0) + 1}`,
+                        })
+                        setSelectedPhaseId(created.id)
+                      }, setPhaseError)
                     }}
                   >
                     <Plus />
                   </Button>
                 </div>
+                {phaseError ? (
+                  <p className="mt-3 text-sm text-destructive" role="alert">
+                    {phaseError}
+                  </p>
+                ) : null}
               </div>
               <div className="flex-1 overflow-auto px-3 py-3">
                 {phases === undefined ? (
@@ -1769,11 +1789,13 @@ function AuthenticatedProjectWorkspace({
                       <Button
                         size="sm"
                         onClick={async () => {
-                          const created = await createPhase({
-                            projectId: project.id as never,
-                            name: "Phase 1",
-                          })
-                          setSelectedPhaseId(created.id)
+                          await runWithErrorMessage(async () => {
+                            const created = await createPhase({
+                              projectId: project.id as never,
+                              name: "Phase 1",
+                            })
+                            setSelectedPhaseId(created.id)
+                          }, setPhaseError)
                         }}
                       >
                         <Plus />
@@ -1785,13 +1807,15 @@ function AuthenticatedProjectWorkspace({
                   <SortableList
                     items={phases}
                     onReorder={async (items) => {
-                      const updated = await reorderPhases({
-                        projectId: project.id as never,
-                        phaseIds: items.map((item) => item.id as never),
-                      })
-                      if (!selectedPhaseId) {
-                        setSelectedPhaseId(updated[0]?.id ?? null)
-                      }
+                      await runWithErrorMessage(async () => {
+                        const updated = await reorderPhases({
+                          projectId: project.id as never,
+                          phaseIds: items.map((item) => item.id as never),
+                        })
+                        if (!selectedPhaseId) {
+                          setSelectedPhaseId(updated[0]?.id ?? null)
+                        }
+                      }, setPhaseError)
                     }}
                     renderItem={({ dragHandle, isDragging, item }) => (
                       <div
@@ -1840,6 +1864,7 @@ function AuthenticatedProjectWorkspace({
               <PhaseEditor
                 allScenarios={scenarioSummaries ?? []}
                 key={`${selectedPhase.id}:${selectedPhase.updatedAt}`}
+                onError={setPhaseError}
                 phase={selectedPhase}
                 removePhase={removePhase}
                 setSelectedPhaseId={setSelectedPhaseId}
@@ -2916,6 +2941,7 @@ function ScenarioEditor({
 function PhaseEditor({
   phase,
   allScenarios,
+  onError,
   removePhase,
   setSelectedPhaseId,
   updatePhase,
@@ -2932,6 +2958,7 @@ function PhaseEditor({
     slug: string
     phaseId?: string | null
   }>
+  onError: (message: string | null) => void
   removePhase: ReturnType<typeof useMutation<typeof api.phases.remove>>
   setSelectedPhaseId: (value: string | null) => void
   updatePhase: ReturnType<typeof useMutation<typeof api.phases.update>>
@@ -2959,8 +2986,10 @@ function PhaseEditor({
                 return
               }
 
-              await removePhase({ phaseId: phase.id as never })
-              setSelectedPhaseId(null)
+              await runWithErrorMessage(async () => {
+                await removePhase({ phaseId: phase.id as never })
+                setSelectedPhaseId(null)
+              }, onError)
             }}
           >
             <Trash2 />
@@ -2970,7 +2999,10 @@ function PhaseEditor({
             size="sm"
             variant="outline"
             disabled={!isDirty}
-            onClick={() => setForm(savedForm)}
+            onClick={() => {
+              setForm(savedForm)
+              onError(null)
+            }}
           >
             <RotateCcw />
             Revert
@@ -2979,13 +3011,15 @@ function PhaseEditor({
             size="sm"
             disabled={!isDirty}
             onClick={async () => {
-              const updated = await updatePhase({
-                phaseId: phase.id as never,
-                name: form.name,
-              })
-              const nextForm = createPhaseFormState(updated)
-              setSavedForm(nextForm)
-              setForm(nextForm)
+              await runWithErrorMessage(async () => {
+                const updated = await updatePhase({
+                  phaseId: phase.id as never,
+                  name: form.name,
+                })
+                const nextForm = createPhaseFormState(updated)
+                setSavedForm(nextForm)
+                setForm(nextForm)
+              }, onError)
             }}
           >
             <Save />

@@ -16,7 +16,6 @@ const command = isVercel && hasConvexDeployKey
 
 const child = spawn(command[0], command.slice(1), {
   stdio: "inherit",
-  shell: true,
   env: process.env,
 })
 
@@ -28,4 +27,3 @@ child.on("exit", (code, signal) => {
 
   process.exit(code ?? 1)
 })
-

@@ -301,7 +301,7 @@ describe("runner usage", () => {
       reasoningOutputTokens: 25_000,
       estimatedCostUsd: 0.253,
     })
-    expect(formatRunnerUsage(usage!)).toBe(
+    expect(formatRunnerUsage({ usage, complete: true })).toBe(
       "Tokens: 1,100,000 total (1,000,000 input, 400,000 cached, 100,000 cache write; 100,000 output, 25,000 reasoning)\nEstimated API-equivalent cost: $0.2530"
     )
   })
@@ -310,30 +310,61 @@ describe("runner usage", () => {
     expect(
       mergeRunnerUsage(
         {
+          usage: {
+            inputTokens: 100,
+            cachedInputTokens: 20,
+            cacheWriteInputTokens: 0,
+            outputTokens: 10,
+            reasoningOutputTokens: 2,
+            estimatedCostUsd: 0.01,
+          },
+          complete: true,
+        },
+        {
+          usage: {
+            inputTokens: 200,
+            cachedInputTokens: 40,
+            cacheWriteInputTokens: 5,
+            outputTokens: 20,
+            reasoningOutputTokens: 4,
+            estimatedCostUsd: null,
+          },
+          complete: false,
+        }
+      )
+    ).toEqual({
+      usage: {
+        inputTokens: 300,
+        cachedInputTokens: 60,
+        cacheWriteInputTokens: 5,
+        outputTokens: 30,
+        reasoningOutputTokens: 6,
+        estimatedCostUsd: null,
+      },
+      complete: false,
+    })
+  })
+
+  it("labels partial usage and withholds its cost", () => {
+    expect(
+      formatRunnerUsage({
+        usage: {
           inputTokens: 100,
           cachedInputTokens: 20,
           cacheWriteInputTokens: 0,
           outputTokens: 10,
-          reasoningOutputTokens: 2,
+          reasoningOutputTokens: 0,
           estimatedCostUsd: 0.01,
         },
-        {
-          inputTokens: 200,
-          cachedInputTokens: 40,
-          cacheWriteInputTokens: 5,
-          outputTokens: 20,
-          reasoningOutputTokens: 4,
-          estimatedCostUsd: null,
-        }
-      )
-    ).toEqual({
-      inputTokens: 300,
-      cachedInputTokens: 60,
-      cacheWriteInputTokens: 5,
-      outputTokens: 30,
-      reasoningOutputTokens: 6,
-      estimatedCostUsd: null,
-    })
+        complete: false,
+      })
+    ).toBe(
+      "Tokens: 110 total (partial) (100 input, 20 cached; 10 output)\nEstimated API-equivalent cost: unavailable because token usage is incomplete"
+    )
+
+    expect(formatRunnerUsage({ complete: false })).toBe(
+      "Tokens: unavailable (runner usage incomplete)\nEstimated API-equivalent cost: unavailable"
+    )
   })
 
   it("reads Claude structured output and its reported cost", () => {

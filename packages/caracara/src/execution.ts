@@ -23,7 +23,7 @@ export type RunnerExecution = {
   executionSummary: string
   checkResults: CheckResult[]
   screenshotEvidence?: ScreenshotEvidence[]
-  usage?: RunnerUsage
+  usage?: RunnerUsageReport
 }
 
 export type RunnerUsage = {
@@ -33,6 +33,21 @@ export type RunnerUsage = {
   outputTokens: number
   reasoningOutputTokens: number
   estimatedCostUsd: number | null
+}
+
+export type RunnerUsageReport = {
+  usage?: RunnerUsage
+  complete: boolean
+}
+
+export class RunnerExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly usage: RunnerUsageReport
+  ) {
+    super(message)
+    this.name = "RunnerExecutionError"
+  }
 }
 
 export type ScreenshotEvidence = {
@@ -192,30 +207,47 @@ export function toCodexRunnerUsage(
 }
 
 export function mergeRunnerUsage(
-  current: RunnerUsage | undefined,
-  next: RunnerUsage | undefined
-) {
-  if (!current) return next
-  if (!next) return current
+  current: RunnerUsageReport,
+  next: RunnerUsageReport
+): RunnerUsageReport {
+  const currentUsage = current.usage
+  const nextUsage = next.usage
+
+  if (!currentUsage || !nextUsage) {
+    return {
+      usage: currentUsage ?? nextUsage,
+      complete: current.complete && next.complete,
+    }
+  }
 
   return {
-    inputTokens: current.inputTokens + next.inputTokens,
-    cachedInputTokens: current.cachedInputTokens + next.cachedInputTokens,
-    cacheWriteInputTokens:
-      current.cacheWriteInputTokens + next.cacheWriteInputTokens,
-    outputTokens: current.outputTokens + next.outputTokens,
-    reasoningOutputTokens:
-      current.reasoningOutputTokens + next.reasoningOutputTokens,
-    estimatedCostUsd:
-      current.estimatedCostUsd === null || next.estimatedCostUsd === null
-        ? null
-        : current.estimatedCostUsd + next.estimatedCostUsd,
+    usage: {
+      inputTokens: currentUsage.inputTokens + nextUsage.inputTokens,
+      cachedInputTokens:
+        currentUsage.cachedInputTokens + nextUsage.cachedInputTokens,
+      cacheWriteInputTokens:
+        currentUsage.cacheWriteInputTokens + nextUsage.cacheWriteInputTokens,
+      outputTokens: currentUsage.outputTokens + nextUsage.outputTokens,
+      reasoningOutputTokens:
+        currentUsage.reasoningOutputTokens + nextUsage.reasoningOutputTokens,
+      estimatedCostUsd:
+        currentUsage.estimatedCostUsd === null ||
+        nextUsage.estimatedCostUsd === null
+          ? null
+          : currentUsage.estimatedCostUsd + nextUsage.estimatedCostUsd,
+    },
+    complete: current.complete && next.complete,
   }
 }
 
 const tokenNumber = new Intl.NumberFormat("en-US")
 
-export function formatRunnerUsage(usage: RunnerUsage) {
+export function formatRunnerUsage(report: RunnerUsageReport) {
+  const usage = report.usage
+  if (!usage) {
+    return "Tokens: unavailable (runner usage incomplete)\nEstimated API-equivalent cost: unavailable"
+  }
+
   const inputDetails = [
     `${tokenNumber.format(usage.cachedInputTokens)} cached`,
     ...(usage.cacheWriteInputTokens > 0
@@ -227,9 +259,10 @@ export function formatRunnerUsage(usage: RunnerUsage) {
       ? `, ${tokenNumber.format(usage.reasoningOutputTokens)} reasoning`
       : ""
   const totalTokens = usage.inputTokens + usage.outputTokens
-  const tokens = `Tokens: ${tokenNumber.format(totalTokens)} total (${tokenNumber.format(usage.inputTokens)} input, ${inputDetails}; ${tokenNumber.format(usage.outputTokens)} output${outputDetails})`
-  const cost =
-    usage.estimatedCostUsd === null
+  const tokens = `Tokens: ${tokenNumber.format(totalTokens)} total${report.complete ? "" : " (partial)"} (${tokenNumber.format(usage.inputTokens)} input, ${inputDetails}; ${tokenNumber.format(usage.outputTokens)} output${outputDetails})`
+  const cost = !report.complete
+    ? "Estimated API-equivalent cost: unavailable because token usage is incomplete"
+    : usage.estimatedCostUsd === null
       ? "Estimated API-equivalent cost: unavailable for this model"
       : `Estimated API-equivalent cost: $${usage.estimatedCostUsd.toFixed(4)}`
 
@@ -769,6 +802,8 @@ class CodexRunner implements RunnerAdapter {
         return await withTempFiles(async (dir) => {
           const evidenceDirectory = join(dir, "evidence")
           await mkdir(evidenceDirectory)
+          let usage: RunnerUsageReport = { complete: true }
+          let waitingForUsage = false
           try {
             const thread = codex.startThread(
               buildCodexThreadOptions({
@@ -777,6 +812,7 @@ class CodexRunner implements RunnerAdapter {
                 modelReasoningEffort: input.modelReasoningEffort,
               })
             )
+            waitingForUsage = true
             const turn = await thread.run(
               buildRunnerPrompt({
                 ...scenarioInput,
@@ -789,12 +825,17 @@ class CodexRunner implements RunnerAdapter {
                 ),
               }
             )
+            waitingForUsage = false
+            const turnUsage = toCodexRunnerUsage(turn.usage, input.model)
+            usage = mergeRunnerUsage(usage, {
+              usage: turnUsage,
+              complete: turnUsage !== undefined,
+            })
 
             const validated = validateRunnerExecution(
               scenarioInput.scenario,
               JSON.parse(turn.finalResponse) as RunnerExecution
             )
-            let usage = toCodexRunnerUsage(turn.usage, input.model)
             const failedCheckIds = validated.checkResults
               .filter((result) => result.verdict === "failed")
               .map((result) => result.checkId)
@@ -804,6 +845,7 @@ class CodexRunner implements RunnerAdapter {
             })
 
             if (screenshots.missingCheckIds.length > 0) {
+              waitingForUsage = true
               const correction = await thread.run(
                 buildMissingScreenshotPrompt({
                   scenario: scenarioInput.scenario,
@@ -811,10 +853,15 @@ class CodexRunner implements RunnerAdapter {
                   missingCheckIds: screenshots.missingCheckIds,
                 })
               )
-              usage = mergeRunnerUsage(
-                usage,
-                toCodexRunnerUsage(correction.usage, input.model)
+              waitingForUsage = false
+              const correctionUsage = toCodexRunnerUsage(
+                correction.usage,
+                input.model
               )
+              usage = mergeRunnerUsage(usage, {
+                usage: correctionUsage,
+                complete: correctionUsage !== undefined,
+              })
               screenshots = await readScreenshotEvidence({
                 evidenceDirectory,
                 checkIds: failedCheckIds,
@@ -836,12 +883,18 @@ class CodexRunner implements RunnerAdapter {
               usage,
             }
           } catch (error) {
+            if (waitingForUsage) {
+              usage = { ...usage, complete: false }
+            }
             const message = (
               error instanceof Error ? error.message : "Codex SDK failed."
             )
               .split(evidenceDirectory)
               .join("[LOCAL_EVIDENCE_DIR]")
-            throw new Error(redactSecretValues(message, input.secrets))
+            throw new RunnerExecutionError(
+              redactSecretValues(message, input.secrets),
+              usage
+            )
           }
         })
       },
@@ -878,36 +931,54 @@ class ClaudeRunner implements RunnerAdapter {
             }),
             "utf8"
           )
-          const execution = await runCommand({
-            command: "claude",
-            cwd: scenarioInput.cwd,
-            env: runnerEnv,
-            secrets: runInput.secrets,
-            commandArgs: [
-              "-p",
-              "--permission-mode",
-              process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
-                "bypassPermissions",
-              "--output-format",
-              "json",
-              "--mcp-config",
-              mcpConfigPath,
-              "--strict-mcp-config",
-              "--json-schema",
-              JSON.stringify(
-                buildExecutionResultSchema(scenarioInput.scenario)
+          let usage: RunnerUsageReport = { complete: false }
+          try {
+            const execution = await runCommand({
+              command: "claude",
+              cwd: scenarioInput.cwd,
+              env: runnerEnv,
+              secrets: runInput.secrets,
+              commandArgs: [
+                "-p",
+                "--permission-mode",
+                process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
+                  "bypassPermissions",
+                "--output-format",
+                "json",
+                "--mcp-config",
+                mcpConfigPath,
+                "--strict-mcp-config",
+                "--json-schema",
+                JSON.stringify(
+                  buildExecutionResultSchema(scenarioInput.scenario)
+                ),
+                buildRunnerPrompt({ ...scenarioInput, secretNames }),
+              ],
+            })
+            const parsed = parseClaudeJsonResult(execution.stdout)
+            usage = {
+              usage: parsed.usage,
+              complete: parsed.usage !== undefined,
+            }
+            return {
+              ...redactRunnerExecution(
+                validateRunnerExecution(
+                  scenarioInput.scenario,
+                  parsed.execution
+                ),
+                runInput.secrets
               ),
-              buildRunnerPrompt({ ...scenarioInput, secretNames }),
-            ],
-          })
-          const parsed = parseClaudeJsonResult(execution.stdout)
-          return {
-            ...redactRunnerExecution(
-              validateRunnerExecution(scenarioInput.scenario, parsed.execution),
-              runInput.secrets
-            ),
-            screenshotEvidence: [],
-            usage: parsed.usage,
+              screenshotEvidence: [],
+              usage,
+            }
+          } catch (error) {
+            throw new RunnerExecutionError(
+              redactSecretValues(
+                error instanceof Error ? error.message : "Claude Code failed.",
+                runInput.secrets
+              ),
+              usage
+            )
           }
         })
       },

@@ -40,7 +40,8 @@ import {
   formatRunnerUsage,
   getRunnerAdapter,
   mergeRunnerUsage,
-  type RunnerUsage,
+  RunnerExecutionError,
+  type RunnerUsageReport,
 } from "./execution.js"
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
@@ -651,7 +652,7 @@ export async function runCommand(options: RunCommandOptions) {
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
   let runError: unknown = null
-  let runUsage: RunnerUsage | undefined
+  let runUsage: RunnerUsageReport = { complete: true }
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
   let lastPrintedPhaseId: string | null = null
@@ -727,7 +728,10 @@ export async function runCommand(options: RunCommandOptions) {
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
         })
-        runUsage = mergeRunnerUsage(runUsage, execution.usage)
+        runUsage = mergeRunnerUsage(
+          runUsage,
+          execution.usage ?? { complete: false }
+        )
 
         if (
           createRunResponse.run.evidencePolicy === "failed_check_screenshot"
@@ -776,6 +780,9 @@ export async function runCommand(options: RunCommandOptions) {
           `  ${passed}/${execution.checkResults.length} checks passed\n`
         )
       } catch (error) {
+        if (error instanceof RunnerExecutionError) {
+          runUsage = mergeRunnerUsage(runUsage, error.usage)
+        }
         runFailed = true
         await submitScenarioResult({
           apiBaseUrl: config.apiBaseUrl,
@@ -843,6 +850,10 @@ export async function runCommand(options: RunCommandOptions) {
       closeError = error
     }
 
+    if (runUsage.usage || !runUsage.complete) {
+      process.stdout.write(`\n${formatRunnerUsage(runUsage)}\n`)
+    }
+
     if (finalRunStatus && finalFinishedAt !== null) {
       await finalizeRun({
         apiBaseUrl: config.apiBaseUrl,
@@ -856,10 +867,6 @@ export async function runCommand(options: RunCommandOptions) {
         },
       })
     }
-  }
-
-  if (runUsage) {
-    process.stdout.write(`\n${formatRunnerUsage(runUsage)}\n`)
   }
 
   if (runError) {

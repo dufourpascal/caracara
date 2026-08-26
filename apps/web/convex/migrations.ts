@@ -1,4 +1,12 @@
-import { internalMutation } from "./_generated/server"
+import { internalMutation, type MutationCtx } from "./_generated/server"
+
+export async function clearRunEnvironmentSummaries(ctx: MutationCtx) {
+  const projects = await ctx.db.query("projects").collect()
+
+  for (const project of projects) {
+    await ctx.db.patch(project._id, { runEnvironmentNames: [] })
+  }
+}
 
 export const resetEvaluationData = internalMutation({
   args: {},
@@ -23,6 +31,8 @@ export const resetEvaluationData = internalMutation({
       }
       deleted[tableName] = documents.length
     }
+
+    await clearRunEnvironmentSummaries(ctx)
 
     return deleted
   },

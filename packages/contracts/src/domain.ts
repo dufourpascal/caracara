@@ -28,6 +28,31 @@ export const slugSchema = z
   .min(1)
   .max(120)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+export const projectNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Project name is required.")
+  .max(120, "Project name must be 120 characters or fewer.")
+export const projectDescriptionSchema = z
+  .string()
+  .max(1_500, "Description must be 1,500 characters or fewer.")
+export const projectPromptSchema = z
+  .string()
+  .max(12_000, "Project prompt must be 12,000 characters or fewer.")
+export const projectInputSchema = z.object({
+  name: projectNameSchema,
+  slug: z.preprocess(
+    (value) =>
+      typeof value === "string" && value.trim() === "" ? undefined : value,
+    z
+      .string()
+      .trim()
+      .max(120, "Slug must be 120 characters or fewer.")
+      .optional()
+  ),
+  description: projectDescriptionSchema,
+  projectPrompt: projectPromptSchema,
+})
 export const nullableStringSchema = z.string().max(20_000).nullable()
 export const evaluationCheckSchema = z.object({
   id: z.string().uuid(),
@@ -44,10 +69,10 @@ export const checkResultSchema = z.object({
 export const projectSchema = z.object({
   id: z.string(),
   ownerUserId: z.string().min(1),
-  name: z.string().min(1).max(120),
+  name: projectNameSchema,
   slug: slugSchema,
-  description: z.string().max(1_500),
-  projectPrompt: z.string().max(12_000),
+  description: projectDescriptionSchema,
+  projectPrompt: projectPromptSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 })
@@ -136,6 +161,7 @@ export type RunnerType = z.infer<typeof runnerTypeSchema>
 export type RunMode = z.infer<typeof runModeSchema>
 export type EvidencePolicy = z.infer<typeof evidencePolicySchema>
 export type Project = z.infer<typeof projectSchema>
+export type ProjectInput = z.infer<typeof projectInputSchema>
 export type Phase = z.infer<typeof phaseSchema>
 export type Scenario = z.infer<typeof scenarioSchema>
 export type ScenarioDependency = z.infer<typeof scenarioDependencySchema>

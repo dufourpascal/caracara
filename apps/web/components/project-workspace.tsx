@@ -85,6 +85,7 @@ import {
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
+import { getErrorMessage } from "@/lib/errors"
 import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
 type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
@@ -368,10 +369,6 @@ function isScenarioStatus(value: string): value is "draft" | "active" {
 
 function getAutoScenarioSlug(name: string) {
   return name.trim() === "" ? "" : normalizeSlug(name)
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong."
 }
 
 async function runWithErrorMessage(
@@ -2398,7 +2395,7 @@ function ProjectSettingsPanel({
   )
 }
 
-function ScenarioEditor({
+export function ScenarioEditor({
   scenario,
   allScenarios,
   allPhases,

@@ -16,6 +16,7 @@ import {
   isCliVersionSupported,
   normalizeSlug,
   phaseListResponseSchema,
+  projectInputSchema,
   projectSchema,
   phaseSchema,
   runSchema,
@@ -274,6 +275,53 @@ describe("contracts", () => {
     expect(
       createUniqueSlug("Hello world", ["hello-world", "hello-world-2"])
     ).toBe("hello-world-3")
+  })
+
+  it("validates project input and treats a blank slug as omitted", () => {
+    const project = projectInputSchema.parse({
+      name: "  Blank Slug Derivation  ",
+      slug: "   ",
+      description: "Kept as entered.",
+      projectPrompt: "Shared context.",
+    })
+
+    expect(project).toEqual({
+      name: "Blank Slug Derivation",
+      slug: undefined,
+      description: "Kept as entered.",
+      projectPrompt: "Shared context.",
+    })
+    expect(
+      createUniqueSlug(project.slug ?? project.name, [
+        "blank-slug-derivation",
+        "blank-slug-derivation-2",
+      ])
+    ).toBe("blank-slug-derivation-3")
+
+    const invalid = projectInputSchema.safeParse({
+      name: " ".repeat(121),
+      slug: "project",
+      description: "d".repeat(1_501),
+      projectPrompt: "p".repeat(12_001),
+    })
+
+    expect(invalid.success).toBe(false)
+    if (!invalid.success) {
+      expect(invalid.error.flatten().fieldErrors).toMatchObject({
+        name: ["Project name is required."],
+        description: ["Description must be 1,500 characters or fewer."],
+        projectPrompt: ["Project prompt must be 12,000 characters or fewer."],
+      })
+    }
+
+    expect(
+      projectInputSchema.safeParse({
+        name: "n".repeat(121),
+        slug: "project",
+        description: "",
+        projectPrompt: "",
+      }).success
+    ).toBe(false)
   })
 
   it("formats run names with an adjective, bird, and timestamp suffix", () => {

@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values"
+import { projectInputSchema } from "@workspace/contracts"
 
 import { mutation, query } from "./_generated/server"
 import {
@@ -10,6 +11,25 @@ import {
   requireProjectOwnerBySlug,
   toProject,
 } from "./lib"
+
+export function parseProjectInput(input: {
+  name: string
+  slug?: string
+  description: string
+  projectPrompt: string
+}) {
+  const parsed = projectInputSchema.safeParse(input)
+
+  if (!parsed.success) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Check the highlighted project fields.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    })
+  }
+
+  return parsed.data
+}
 
 export const list = query({
   args: {},
@@ -47,18 +67,19 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx)
+    const input = parseProjectInput(args)
     const timestamp = Date.now()
     const slug = await ensureUniqueProjectSlug(
       ctx,
       identity.subject,
-      args.slug ?? args.name
+      input.slug ?? input.name
     )
     const projectId = await ctx.db.insert("projects", {
       ownerUserId: identity.subject,
-      name: args.name,
+      name: input.name,
       slug,
-      description: args.description,
-      projectPrompt: args.projectPrompt,
+      description: input.description,
+      projectPrompt: input.projectPrompt,
       createdAt: timestamp,
       updatedAt: timestamp,
     })
@@ -82,18 +103,19 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
+    const input = parseProjectInput(args)
     const slug = await ensureUniqueProjectSlug(
       ctx,
       project.ownerUserId,
-      args.slug,
+      input.slug ?? input.name,
       project._id
     )
 
     await ctx.db.patch(project._id, {
-      name: args.name,
+      name: input.name,
       slug,
-      description: args.description,
-      projectPrompt: args.projectPrompt,
+      description: input.description,
+      projectPrompt: input.projectPrompt,
       updatedAt: Date.now(),
     })
 

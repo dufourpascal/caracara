@@ -1,0 +1,1388 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'"
+    />
+    <title>Caracara suite support plan</title>
+    <style>
+      :root {
+        --paper: #fff;
+        --ink: #111827;
+        --ink-soft: #4b5563;
+        --line: #d1d5db;
+        --line-strong: #9ca3af;
+        --accent: #2563eb;
+        --accent-dark: #1d4ed8;
+        --accent-soft: #eff6ff;
+        --success: #047857;
+        --error: #b91c1c;
+        --space-sm: 0.5rem;
+        --space-md: 1rem;
+        --space-lg: 1.5rem;
+        --space-xl: 2rem;
+        --measure: 65ch;
+        --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #fff;
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        font-size: 1rem;
+        line-height: 1.6;
+        font-kerning: normal;
+      }
+
+      button,
+      textarea {
+        font: inherit;
+      }
+
+      a {
+        color: var(--accent-dark);
+      }
+
+      code {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      pre {
+        max-width: 100%;
+        overflow-x: auto;
+        margin: var(--space-lg) 0;
+        padding: var(--space-md);
+        border: 1px solid var(--line);
+        background: #f9fafb;
+        color: var(--ink);
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.875rem;
+        line-height: 1.55;
+      }
+
+      .skip-link {
+        position: fixed;
+        top: var(--space-md);
+        left: var(--space-md);
+        z-index: 10;
+        padding: 0.65rem 1rem;
+        background: var(--ink);
+        color: var(--paper);
+        transform: translateY(-200%);
+        transition: transform 180ms var(--ease-out);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .shell {
+        width: min(100% - 2rem, 68rem);
+        margin-inline: auto;
+        padding: clamp(2rem, 5vw, 4rem) 0 5rem;
+      }
+
+      .plan-header {
+        display: grid;
+        gap: var(--space-md);
+        max-width: 48rem;
+        margin-bottom: clamp(3rem, 6vw, 5rem);
+      }
+
+      .eyebrow,
+      .phase-index,
+      .requirement-kind,
+      .status {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        line-height: 1.3;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        color: var(--ink-soft);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-family: inherit;
+        font-weight: 700;
+        line-height: 1.2;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 18ch;
+        font-size: clamp(2.5rem, 6vw, 4.5rem);
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        font-size: clamp(1.75rem, 3vw, 2.5rem);
+        letter-spacing: -0.03em;
+      }
+      h3 {
+        font-size: 1.25rem;
+        letter-spacing: -0.015em;
+      }
+
+      .lead {
+        max-width: 56ch;
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 1.125rem;
+      }
+
+      .plan-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-md) var(--space-lg);
+        align-items: center;
+        padding-top: var(--space-md);
+        border-top: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 0.875rem;
+      }
+
+      .status {
+        color: var(--ink-soft);
+      }
+      [data-plan-status="complete"] .status {
+        color: var(--success);
+      }
+
+      .plan-section {
+        scroll-margin-top: 2rem;
+      }
+
+      .overview,
+      .requirements {
+        max-width: 62rem;
+        margin-bottom: clamp(3rem, 6vw, 5rem);
+      }
+
+      .section-heading {
+        display: grid;
+        gap: var(--space-sm);
+        margin-bottom: var(--space-lg);
+      }
+
+      .section-copy,
+      .phase-copy {
+        max-width: var(--measure);
+        color: var(--ink-soft);
+      }
+
+      .section-copy > :first-child,
+      .phase-copy > :first-child {
+        margin-top: 0;
+      }
+      .section-copy > :last-child,
+      .phase-copy > :last-child {
+        margin-bottom: 0;
+      }
+
+      .requirement-list {
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .requirement {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--space-sm);
+        padding: var(--space-lg) 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .requirement-kind {
+        color: var(--ink-soft);
+      }
+      .requirement p {
+        max-width: 58ch;
+        margin: 0;
+        color: var(--ink-soft);
+      }
+
+      .phases {
+        display: grid;
+        gap: clamp(3rem, 6vw, 5rem);
+      }
+
+      .phase {
+        position: relative;
+        display: grid;
+        gap: var(--space-lg);
+        padding-top: var(--space-lg);
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .phase-index {
+        color: var(--ink-soft);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .phase-description {
+        max-width: 52ch;
+        margin: var(--space-sm) 0 0;
+        color: var(--ink-soft);
+        font-size: 1rem;
+      }
+
+      .phase-requirements {
+        margin-top: var(--space-md);
+      }
+
+      .phase-requirements > h3 {
+        margin-bottom: var(--space-lg);
+        font-family: inherit;
+        font-size: 0.75rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .feedback {
+        align-self: start;
+        margin-top: var(--space-md);
+      }
+
+      .feedback-toggle,
+      .feedback-actions button {
+        min-height: 2.75rem;
+        border: 1px solid var(--line);
+        border-radius: 0.25rem;
+        background: #fff;
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        transition:
+          background-color 120ms linear,
+          border-color 120ms linear,
+          color 120ms linear;
+      }
+
+      .feedback-toggle {
+        padding: 0.55rem 0.85rem;
+      }
+      .feedback-toggle.has-feedback {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+      }
+
+      @media (hover: hover) {
+        .feedback-toggle:hover,
+        .feedback-actions button:hover {
+          border-color: var(--line-strong);
+          background: #f9fafb;
+        }
+      }
+
+      button:active {
+        background: #f3f4f6;
+      }
+
+      button:focus-visible,
+      textarea:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .feedback-form {
+        max-width: 42rem;
+        margin-top: var(--space-md);
+        padding: var(--space-md);
+        border: 1px solid var(--line);
+        border-radius: 0.25rem;
+        background: #f9fafb;
+      }
+
+      .feedback-form[hidden] {
+        display: none;
+      }
+
+      .feedback-form label {
+        display: block;
+        margin-bottom: var(--space-sm);
+        font-size: 0.875rem;
+        font-weight: 700;
+      }
+
+      .feedback-form textarea {
+        display: block;
+        width: 100%;
+        min-height: 8rem;
+        resize: vertical;
+        padding: 0.8rem;
+        border: 1px solid var(--line-strong);
+        border-radius: 0.25rem;
+        background: #fff;
+        color: var(--ink);
+        line-height: 1.5;
+      }
+
+      .feedback-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-sm);
+        margin-top: var(--space-md);
+      }
+
+      .feedback-actions button {
+        padding: 0.55rem 0.9rem;
+      }
+      .feedback-actions .save-feedback {
+        border-color: var(--accent-dark);
+        background: var(--accent-dark);
+        color: #fff;
+      }
+      .feedback-actions .save-feedback:hover {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+      .feedback-actions button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+        transform: none;
+      }
+
+      .feedback-status {
+        min-height: 1.5em;
+        margin: var(--space-sm) 0 0;
+        color: var(--ink-soft);
+        font-size: 0.875rem;
+      }
+
+      .feedback-status[data-state="error"] {
+        color: var(--error);
+      }
+      .feedback-status[data-state="success"] {
+        color: var(--success);
+      }
+
+      @media (min-width: 48rem) {
+        .phase {
+          grid-template-columns: 12rem minmax(0, 1fr);
+          column-gap: clamp(2rem, 5vw, 4rem);
+        }
+
+        .phase-heading {
+          grid-column: 1;
+        }
+        .phase-body {
+          grid-column: 2;
+        }
+
+        .requirement {
+          grid-template-columns: 12rem minmax(0, 1fr);
+          gap: var(--space-lg);
+          align-items: start;
+        }
+
+        .requirement > p,
+        .requirement > .feedback {
+          grid-column: 2;
+        }
+        .requirement > .feedback {
+          margin-top: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+        .shell {
+          width: 100%;
+          padding: 0;
+        }
+        .feedback,
+        .skip-link {
+          display: none !important;
+        }
+        .phase {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to plan</a>
+
+    <main
+      class="shell"
+      id="main-content"
+      data-plan-status="draft"
+      data-plan-revision="1"
+    >
+      <header class="plan-header plan-section" data-plan-section="overview">
+        <span class="eyebrow">Implementation plan</span>
+        <h1>Suite support</h1>
+        <p class="lead">
+          Let a Caracara project define named suites that select any subset of
+          its existing phases, then run only the selected phases without
+          changing the phase model.
+        </p>
+        <div class="plan-meta" aria-label="Plan metadata">
+          <span class="status">Draft</span>
+          <span class="revision">Revision 1</span>
+          <span>One vertical implementation phase</span>
+        </div>
+        <div class="feedback">
+          <button
+            class="feedback-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="feedback-overview"
+          >
+            Give feedback
+          </button>
+          <form class="feedback-form" id="feedback-overview" hidden>
+            <label for="feedback-text-overview"
+              >Feedback on the plan overview</label
+            >
+            <textarea
+              id="feedback-text-overview"
+              maxlength="10000"
+              placeholder="What should change?"
+            ></textarea>
+            <div class="feedback-actions">
+              <button class="save-feedback" type="submit">Save feedback</button>
+              <button class="close-feedback" type="button">Close editor</button>
+            </div>
+            <p class="feedback-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </header>
+
+      <section class="overview plan-section" data-plan-section="plan-context">
+        <div class="section-heading">
+          <span class="eyebrow">Context</span>
+          <h2>One project, several useful cuts</h2>
+        </div>
+        <div class="section-copy">
+          <p>
+            Caracara currently runs one scenario, one phase, a prefix of phases,
+            or every phase. That works for a single linear evaluation, but it
+            cannot name reusable non-contiguous selections such as phases 1, 2,
+            and 4 for a landing-page evaluation or phases 2 and 3 for a demo
+            evaluation.
+          </p>
+          <p>
+            A suite adds that selection without creating another execution
+            hierarchy. Phases stay project-owned and globally ordered. A suite
+            stores checkmarks against those phases. The same phase may appear in
+            several suites.
+          </p>
+          <pre aria-label="Suite membership example">
+Project phases:  1  2  3  4
+Landing suite:  ✓  ✓     ✓
+Demo suite:        ✓  ✓
+
+caracara run --suite landing
+Runs phases 1, 2, and 4 in that order.</pre
+          >
+          <p>
+            Suite authoring belongs only in the signed-in web app. The CLI may
+            select and execute a suite, but it will not create, edit, or delete
+            one.
+          </p>
+        </div>
+        <div class="feedback">
+          <button
+            class="feedback-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="feedback-plan-context"
+          >
+            Give feedback
+          </button>
+          <form class="feedback-form" id="feedback-plan-context" hidden>
+            <label for="feedback-text-plan-context"
+              >Feedback on the plan context</label
+            >
+            <textarea
+              id="feedback-text-plan-context"
+              maxlength="10000"
+              placeholder="What should change?"
+            ></textarea>
+            <div class="feedback-actions">
+              <button class="save-feedback" type="submit">Save feedback</button>
+              <button class="close-feedback" type="button">Close editor</button>
+            </div>
+            <p class="feedback-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+
+      <section class="requirements" aria-labelledby="global-requirements-title">
+        <div class="section-heading">
+          <span class="eyebrow">Locked decisions</span>
+          <h2 id="global-requirements-title">Global requirements</h2>
+        </div>
+        <div class="requirement-list">
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-suite-model"
+          >
+            <div>
+              <span class="requirement-kind">Data model</span>
+              <h3>Suites select phases</h3>
+            </div>
+            <p>
+              A suite belongs to one project and has a name, stable
+              project-unique slug, and a duplicate-free set of phase IDs. It
+              does not own copies of phases, scenarios, dependencies, or checks.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-suite-model"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-suite-model"
+                hidden
+              >
+                <label for="feedback-text-requirement-suite-model"
+                  >Feedback on Suites select phases</label
+                >
+                <textarea
+                  id="feedback-text-requirement-suite-model"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-membership-order"
+          >
+            <div>
+              <span class="requirement-kind">Execution</span>
+              <h3>Project phase order wins</h3>
+            </div>
+            <p>
+              Suite membership is unordered. Execution filters the existing
+              phase plan by membership and keeps the project phase order. A
+              suite containing phases 1, 2, and 4 skips phase 3 and executes 1,
+              2, then 4.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-membership-order"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-membership-order"
+                hidden
+              >
+                <label for="feedback-text-requirement-membership-order"
+                  >Feedback on Project phase order wins</label
+                >
+                <textarea
+                  id="feedback-text-requirement-membership-order"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-frontend-authoring"
+          >
+            <div>
+              <span class="requirement-kind">Access</span>
+              <h3>Frontend-only authoring</h3>
+            </div>
+            <p>
+              Only authenticated frontend Convex mutations create, update, or
+              delete suites. Do not add suite operations to the public v3
+              authoring route or the eight CLI authoring commands. Apply the
+              existing project ownership checks and project-run authoring lock.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-frontend-authoring"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-frontend-authoring"
+                hidden
+              >
+                <label for="feedback-text-requirement-frontend-authoring"
+                  >Feedback on Frontend-only authoring</label
+                >
+                <textarea
+                  id="feedback-text-requirement-frontend-authoring"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-backward-compatible-runs"
+          >
+            <div>
+              <span class="requirement-kind">Compatibility</span>
+              <h3>Existing run modes stay unchanged</h3>
+            </div>
+            <p>
+              A bare run still evaluates every runnable phase. Single-scenario,
+              phase, and through-phase modes keep their current behavior. Suites
+              are optional, so existing projects need no generated default suite
+              or data migration.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-backward-compatible-runs"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-backward-compatible-runs"
+                hidden
+              >
+                <label for="feedback-text-requirement-backward-compatible-runs"
+                  >Feedback on Existing run modes stay unchanged</label
+                >
+                <textarea
+                  id="feedback-text-requirement-backward-compatible-runs"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-lifecycle-history"
+          >
+            <div>
+              <span class="requirement-kind">Lifecycle</span>
+              <h3>Changes do not rewrite history</h3>
+            </div>
+            <p>
+              Removing a phase removes its membership from every suite. Removing
+              a suite does not touch phases or scenarios. Suite runs snapshot
+              the selected suite name and slug, so later suite edits or deletion
+              do not make old run records misleading.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-lifecycle-history"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-lifecycle-history"
+                hidden
+              >
+                <label for="feedback-text-requirement-lifecycle-history"
+                  >Feedback on Changes do not rewrite history</label
+                >
+                <textarea
+                  id="feedback-text-requirement-lifecycle-history"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+
+          <article
+            class="requirement plan-section"
+            data-plan-section="requirement-scope-boundaries"
+          >
+            <div>
+              <span class="requirement-kind">Scope</span>
+              <h3>Keep the first version narrow</h3>
+            </div>
+            <p>
+              Do not add nested suites, tags, suite-specific phase ordering,
+              suite copies, suite-specific prompts, environment defaults,
+              run-history filtering, or scenario-level suite membership. Use
+              existing shadcn components and add no dependency.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-requirement-scope-boundaries"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-requirement-scope-boundaries"
+                hidden
+              >
+                <label for="feedback-text-requirement-scope-boundaries"
+                  >Feedback on Keep the first version narrow</label
+                >
+                <textarea
+                  id="feedback-text-requirement-scope-boundaries"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="phases" aria-label="Plan phases">
+        <article
+          class="phase plan-section"
+          data-plan-section="phase-1-suite-support"
+          data-phase-index="1"
+        >
+          <header class="phase-heading">
+            <span class="phase-index">Phase 01</span>
+            <h2>Ship suite selection end to end</h2>
+            <p class="phase-description">
+              Add suite storage, the frontend editor, selective local execution,
+              durable run metadata, and verification as one usable change.
+            </p>
+            <div class="feedback">
+              <button
+                class="feedback-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="feedback-phase-1-suite-support"
+              >
+                Give feedback
+              </button>
+              <form
+                class="feedback-form"
+                id="feedback-phase-1-suite-support"
+                hidden
+              >
+                <label for="feedback-text-phase-1-suite-support"
+                  >Feedback on Phase 1</label
+                >
+                <textarea
+                  id="feedback-text-phase-1-suite-support"
+                  maxlength="10000"
+                  placeholder="What should change?"
+                ></textarea>
+                <div class="feedback-actions">
+                  <button class="save-feedback" type="submit">
+                    Save feedback
+                  </button>
+                  <button class="close-feedback" type="button">
+                    Close editor
+                  </button>
+                </div>
+                <p class="feedback-status" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </header>
+
+          <div class="phase-body">
+            <div class="phase-copy">
+              <p>
+                Implement suites as a small project-owned record with embedded
+                phase membership. The execution path reads that record and
+                filters the phase plan already produced by Caracara. It does not
+                create a second ordering algorithm.
+              </p>
+              <ul>
+                <li>
+                  Add a <code>suites</code> table with <code>projectId</code>,
+                  <code>name</code>, <code>slug</code>, <code>phaseIds</code>,
+                  and timestamps. Index it by project and by project plus slug.
+                </li>
+                <li>
+                  Add signed-in Convex queries and mutations for the Suites
+                  workspace. Validate ownership, project-unique slugs,
+                  duplicate-free same-project phase IDs, and the existing
+                  authoring lock.
+                </li>
+                <li>
+                  Extend the read-only execution API and CLI with
+                  <code>caracara run --suite &lt;slug&gt;</code>. Filter the
+                  existing execution plan and preserve project phase order.
+                </li>
+                <li>
+                  Add run mode <code>suite</code> plus requested suite name and
+                  slug snapshots. Show the suite target in run details without
+                  adding a new history filter.
+                </li>
+                <li>
+                  Update the product specs alongside the implementation so the
+                  many-to-many membership and frontend-only authoring boundary
+                  become source-of-truth decisions.
+                </li>
+              </ul>
+            </div>
+
+            <section
+              class="phase-requirements"
+              aria-labelledby="phase-1-requirements-title"
+            >
+              <h3 id="phase-1-requirements-title">Phase requirements</h3>
+              <div class="requirement-list">
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-storage-contracts"
+                >
+                  <div>
+                    <span class="requirement-kind">Storage and contracts</span>
+                    <h3>Persist validated memberships</h3>
+                  </div>
+                  <p>
+                    Add shared Suite schemas and types, Convex storage,
+                    conversion helpers, and ownership helpers. Permit an empty
+                    suite so phase deletion cannot violate storage invariants,
+                    but return a clear CLI error when a selected suite contains
+                    no runnable scenarios.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-storage-contracts"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-storage-contracts"
+                      hidden
+                    >
+                      <label for="feedback-text-phase-1-storage-contracts"
+                        >Feedback on Persist validated memberships</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-storage-contracts"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-frontend-route"
+                >
+                  <div>
+                    <span class="requirement-kind">Navigation</span>
+                    <h3>Add the Suites route</h3>
+                  </div>
+                  <p>
+                    Add <code>/projects/[projectSlug]/suites</code>, extend
+                    <code>WorkspaceKind</code>, add a Suites icon and label, and
+                    order the project dropdown exactly as Project, Suites,
+                    Phases, Scenarios, Runs. Refresh and browser history must
+                    preserve the route.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-frontend-route"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-frontend-route"
+                      hidden
+                    >
+                      <label for="feedback-text-phase-1-frontend-route"
+                        >Feedback on Add the Suites route</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-frontend-route"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-suite-editor"
+                >
+                  <div>
+                    <span class="requirement-kind">Frontend</span>
+                    <h3>Use one checkbox per phase</h3>
+                  </div>
+                  <p>
+                    Follow the existing two-panel project workspace. List suites
+                    with their selected phase count on the left. On the right,
+                    edit name and slug, then show every phase in project order
+                    with a shadcn Checkbox. Include create, Save, Revert, and
+                    confirmed delete actions plus empty, loading, validation,
+                    and locked states.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-suite-editor"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-suite-editor"
+                      hidden
+                    >
+                      <label for="feedback-text-phase-1-suite-editor"
+                        >Feedback on Use one checkbox per phase</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-suite-editor"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-execution"
+                >
+                  <div>
+                    <span class="requirement-kind">CLI execution</span>
+                    <h3>Select one suite by slug</h3>
+                  </div>
+                  <p>
+                    Add <code>--suite &lt;slug&gt;</code> as an execution-only
+                    flag. Reject combinations with <code>--scenario</code>,
+                    <code>--phase</code>, or <code>--through-phase</code>. The
+                    authenticated execution endpoint resolves the suite inside
+                    the selected project and returns only member phases in
+                    global order. Missing, empty, or non-runnable suites fail
+                    before run creation with a specific message.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-execution"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-execution"
+                      hidden
+                    >
+                      <label for="feedback-text-phase-1-execution"
+                        >Feedback on Select one suite by slug</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-execution"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-history-lifecycle"
+                >
+                  <div>
+                    <span class="requirement-kind">History and cleanup</span>
+                    <h3>Keep targets intelligible</h3>
+                  </div>
+                  <p>
+                    Store the suite name and slug used by each suite run and
+                    show them in run details. Remove deleted phase IDs from
+                    suite memberships inside the phase-removal mutation. Include
+                    suites in project deletion. Deleting or renaming a suite
+                    must not alter prior run snapshots.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-history-lifecycle"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-history-lifecycle"
+                      hidden
+                    >
+                      <label for="feedback-text-phase-1-history-lifecycle"
+                        >Feedback on Keep targets intelligible</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-history-lifecycle"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+
+                <article
+                  class="requirement plan-section"
+                  data-plan-section="phase-1-specs-verification"
+                >
+                  <div>
+                    <span class="requirement-kind">Verification</span>
+                    <h3>Prove both overlapping selections</h3>
+                  </div>
+                  <p>
+                    Update the domain, storage, execution, API, authoring,
+                    frontend, navigation, and package specs. Add focused
+                    contract, Convex, execution-selection, CLI-option, cleanup,
+                    and component tests. Manually create suites for phases 1, 2,
+                    4 and phases 2, 3, confirm overlap and persistence, run each
+                    suite, inspect run metadata, test phase deletion, and verify
+                    existing run modes. Finish with <code>pnpm lint</code>,
+                    <code>pnpm typecheck</code>, <code>pnpm test</code>, and
+                    <code>pnpm build</code>.
+                  </p>
+                  <div class="feedback">
+                    <button
+                      class="feedback-toggle"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="feedback-phase-1-specs-verification"
+                    >
+                      Give feedback
+                    </button>
+                    <form
+                      class="feedback-form"
+                      id="feedback-phase-1-specs-verification"
+                      hidden
+                    >
+                      <label for="feedback-text-phase-1-specs-verification"
+                        >Feedback on Prove both overlapping selections</label
+                      >
+                      <textarea
+                        id="feedback-text-phase-1-specs-verification"
+                        maxlength="10000"
+                        placeholder="What should change?"
+                      ></textarea>
+                      <div class="feedback-actions">
+                        <button class="save-feedback" type="submit">
+                          Save feedback
+                        </button>
+                        <button class="close-feedback" type="button">
+                          Close editor
+                        </button>
+                      </div>
+                      <p
+                        class="feedback-status"
+                        role="status"
+                        aria-live="polite"
+                      ></p>
+                    </form>
+                  </div>
+                </article>
+              </div>
+            </section>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script id="plan-feedback" type="application/json">
+      {}
+    </script>
+    <script>
+      ;(() => {
+        const feedbackElement = document.getElementById("plan-feedback")
+        let feedback
+
+        try {
+          feedback = JSON.parse(feedbackElement.textContent || "{}")
+        } catch {
+          feedback = {}
+        }
+
+        document.querySelectorAll("[data-plan-section]").forEach((section) => {
+          const sectionId = section.dataset.planSection
+          const feedbackRoot = Array.from(section.children).flatMap((child) =>
+            child.matches(".feedback")
+              ? [child]
+              : Array.from(child.children).filter((nested) =>
+                  nested.matches(".feedback")
+                )
+          )[0]
+
+          if (!feedbackRoot) return
+
+          const toggle = feedbackRoot.querySelector(".feedback-toggle")
+          const form = feedbackRoot.querySelector(".feedback-form")
+          const textarea = feedbackRoot.querySelector("textarea")
+          const close = feedbackRoot.querySelector(".close-feedback")
+          const status = feedbackRoot.querySelector(".feedback-status")
+          const save = feedbackRoot.querySelector(".save-feedback")
+
+          const renderPendingState = () => {
+            const hasFeedback =
+              Object.hasOwn(feedback, sectionId) &&
+              feedback[sectionId].length > 0
+            toggle.classList.toggle("has-feedback", hasFeedback)
+            toggle.textContent = hasFeedback
+              ? "Edit pending feedback"
+              : "Give feedback"
+            textarea.value = feedback[sectionId] || ""
+          }
+
+          const closeEditor = () => {
+            form.hidden = true
+            toggle.setAttribute("aria-expanded", "false")
+            toggle.focus()
+          }
+
+          toggle.addEventListener("click", () => {
+            const willOpen = form.hidden
+            form.hidden = !willOpen
+            toggle.setAttribute("aria-expanded", String(willOpen))
+            if (willOpen) textarea.focus()
+          })
+
+          close.addEventListener("click", closeEditor)
+
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault()
+            save.disabled = true
+            status.dataset.state = ""
+            status.textContent = "Saving feedback…"
+
+            try {
+              const response = await fetch("/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sectionId, text: textarea.value }),
+              })
+              const result = await response.json()
+              if (!response.ok)
+                throw new Error(
+                  result.error || "The server rejected the feedback."
+                )
+
+              const text = textarea.value.trim()
+              if (text) feedback[sectionId] = text
+              else delete feedback[sectionId]
+              renderPendingState()
+              status.dataset.state = "success"
+              status.textContent = text
+                ? "Feedback saved."
+                : "Feedback cleared."
+              window.setTimeout(closeEditor, 450)
+            } catch (error) {
+              status.dataset.state = "error"
+              status.textContent = "Feedback was not saved. " + error.message
+            } finally {
+              save.disabled = false
+            }
+          })
+
+          renderPendingState()
+        })
+      })()
+    </script>
+  </body>
+</html>

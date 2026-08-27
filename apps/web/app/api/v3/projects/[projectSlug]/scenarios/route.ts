@@ -19,11 +19,13 @@ export async function GET(
     requireCliVersion(request)
     const token = await requireVerifiedToken(request)
     const { projectSlug } = await params
+    const suiteSlug =
+      new URL(request.url).searchParams.get("suite") ?? undefined
     const [projectResponse, scenariosResponse] = await Promise.all([
       getProjectBySlug(token, projectSlug),
       fetchQuery(
         api.scenarios.executionPlanForProject,
-        { projectSlug },
+        { projectSlug, suiteSlug },
         { token }
       ),
     ])
@@ -37,6 +39,7 @@ export async function GET(
           projectPrompt: projectResponse.project.projectPrompt,
         },
         phases: scenariosResponse.phases,
+        suite: scenariosResponse.suite,
         unassignedScenarioCount: scenariosResponse.unassignedScenarioCount,
       })
     )

@@ -18,6 +18,7 @@ import type * as projects from "../projects.js";
 import type * as runEvidence from "../runEvidence.js";
 import type * as runs from "../runs.js";
 import type * as scenarios from "../scenarios.js";
+import type * as suites from "../suites.js";
 import type * as users from "../users.js";
 
 import type {
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   runEvidence: typeof runEvidence;
   runs: typeof runs;
   scenarios: typeof scenarios;
+  suites: typeof suites;
   users: typeof users;
 }>;
 

@@ -147,6 +147,7 @@ program
   .option("--runner <runner>", "codex or claude-code", "codex")
   .option("--environment <name>")
   .option("--scenario <slug>")
+  .option("--suite <slug>")
   .option("--phase <number>")
   .option("--through-phase <number>")
   .action(async (options) => {

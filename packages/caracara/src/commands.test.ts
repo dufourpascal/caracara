@@ -8,6 +8,7 @@ import {
   listEnvironmentsCommand,
   resolveCheckReference,
   resolvePhaseReference,
+  resolveRunMode,
 } from "./commands.js"
 import { writeLocalConfig } from "./config.js"
 
@@ -85,5 +86,22 @@ describe("authoring references", () => {
     expect(() => resolveCheckReference(scenario, "Receipt")).toThrow(
       /ambiguous/
     )
+  })
+})
+
+describe("run selection", () => {
+  it("selects a suite and rejects selector combinations", () => {
+    expect(resolveRunMode({ suite: "demo-only" })).toEqual({
+      mode: "suite",
+      requestedScenarioSlug: null,
+      requestedPhaseOrder: null,
+      requestedSuiteSlug: "demo-only",
+    })
+    expect(() => resolveRunMode({ suite: "demo-only", phase: "2" })).toThrow(
+      /cannot be combined/i
+    )
+    expect(() =>
+      resolveRunMode({ suite: "demo-only", scenario: "checkout" })
+    ).toThrow(/cannot be combined/i)
   })
 })

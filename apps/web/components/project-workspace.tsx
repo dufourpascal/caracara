@@ -20,6 +20,7 @@ import {
   History,
   ImageIcon,
   LoaderCircle,
+  ListChecks,
   Maximize2,
   PauseCircle,
   Pencil,
@@ -39,10 +40,12 @@ import {
   environmentNameSchema,
   normalizeSlug,
   projectInputSchema,
+  suiteInputSchema,
 } from "@workspace/contracts"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
+import { Checkbox } from "@workspace/ui/components/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -92,7 +95,7 @@ import { ScenarioGraph } from "@/components/scenario-graph"
 import { getErrorMessage } from "@/lib/errors"
 import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
-type WorkspaceKind = "project" | "scenarios" | "runs" | "phases"
+type WorkspaceKind = "project" | "suites" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
 const SIDEBAR_PAGE_SIZES = [10, 20, 50] as const
 const UNTITLED_SCENARIO_SLUG_PATTERN = /^untitled(?:-\d+)?$/
@@ -108,6 +111,7 @@ const RUN_DETAIL_NAV_PANEL_SIZES = {
 } as const
 const WORKSPACE_NAVIGATION_ORDER = [
   "project",
+  "suites",
   "phases",
   "scenarios",
   "runs",
@@ -127,6 +131,8 @@ function getWorkspaceHref({
       return `/projects/${projectSlug}/project`
     case "runs":
       return `/projects/${projectSlug}/runs`
+    case "suites":
+      return `/projects/${projectSlug}/suites`
     case "phases":
       return `/projects/${projectSlug}/phases`
     case "scenarios":
@@ -144,6 +150,8 @@ function getWorkspaceIcon(workspace: WorkspaceKind) {
       return FolderCode
     case "phases":
       return TableOfContents
+    case "suites":
+      return ListChecks
     case "scenarios":
       return Pencil
     case "runs":
@@ -365,6 +373,18 @@ function createProjectFormState(project: {
 function createPhaseFormState(phase: { name: string }) {
   return {
     name: phase.name,
+  }
+}
+
+function createSuiteFormState(suite: {
+  name: string
+  slug: string
+  phaseIds: string[]
+}) {
+  return {
+    name: suite.name,
+    slug: suite.slug,
+    phaseIds: suite.phaseIds,
   }
 }
 
@@ -1015,6 +1035,9 @@ function AuthenticatedProjectWorkspace({
   const updatePhase = useMutation(api.phases.update)
   const reorderPhases = useMutation(api.phases.reorder)
   const removePhase = useMutation(api.phases.remove)
+  const createSuite = useMutation(api.suites.create)
+  const updateSuite = useMutation(api.suites.update)
+  const removeSuite = useMutation(api.suites.remove)
   const createScenario = useMutation(api.scenarios.create)
   const ensureScenarioNavigationMetadata = useMutation(
     api.scenarios.ensureNavigationMetadataForProject
@@ -1025,6 +1048,10 @@ function AuthenticatedProjectWorkspace({
   const phases = useQuery(
     api.phases.listForProject,
     hasDeletedProject ? "skip" : { projectSlug }
+  )
+  const suites = useQuery(
+    api.suites.listForProject,
+    !hasDeletedProject && workspace === "suites" ? { projectSlug } : "skip"
   )
   const [scenarioSearch, setScenarioSearch] = useState("")
   const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
@@ -1041,6 +1068,8 @@ function AuthenticatedProjectWorkspace({
   const [isDeletingRun, setIsDeletingRun] = useState(false)
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null)
   const [phaseError, setPhaseError] = useState<string | null>(null)
+  const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null)
+  const [suiteError, setSuiteError] = useState<string | null>(null)
   const normalizedScenarioSearch = scenarioSearch.trim()
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
@@ -1161,6 +1190,16 @@ function AuthenticatedProjectWorkspace({
     workspace: "scenarios",
     scope: "detail",
   })
+  const suiteListPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "suites",
+    scope: "list",
+  })
+  const suiteDetailPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "suites",
+    scope: "detail",
+  })
   const runListPanelId = getPanelLayoutToken({
     projectSlug,
     workspace: "runs",
@@ -1188,6 +1227,14 @@ function AuthenticatedProjectWorkspace({
       scope: "layout",
     }),
     [scenarioListPanelId, scenarioDetailPanelId]
+  )
+  const suitePanelLayout = usePersistedPanelLayout(
+    getPanelLayoutToken({
+      projectSlug,
+      workspace: "suites",
+      scope: "layout",
+    }),
+    [suiteListPanelId, suiteDetailPanelId]
   )
   const runPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1226,6 +1273,26 @@ function AuthenticatedProjectWorkspace({
       setSelectedPhaseId(phases[0]?.id ?? null)
     }
   }, [phases, selectedPhaseId, workspace])
+
+  useEffect(() => {
+    if (workspace !== "suites" || suites === undefined) {
+      return
+    }
+
+    if (suites.length === 0) {
+      if (selectedSuiteId !== null) {
+        setSelectedSuiteId(null)
+      }
+      return
+    }
+
+    if (
+      !selectedSuiteId ||
+      !suites.some((suite) => suite.id === selectedSuiteId)
+    ) {
+      setSelectedSuiteId(suites[0]?.id ?? null)
+    }
+  }, [selectedSuiteId, suites, workspace])
 
   useEffect(() => {
     if (
@@ -1350,6 +1417,8 @@ function AuthenticatedProjectWorkspace({
   }, [])
   const selectedPhase =
     phases?.find((phase) => phase.id === selectedPhaseId) ?? null
+  const selectedSuite =
+    suites?.find((suite) => suite.id === selectedSuiteId) ?? null
   const selectedScenarioListFilterLabel = getScenarioPhaseFilterLabel(
     selectedScenarioPhaseFilter,
     phases ?? []
@@ -1872,6 +1941,128 @@ function AuthenticatedProjectWorkspace({
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
+      ) : workspace === "suites" ? (
+        <ResizablePanelGroup
+          className="flex-1"
+          defaultLayout={suitePanelLayout.defaultLayout}
+          onLayoutChanged={suitePanelLayout.onLayoutChanged}
+          orientation="horizontal"
+        >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={suiteListPanelId}>
+            <div className="flex h-full flex-col border-r border-border">
+              <div className="border-b border-border bg-muted/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                    Suite registry
+                  </p>
+                  <Button
+                    aria-label="Create suite"
+                    size="icon-sm"
+                    onClick={async () => {
+                      await runWithErrorMessage(async () => {
+                        const created = await createSuite({
+                          projectId: project.id as never,
+                          name: `Suite ${(suites?.length ?? 0) + 1}`,
+                          phaseIds: [],
+                        })
+                        setSelectedSuiteId(created.id)
+                      }, setSuiteError)
+                    }}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
+                {suiteError ? (
+                  <p className="mt-3 text-sm text-destructive" role="alert">
+                    {suiteError}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex-1 overflow-auto px-3 py-3">
+                {suites === undefined ? (
+                  <div className="px-2 py-2 text-sm text-muted-foreground">
+                    Loading suites...
+                  </div>
+                ) : suites.length === 0 ? (
+                  <NavigationEmptyState
+                    description="Create a suite to run a reusable subset of this project's phases."
+                    icon={ListChecks}
+                    title="No suites yet"
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          await runWithErrorMessage(async () => {
+                            const created = await createSuite({
+                              projectId: project.id as never,
+                              name: "Suite 1",
+                              phaseIds: [],
+                            })
+                            setSelectedSuiteId(created.id)
+                          }, setSuiteError)
+                        }}
+                      >
+                        <Plus />
+                        Create suite
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <div className="grid gap-2">
+                    {suites.map((suite) => (
+                      <button
+                        aria-pressed={suite.id === selectedSuiteId}
+                        className={cn(
+                          "grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-border px-3 py-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                          suite.id === selectedSuiteId
+                            ? "bg-muted/40"
+                            : "bg-background hover:bg-muted/20"
+                        )}
+                        key={suite.id}
+                        onClick={() => setSelectedSuiteId(suite.id)}
+                        type="button"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            {suite.name}
+                          </span>
+                          <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
+                            {suite.slug}
+                          </span>
+                        </span>
+                        <Badge className="font-mono" variant="outline">
+                          {suite.phaseIds.length}
+                        </Badge>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel id={suiteDetailPanelId}>
+            {selectedSuite ? (
+              <SuiteEditor
+                key={`${selectedSuite.id}:${selectedSuite.updatedAt}`}
+                onError={setSuiteError}
+                phases={phases ?? []}
+                removeSuite={removeSuite}
+                setSelectedSuiteId={setSelectedSuiteId}
+                suite={selectedSuite}
+                updateSuite={updateSuite}
+              />
+            ) : (
+              <BlankDetailPanel
+                description="Choose a suite to edit its name, slug, and included phases."
+                icon={ListChecks}
+                title="Select a suite"
+              />
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
       ) : workspace === "phases" ? (
         <ResizablePanelGroup
           className="flex-1"
@@ -2174,6 +2365,19 @@ function AuthenticatedProjectWorkspace({
                                   </span>
                                 </span>
                               ) : null}
+                              {run.mode === "suite" &&
+                              run.requestedSuiteSlug ? (
+                                <span
+                                  className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+                                  title={`Suite: ${run.requestedSuiteName ?? run.requestedSuiteSlug}`}
+                                >
+                                  <ListChecks className="size-3.5 shrink-0" />
+                                  <span className="truncate">
+                                    {run.requestedSuiteName ??
+                                      run.requestedSuiteSlug}
+                                  </span>
+                                </span>
+                              ) : null}
                             </span>
                           </span>
                         </button>
@@ -2301,6 +2505,21 @@ function AuthenticatedProjectWorkspace({
                             </p>
                           ) : null}
                         </div>
+                        {runDetail.run.mode === "suite" &&
+                        runDetail.run.requestedSuiteSlug ? (
+                          <div className="col-span-2 bg-background px-3 py-2">
+                            <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                              Target suite
+                            </p>
+                            <p className="mt-1 text-sm text-foreground">
+                              {runDetail.run.requestedSuiteName ??
+                                runDetail.run.requestedSuiteSlug}
+                            </p>
+                            <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                              {runDetail.run.requestedSuiteSlug}
+                            </p>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -3173,6 +3392,190 @@ export function ScenarioEditor({
   )
 }
 
+export function SuiteEditor({
+  suite,
+  phases,
+  onError,
+  removeSuite,
+  setSelectedSuiteId,
+  updateSuite,
+}: {
+  suite: {
+    id: string
+    name: string
+    slug: string
+    phaseIds: string[]
+  }
+  phases: Array<{
+    id: string
+    name: string
+    order: number
+  }>
+  onError: (message: string | null) => void
+  removeSuite: ReturnType<typeof useMutation<typeof api.suites.remove>>
+  setSelectedSuiteId: (value: string | null) => void
+  updateSuite: ReturnType<typeof useMutation<typeof api.suites.update>>
+}) {
+  const [savedForm, setSavedForm] = useState(() => createSuiteFormState(suite))
+  const [form, setForm] = useState(() => createSuiteFormState(suite))
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<"name" | "slug" | "phaseIds", string>>
+  >({})
+  const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm)
+
+  return (
+    <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={async () => {
+            if (!window.confirm(`Delete suite "${suite.name}"?`)) {
+              return
+            }
+
+            await runWithErrorMessage(async () => {
+              await removeSuite({ suiteId: suite.id as never })
+              setSelectedSuiteId(null)
+            }, onError)
+          }}
+        >
+          <Trash2 />
+          Delete
+        </Button>
+        <Button
+          disabled={!isDirty}
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setForm(savedForm)
+            setFieldErrors({})
+            onError(null)
+          }}
+        >
+          <RotateCcw />
+          Revert
+        </Button>
+        <Button
+          disabled={!isDirty}
+          size="sm"
+          onClick={async () => {
+            const parsed = suiteInputSchema.safeParse(form)
+
+            if (!parsed.success) {
+              const flattened = parsed.error.flatten().fieldErrors
+              setFieldErrors({
+                name: flattened.name?.[0],
+                slug: flattened.slug?.[0],
+                phaseIds: flattened.phaseIds?.[0],
+              })
+              return
+            }
+
+            setFieldErrors({})
+            await runWithErrorMessage(async () => {
+              const updated = await updateSuite({
+                suiteId: suite.id as never,
+                name: parsed.data.name,
+                slug: parsed.data.slug ?? parsed.data.name,
+                phaseIds: parsed.data.phaseIds as never[],
+              })
+              const nextForm = createSuiteFormState(updated)
+              setSavedForm(nextForm)
+              setForm(nextForm)
+            }, onError)
+          }}
+        >
+          <Save />
+          Save
+        </Button>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field error={fieldErrors.name} label="Name">
+          <Input
+            aria-invalid={!!fieldErrors.name}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, name: event.target.value }))
+            }
+            value={form.name}
+          />
+        </Field>
+        <Field error={fieldErrors.slug} label="Slug">
+          <Input
+            aria-invalid={!!fieldErrors.slug}
+            className="font-mono"
+            onChange={(event) =>
+              setForm((current) => ({ ...current, slug: event.target.value }))
+            }
+            value={form.slug}
+          />
+        </Field>
+      </div>
+
+      <section className="grid gap-3 border-t border-border pt-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+              Included phases
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Runs follow the project phase order.
+            </p>
+          </div>
+          <Badge className="font-mono" variant="outline">
+            {form.phaseIds.length}
+          </Badge>
+        </div>
+        {fieldErrors.phaseIds ? (
+          <p className="text-sm text-destructive" role="alert">
+            {fieldErrors.phaseIds}
+          </p>
+        ) : null}
+        <div className="border border-border">
+          {phases.length === 0 ? (
+            <div className="px-4 py-4 text-sm text-muted-foreground">
+              This project has no phases yet. The suite can remain empty.
+            </div>
+          ) : (
+            phases.map((phase) => {
+              const checked = form.phaseIds.includes(phase.id)
+              const checkboxId = `suite-${suite.id}-phase-${phase.id}`
+
+              return (
+                <label
+                  className="flex cursor-pointer items-center gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0 hover:bg-muted/20"
+                  htmlFor={checkboxId}
+                  key={phase.id}
+                >
+                  <Checkbox
+                    checked={checked}
+                    id={checkboxId}
+                    onCheckedChange={(nextChecked) =>
+                      setForm((current) => ({
+                        ...current,
+                        phaseIds:
+                          nextChecked === true
+                            ? [...current.phaseIds, phase.id]
+                            : current.phaseIds.filter(
+                                (phaseId) => phaseId !== phase.id
+                              ),
+                      }))
+                    }
+                  />
+                  <span className="text-foreground">
+                    Phase {phase.order}: {phase.name}
+                  </span>
+                </label>
+              )
+            })
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function PhaseEditor({
   phase,
   allScenarios,
@@ -3789,10 +4192,12 @@ function ScenarioEditorSkeleton() {
 function Field({
   label,
   description,
+  error,
   children,
 }: {
   label: string
   description?: string
+  error?: string
   children: React.ReactNode
 }) {
   return (
@@ -3808,6 +4213,11 @@ function Field({
         ) : null}
       </div>
       {children}
+      {error ? (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

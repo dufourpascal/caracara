@@ -130,9 +130,14 @@ export async function fetchExecutionPlan(args: {
   accessToken: string
   version: string
   projectSlug: string
+  suiteSlug?: string
 }) {
+  const search = args.suiteSlug
+    ? `?${new URLSearchParams({ suite: args.suiteSlug })}`
+    : ""
+
   return request({
-    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios`,
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios${search}`,
     version: args.version,
     accessToken: args.accessToken,
     schema: executionPlanResponseSchema,

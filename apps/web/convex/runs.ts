@@ -191,7 +191,8 @@ export const create = mutation({
       v.literal("all"),
       v.literal("single"),
       v.literal("phase"),
-      v.literal("through_phase")
+      v.literal("through_phase"),
+      v.literal("suite")
     ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
     evidencePolicy: v.optional(
@@ -201,6 +202,8 @@ export const create = mutation({
     targetUrl: v.optional(v.string()),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
+    requestedSuiteName: v.optional(v.union(v.null(), v.string())),
     startedAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -227,6 +230,8 @@ export const create = mutation({
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
+      requestedSuiteSlug: args.requestedSuiteSlug ?? null,
+      requestedSuiteName: args.requestedSuiteName ?? null,
       runnerType: args.runnerType,
       evidencePolicy: args.evidencePolicy ?? "text_only",
       ...(environment ?? {}),
@@ -574,9 +579,7 @@ export const remove = mutation({
       const remainingRun = await ctx.db
         .query("runs")
         .withIndex("by_project_environment_started_at", (query) =>
-          query
-            .eq("projectId", project._id)
-            .eq("environment", run.environment)
+          query.eq("projectId", project._id).eq("environment", run.environment)
         )
         .first()
       if (!remainingRun) {

@@ -166,6 +166,32 @@ describe("project deletion helpers", () => {
             }
           }
 
+          if (table === "suites") {
+            return {
+              withIndex(
+                indexName: string,
+                buildQuery: (query: {
+                  eq: (field: string, value: string) => null
+                }) => null
+              ) {
+                expect(indexName).toBe("by_project")
+                buildQuery({
+                  eq(field, value) {
+                    expect(field).toBe("projectId")
+                    expect(value).toBe("project-1")
+                    return null
+                  },
+                })
+
+                return {
+                  async collect() {
+                    return [{ _id: "suite-1" }]
+                  },
+                }
+              },
+            }
+          }
+
           if (table === "scenarioResults") {
             return {
               withIndex(
@@ -246,6 +272,7 @@ describe("project deletion helpers", () => {
       deletedResultCount: 3,
       deletedRunCount: 2,
       deletedScenarioCount: 2,
+      deletedSuiteCount: 1,
     })
     expect(deletedIds).toEqual([
       "evidence-1",
@@ -260,6 +287,7 @@ describe("project deletion helpers", () => {
       "scenario-2",
       "phase-1",
       "phase-2",
+      "suite-1",
       "project-1",
     ])
     expect(deletedStorageIds).toEqual(["storage-1"])

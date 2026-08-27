@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  fetchExecutionPlan,
   fetchProjects,
   submitAuthoringOperation,
   submitScenarioResult,
@@ -114,6 +115,39 @@ describe("api client", () => {
           phaseId: "phase-1",
         }),
       })
+    )
+  })
+
+  it("requests a suite-filtered execution plan", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        project: {
+          id: "project-1",
+          name: "Demo",
+          slug: "demo",
+          projectPrompt: "",
+        },
+        phases: [],
+        suite: { name: "Demo only", slug: "demo-only" },
+        unassignedScenarioCount: 0,
+      }),
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await fetchExecutionPlan({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.5.0",
+      projectSlug: "demo",
+      suiteSlug: "demo only",
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/api/v3/projects/demo/scenarios?suite=demo+only",
+      expect.anything()
     )
   })
 

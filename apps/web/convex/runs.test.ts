@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   deleteRunAndResults,
-  interruptRunningScenarioResults,
+  interruptRunScenarioResults,
 } from "./lib"
 import {
   addRunEnvironmentName,
@@ -112,7 +112,13 @@ describe("run finalization", () => {
                 eq: (field: string, value: string) => null
               }) => null
             ) {
-              buildQuery({ eq: () => null })
+              let indexedValue = ""
+              buildQuery({
+                eq: (_field, value) => {
+                  indexedValue = value
+                  return null
+                },
+              })
               return {
                 async collect() {
                   return table === "scenarioResults"
@@ -120,7 +126,12 @@ describe("run finalization", () => {
                         { _id: "running-1", status: "running" },
                         { _id: "completed-1", status: "completed" },
                       ]
-                    : [{ _id: "evidence-1", storageId: "storage-1" }]
+                    : [
+                        {
+                          _id: `evidence-${indexedValue}`,
+                          storageId: `storage-${indexedValue}`,
+                        },
+                      ]
                 },
               }
             },
@@ -141,13 +152,34 @@ describe("run finalization", () => {
     } as never
 
     await expect(
-      interruptRunningScenarioResults(ctx, "run-1" as never, 123)
-    ).resolves.toBe(1)
-    expect(deletedStorageIds).toEqual(["storage-1"])
-    expect(deletedIds).toEqual(["evidence-1"])
+      interruptRunScenarioResults(
+        ctx,
+        "run-1" as never,
+        123,
+        "completed-1" as never
+      )
+    ).resolves.toBe(2)
+    expect(deletedStorageIds).toEqual([
+      "storage-running-1",
+      "storage-completed-1",
+    ])
+    expect(deletedIds).toEqual([
+      "evidence-running-1",
+      "evidence-completed-1",
+    ])
     expect(patches).toEqual([
       {
         id: "running-1",
+        value: {
+          status: "interrupted",
+          checkResults: [],
+          executionSummary: null,
+          failureDetail: "Execution interrupted.",
+          finishedAt: 123,
+        },
+      },
+      {
+        id: "completed-1",
         value: {
           status: "interrupted",
           checkResults: [],

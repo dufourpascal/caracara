@@ -541,6 +541,12 @@ export async function finalizeRun(args: {
       ...(payload.finalizationAttemptId
         ? { finalizationAttemptId: payload.finalizationAttemptId }
         : {}),
+      ...(payload.interruptedScenarioResultId
+        ? {
+            interruptedScenarioResultId:
+              payload.interruptedScenarioResultId as never,
+          }
+        : {}),
     },
     { token: args.token }
   )

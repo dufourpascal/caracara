@@ -17,7 +17,7 @@ import {
   getExecutionPlan,
   getScenarioById,
   getSuiteBySlug,
-  interruptRunningScenarioResults,
+  interruptRunScenarioResults,
   matchesTerminalScenarioResult,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
@@ -598,6 +598,7 @@ export const finalize = mutation({
     ),
     finishedAt: v.number(),
     finalizationAttemptId: v.optional(v.string()),
+    interruptedScenarioResultId: v.optional(v.id("scenarioResults")),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -643,7 +644,12 @@ export const finalize = mutation({
     }
 
     if (args.status === "interrupted") {
-      await interruptRunningScenarioResults(ctx, run._id, args.finishedAt)
+      await interruptRunScenarioResults(
+        ctx,
+        run._id,
+        args.finishedAt,
+        args.interruptedScenarioResultId
+      )
     }
 
     const counts = await computeRunCheckCounts(ctx, run._id)

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { setTimeout as delay } from "node:timers/promises"
+import { spawn } from "node:child_process"
+import { once } from "node:events"
 
 import type { OrderedScenario } from "@workspace/contracts"
 
@@ -17,7 +18,7 @@ import {
   parseClaudeJsonResult,
   redactRunnerExecution,
   redactSecretValues,
-  runChildCommand,
+  terminateChildProcess,
   toCodexRunnerUsage,
   validateRunnerExecution,
 } from "./execution.js"
@@ -42,23 +43,25 @@ describe("child command termination", () => {
   it.skipIf(process.platform === "win32")(
     "waits for an aborted child and force-kills it after the grace period",
     async () => {
-      const controller = new AbortController()
-      const execution = runChildCommand({
-        command: process.execPath,
-        commandArgs: [
+      const child = spawn(
+        process.execPath,
+        [
           "-e",
-          'process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000)',
+          'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1_000)',
         ],
-        cwd: process.cwd(),
-        signal: controller.signal,
-      })
-      await delay(100)
+        { stdio: ["ignore", "pipe", "ignore"] }
+      )
 
-      const abortedAt = Date.now()
-      controller.abort(new Error("Interrupted"))
+      try {
+        await once(child.stdout, "data")
+        await terminateChildProcess(child)
 
-      await expect(execution).rejects.toThrow("Interrupted")
-      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(900)
+        expect(child.signalCode).toBe("SIGKILL")
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL")
+        }
+      }
     }
   )
 })

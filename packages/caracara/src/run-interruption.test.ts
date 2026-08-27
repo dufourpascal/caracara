@@ -199,7 +199,10 @@ describe("run interruption", () => {
     )
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: expect.objectContaining({ status: "interrupted" }),
+        payload: expect.objectContaining({
+          status: "interrupted",
+          interruptedScenarioResultId: "result-1",
+        }),
       })
     )
     expect(process.exitCode).toBe(130)
@@ -545,7 +548,10 @@ describe("run interruption", () => {
     )
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: expect.objectContaining({ status: "interrupted" }),
+        payload: expect.objectContaining({
+          status: "interrupted",
+          interruptedScenarioResultId: "result-1",
+        }),
       })
     )
     expect(process.exitCode).toBe(130)

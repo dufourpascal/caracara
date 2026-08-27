@@ -588,6 +588,7 @@ export async function runCommand(options: RunCommandOptions) {
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
   const finalizationAttemptId = crypto.randomUUID()
+  let interruptedScenarioResultId: string | null = null
   const runAbortController = new AbortController()
   let interruptedSignal: "SIGINT" | "SIGTERM" | null = null
   const interrupt = (signal: "SIGINT" | "SIGTERM") => {
@@ -652,6 +653,9 @@ export async function runCommand(options: RunCommandOptions) {
         status: "interrupted",
         finishedAt,
         finalizationAttemptId,
+        ...(interruptedScenarioResultId
+          ? { interruptedScenarioResultId }
+          : {}),
       },
     })
   const finishSignalInterruption = async (runId: string) => {
@@ -842,6 +846,7 @@ export async function runCommand(options: RunCommandOptions) {
   let runUsage: RunnerUsageReport = { complete: true }
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
+  let activeScenarioResultId: string | null = null
   let lastPrintedPhaseId: string | null = null
 
   try {
@@ -880,6 +885,7 @@ export async function runCommand(options: RunCommandOptions) {
         },
         signal: runAbortController.signal,
       })
+      activeScenarioResultId = startedScenario.result.id
       runAbortController.signal.throwIfAborted()
 
       if (runFailed) {
@@ -905,6 +911,7 @@ export async function runCommand(options: RunCommandOptions) {
         })
         runAbortController.signal.throwIfAborted()
         activeScenario = null
+        activeScenarioResultId = null
         continue
       }
 
@@ -975,6 +982,7 @@ export async function runCommand(options: RunCommandOptions) {
         })
         runAbortController.signal.throwIfAborted()
         activeScenario = null
+        activeScenarioResultId = null
         const passed = execution.checkResults.filter(
           (result) => result.verdict === "passed"
         ).length
@@ -1011,6 +1019,7 @@ export async function runCommand(options: RunCommandOptions) {
         })
         runAbortController.signal.throwIfAborted()
         activeScenario = null
+        activeScenarioResultId = null
         process.stdout.write(
           `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
         )
@@ -1022,6 +1031,7 @@ export async function runCommand(options: RunCommandOptions) {
   } catch (error) {
     runError = error
     if (activeScenario) {
+      interruptedScenarioResultId = activeScenarioResultId
       try {
         await submitScenarioResult({
           apiBaseUrl: config.apiBaseUrl,
@@ -1049,6 +1059,7 @@ export async function runCommand(options: RunCommandOptions) {
         // Preserve the original interruption error from the run loop.
       }
       activeScenario = null
+      activeScenarioResultId = null
     }
     finalRunStatus = "interrupted"
     finalFinishedAt = Date.now()
@@ -1081,6 +1092,9 @@ export async function runCommand(options: RunCommandOptions) {
               status: finalRunStatus,
               finishedAt: finalFinishedAt,
               finalizationAttemptId,
+              ...(interruptedScenarioResultId
+                ? { interruptedScenarioResultId }
+                : {}),
             },
             signal: runAbortController.signal,
           })

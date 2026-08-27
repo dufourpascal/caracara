@@ -612,7 +612,7 @@ function signalChildProcess(
   }
 }
 
-async function terminateChildProcess(
+export async function terminateChildProcess(
   child: ChildProcess,
   detached = false,
   closePromise?: Promise<void>

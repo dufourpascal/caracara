@@ -134,6 +134,7 @@ export async function fetchExecutionPlan(args: {
   version: string
   projectSlug: string
   suiteSlug?: string
+  signal?: AbortSignal
 }) {
   const search = args.suiteSlug
     ? `?${new URLSearchParams({ suite: args.suiteSlug })}`
@@ -143,6 +144,7 @@ export async function fetchExecutionPlan(args: {
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios${search}`,
     version: args.version,
     accessToken: args.accessToken,
+    init: { signal: args.signal },
     schema: executionPlanResponseSchema,
   })
 }

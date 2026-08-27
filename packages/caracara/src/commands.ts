@@ -705,6 +705,7 @@ export async function runCommand(options: RunCommandOptions) {
           version: CLI_VERSION,
           projectSlug,
           suiteSlug: runSelection.requestedSuiteSlug ?? undefined,
+          signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
           const selectedPhases =
@@ -741,14 +742,25 @@ export async function runCommand(options: RunCommandOptions) {
           }
         })
   ).catch(async (error) => {
-    if (createRunResponse && interruptedSignal) {
-      await finishSignalInterruption(createRunResponse.run.id)
+    let finalizationError: unknown = null
+    try {
+      if (createRunResponse) {
+        await finalizeInterruptedRun(createRunResponse.run.id)
+      }
+    } catch (cleanupError) {
+      finalizationError = cleanupError
+    } finally {
+      stopListeningForInterrupts()
+    }
+    if (setSignalExitCode()) {
+      if (finalizationError) {
+        reportInterruptedFinalizationError(finalizationError)
+      }
       return null
     }
-    if (createRunResponse) {
-      await finalizeInterruptedRun(createRunResponse.run.id)
+    if (finalizationError) {
+      throw finalizationError
     }
-    stopListeningForInterrupts()
     throw error
   })
 

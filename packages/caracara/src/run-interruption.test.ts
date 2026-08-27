@@ -50,7 +50,10 @@ const mocks = vi.hoisted(() => {
     })),
     executeScenario,
     executionPlan,
-    fetchExecutionPlan: vi.fn(async () => executionPlan),
+    fetchExecutionPlan: vi.fn(async (args?: { signal?: AbortSignal }) => {
+      void args
+      return executionPlan
+    }),
     finalizeRun: vi.fn(async (args?: { signal?: AbortSignal }) => {
       void args
     }),
@@ -322,13 +325,14 @@ describe("run interruption", () => {
   )
 
   it("preserves the signal exit code when plan-fetch cleanup fails", async () => {
-    let finishFetchingPlan:
-      | ((value: typeof mocks.executionPlan) => void)
-      | undefined
     mocks.fetchExecutionPlan.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishFetchingPlan = resolve
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
         })
     )
     mocks.finalizeRun.mockRejectedValueOnce(new Error("API unavailable"))
@@ -345,11 +349,13 @@ describe("run interruption", () => {
       .find((listener) => !existingListeners.has(listener))
     expect(interrupt).toBeDefined()
     interrupt?.("SIGINT")
-    finishFetchingPlan?.(mocks.executionPlan)
 
     await run
 
     expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({ status: "interrupted" }),
@@ -359,6 +365,37 @@ describe("run interruption", () => {
     expect(stderr).toHaveBeenCalledWith(
       "Failed to finalize interrupted run: API unavailable\n"
     )
+    expect(
+      process
+        .listeners("SIGINT")
+        .filter((listener) => !existingListeners.has(listener))
+    ).toHaveLength(0)
+  })
+
+  it("preserves the signal exit code during plan-error cleanup", async () => {
+    let finishFinalization: (() => void) | undefined
+    mocks.fetchExecutionPlan.mockRejectedValueOnce(new Error("Plan failed"))
+    mocks.finalizeRun.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFinalization = () => resolve(undefined)
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({ suite: "smoke" })
+    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalled())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+    finishFinalization?.()
+
+    await expect(run).resolves.toBeUndefined()
+
+    expect(process.exitCode).toBe(130)
     expect(
       process
         .listeners("SIGINT")

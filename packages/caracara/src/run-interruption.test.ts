@@ -284,6 +284,43 @@ describe("run interruption", () => {
     expect(process.exitCode).toBe(130)
   })
 
+  it.each([
+    ["suite", { suite: "smoke" }],
+    ["non-suite", {}],
+  ] as const)(
+    "preserves the signal exit code when %s run creation rejects",
+    async (_mode, options) => {
+      let failCreatingRun: ((error: Error) => void) | undefined
+      mocks.createRun.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            failCreatingRun = reject
+          })
+      )
+      const existingListeners = new Set(process.listeners("SIGINT"))
+      vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+      const run = runCommand(options)
+      await vi.waitFor(() => expect(mocks.createRun).toHaveBeenCalled())
+      const interrupt = process
+        .listeners("SIGINT")
+        .find((listener) => !existingListeners.has(listener))
+      expect(interrupt).toBeDefined()
+      interrupt?.("SIGINT")
+      failCreatingRun?.(new Error("Connection dropped"))
+
+      await expect(run).resolves.toBeUndefined()
+
+      expect(mocks.finalizeRun).not.toHaveBeenCalled()
+      expect(process.exitCode).toBe(130)
+      expect(
+        process
+          .listeners("SIGINT")
+          .filter((listener) => !existingListeners.has(listener))
+      ).toHaveLength(0)
+    }
+  )
+
   it("preserves the signal exit code when plan-fetch cleanup fails", async () => {
     let finishFetchingPlan:
       | ((value: typeof mocks.executionPlan) => void)

@@ -666,6 +666,9 @@ export async function runCommand(options: RunCommandOptions) {
       createRunResponse = await startRun()
     } catch (error) {
       stopListeningForInterrupts()
+      if (setSignalExitCode()) {
+        return
+      }
       throw error
     }
     if (interruptedSignal) {
@@ -773,6 +776,9 @@ export async function runCommand(options: RunCommandOptions) {
       createRunResponse = await startRun()
     } catch (error) {
       stopListeningForInterrupts()
+      if (setSignalExitCode()) {
+        return
+      }
       throw error
     }
     if (interruptedSignal) {

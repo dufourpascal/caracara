@@ -458,6 +458,8 @@ describe("contracts", () => {
         finishedAt: 10,
         finalizationAttemptId: "00000000-0000-4000-8000-000000000001",
         interruptedScenarioResultId: "result-1",
+        interruptedScenarioAttemptId:
+          "00000000-0000-4000-8000-000000000002",
       }).finalizationAttemptId
     ).toBe("00000000-0000-4000-8000-000000000001")
     expect(
@@ -465,6 +467,8 @@ describe("contracts", () => {
         status: "interrupted",
         finishedAt: 10,
         interruptedScenarioResultId: "result-1",
+        interruptedScenarioAttemptId:
+          "00000000-0000-4000-8000-000000000002",
       }).interruptedScenarioResultId
     ).toBe("result-1")
 

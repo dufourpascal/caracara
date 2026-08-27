@@ -955,7 +955,8 @@ export async function interruptRunScenarioResults(
   ctx: MutationCtx,
   runId: Id<"runs">,
   finishedAt: number,
-  interruptedScenarioResultId?: Id<"scenarioResults">
+  interruptedScenarioResultId?: Id<"scenarioResults">,
+  interruptedScenarioAttemptId?: string
 ) {
   const results = await ctx.db
     .query("scenarioResults")
@@ -965,6 +966,8 @@ export async function interruptRunScenarioResults(
     (result) =>
       result.status === "running" ||
       (result._id === interruptedScenarioResultId &&
+        interruptedScenarioAttemptId !== undefined &&
+        result.executionAttemptId === interruptedScenarioAttemptId &&
         ["completed", "runner_failed", "dependency_failed"].includes(
           result.status
         ))

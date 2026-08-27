@@ -50,7 +50,7 @@ Scenario results are submitted incrementally.
 
 The CLI should report each scenario result back to the hosted service immediately after that scenario finishes or errors rather than waiting for the full run to complete.
 
-Run finalization includes a per-execution attempt ID. The backend may correct a completed or failed run to interrupted only when the correction carries the same attempt ID as the request that finalized it, covering a signal race without allowing unrelated stale clients to rewrite terminal runs. An interrupted finalization may also identify the active scenario-result record so the same transaction can correct a terminal result whose response was lost during cancellation.
+Run finalization includes a per-execution attempt ID. The backend may correct a completed or failed run to interrupted only when the correction carries the same attempt ID as the request that finalized it, covering a signal race without allowing unrelated stale clients to rewrite terminal runs. Scenario start similarly includes a per-execution attempt ID. An interrupted finalization may identify the active scenario-result record and matching attempt ID so the same transaction can correct a terminal result whose response was lost during cancellation without trusting a result ID alone.
 
 ### API_09
 

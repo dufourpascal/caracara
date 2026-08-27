@@ -64,6 +64,37 @@ describe("child command termination", () => {
       }
     }
   )
+
+  it.skipIf(process.platform === "win32")(
+    "terminates descendants that keep pipes open after the leader exits",
+    async () => {
+      const descendantScript =
+        'process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000)'
+      const leaderScript =
+        'require("node:child_process").spawn(process.execPath, ["-e", ' +
+        JSON.stringify(descendantScript) +
+        '], { stdio: ["ignore", process.stdout, "ignore"] }).unref()'
+      const child = spawn(process.execPath, ["-e", leaderScript], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+      const closed = once(child, "close").then(() => undefined)
+
+      try {
+        await once(child, "exit")
+        await terminateChildProcess(child, true, closed)
+        await closed
+      } finally {
+        if (child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL")
+          } catch {
+            // The process group is already gone.
+          }
+        }
+      }
+    }
+  )
 })
 
 describe("Codex SDK configuration", () => {

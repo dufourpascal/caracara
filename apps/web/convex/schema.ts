@@ -155,6 +155,7 @@ export default defineSchema({
       v.literal("interrupted")
     ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
+    executionAttemptId: v.optional(v.string()),
     executionSummary: v.union(v.null(), v.string()),
     failureDetail: v.union(v.null(), v.string()),
     startedAt: v.number(),

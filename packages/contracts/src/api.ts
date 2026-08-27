@@ -354,6 +354,7 @@ export const startScenarioExecutionRequestSchema = z.object({
     sequenceIndex: z.number().int().nonnegative(),
     runnerType: runnerTypeSchema,
     startedAt: z.number().int().positive(),
+    executionAttemptId: z.string().uuid().optional(),
   }),
 })
 
@@ -399,6 +400,7 @@ export const finalizeRunRequestSchema = z.object({
   finishedAt: z.number().int().positive(),
   finalizationAttemptId: z.string().uuid().optional(),
   interruptedScenarioResultId: z.string().min(1).optional(),
+  interruptedScenarioAttemptId: z.string().uuid().optional(),
 })
 
 export const finalizeRunResponseSchema = z.object({

@@ -551,9 +551,20 @@ describe("run interruption", () => {
         payload: expect.objectContaining({
           status: "interrupted",
           interruptedScenarioResultId: "result-1",
+          interruptedScenarioAttemptId: expect.any(String),
         }),
       })
     )
+    const startCalls = mocks.startScenarioExecution.mock
+      .calls as unknown as Array<
+      [{ payload: { result: { executionAttemptId?: string } } }]
+    >
+    const finalizeCalls = mocks.finalizeRun.mock.calls as unknown as Array<
+      [{ payload: { interruptedScenarioAttemptId?: string } }]
+    >
+    expect(
+      finalizeCalls[0]?.[0].payload.interruptedScenarioAttemptId
+    ).toBe(startCalls[0]?.[0].payload.result.executionAttemptId)
     expect(process.exitCode).toBe(130)
   })
 

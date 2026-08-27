@@ -481,6 +481,7 @@ export const startScenarioExecution = mutation({
       sequenceIndex: v.number(),
       runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
       startedAt: v.number(),
+      executionAttemptId: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
@@ -555,6 +556,9 @@ export const startScenarioExecution = mutation({
       sequenceIndex: args.result.sequenceIndex,
       status: "running" as const,
       runnerType: args.result.runnerType,
+      ...(args.result.executionAttemptId
+        ? { executionAttemptId: args.result.executionAttemptId }
+        : {}),
       executionSummary: null,
       failureDetail: null,
       startedAt: args.result.startedAt,
@@ -599,6 +603,7 @@ export const finalize = mutation({
     finishedAt: v.number(),
     finalizationAttemptId: v.optional(v.string()),
     interruptedScenarioResultId: v.optional(v.id("scenarioResults")),
+    interruptedScenarioAttemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -648,7 +653,8 @@ export const finalize = mutation({
         ctx,
         run._id,
         args.finishedAt,
-        args.interruptedScenarioResultId
+        args.interruptedScenarioResultId,
+        args.interruptedScenarioAttemptId
       )
     }
 

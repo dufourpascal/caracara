@@ -124,7 +124,11 @@ describe("run finalization", () => {
                   return table === "scenarioResults"
                     ? [
                         { _id: "running-1", status: "running" },
-                        { _id: "completed-1", status: "completed" },
+                        {
+                          _id: "completed-1",
+                          status: "completed",
+                          executionAttemptId: "attempt-1",
+                        },
                       ]
                     : [
                         {
@@ -156,7 +160,22 @@ describe("run finalization", () => {
         ctx,
         "run-1" as never,
         123,
-        "completed-1" as never
+        "completed-1" as never,
+        "stale-attempt"
+      )
+    ).resolves.toBe(1)
+    expect(patches.map((patch) => patch.id)).toEqual(["running-1"])
+    deletedStorageIds.length = 0
+    deletedIds.length = 0
+    patches.length = 0
+
+    await expect(
+      interruptRunScenarioResults(
+        ctx,
+        "run-1" as never,
+        123,
+        "completed-1" as never,
+        "attempt-1"
       )
     ).resolves.toBe(2)
     expect(deletedStorageIds).toEqual([

@@ -598,7 +598,6 @@ function signalChildProcess(
   if (!child.pid) {
     return
   }
-
   try {
     if (detached && process.platform !== "win32") {
       process.kill(-child.pid, signal)
@@ -620,11 +619,13 @@ export async function terminateChildProcess(
   if (!child.pid) {
     return
   }
-
-  if (child.exitCode !== null || child.signalCode !== null) {
-    await closePromise
+  if (
+    !closePromise &&
+    (child.exitCode !== null || child.signalCode !== null)
+  ) {
     return
   }
+
   const waitForClose =
     closePromise ??
     new Promise<void>((resolve) => {
@@ -638,6 +639,8 @@ export async function terminateChildProcess(
   ])
   if (!terminated) {
     signalChildProcess(child, "SIGKILL", detached)
+    child.stdout?.destroy()
+    child.stderr?.destroy()
     await waitForClose
   }
 }

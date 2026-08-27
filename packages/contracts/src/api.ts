@@ -278,6 +278,7 @@ export const createRunRequestSchema = z
     requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
     creationAttemptId: z.string().uuid().optional(),
+    interruptedAt: z.number().int().positive().optional(),
   })
   .refine(
     (value) =>
@@ -287,6 +288,16 @@ export const createRunRequestSchema = z
     }
   )
   .superRefine((value, ctx) => {
+    if (
+      value.interruptedAt !== undefined &&
+      value.creationAttemptId === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Interrupted run creation requires a creation attempt ID.",
+        path: ["creationAttemptId"],
+      })
+    }
     const hasScenario = value.requestedScenarioSlug != null
     const hasPhase = value.requestedPhaseOrder != null
     const hasSuite = value.requestedSuiteSlug != null

@@ -78,6 +78,12 @@ export function removeRunEnvironmentName(names: string[], environment: string) {
   return names.filter((name) => name !== environment)
 }
 
+export function getRunCreationState(interruptedAt?: number) {
+  return interruptedAt === undefined
+    ? { status: "running" as const, finishedAt: null }
+    : { status: "interrupted" as const, finishedAt: interruptedAt }
+}
+
 export function matchesTerminalRun(
   existing: { status: string; finishedAt: number | null },
   submitted: { status: string; finishedAt: number }
@@ -256,12 +262,19 @@ export const create = mutation({
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     startedAt: v.number(),
     creationAttemptId: v.optional(v.string()),
+    interruptedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
       ctx,
       args.projectId
     )
+    if (args.interruptedAt !== undefined && !args.creationAttemptId) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Interrupted run creation requires a creation attempt ID.",
+      })
+    }
     if (args.creationAttemptId) {
       const existing = await ctx.db
         .query("runs")
@@ -272,6 +285,21 @@ export const create = mutation({
         )
         .unique()
       if (existing) {
+        const creationState = getRunCreationState(args.interruptedAt)
+        if (
+          creationState.status === "interrupted" &&
+          existing.status === "running"
+        ) {
+          await ctx.db.patch(existing._id, {
+            ...creationState,
+            updatedAt: Date.now(),
+          })
+          const interruptedRun = await ctx.db.get(existing._id)
+          if (!interruptedRun) {
+            throw new Error("Failed to interrupt recovered run")
+          }
+          return toRun(interruptedRun)
+        }
         return toRun(existing)
       }
     }
@@ -313,7 +341,7 @@ export const create = mutation({
       projectId: project._id,
       ownerUserId: identity.subject,
       name: createRunName(),
-      status: "running",
+      ...getRunCreationState(args.interruptedAt),
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
@@ -334,7 +362,6 @@ export const create = mutation({
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,
-      finishedAt: null,
       ...(args.creationAttemptId
         ? { creationAttemptId: args.creationAttemptId }
         : {}),

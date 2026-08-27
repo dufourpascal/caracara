@@ -8,6 +8,7 @@ import {
   addRunEnvironmentName,
   canCorrectRunInterruption,
   canCorrectScenarioInterruption,
+  getRunCreationState,
   matchesScenarioExecutionAttempt,
   matchesTerminalRun,
   parseRunEnvironment,
@@ -52,6 +53,17 @@ describe("run environments", () => {
 })
 
 describe("run finalization", () => {
+  it("creates an interrupted run for an aborted recovery request", () => {
+    expect(getRunCreationState()).toEqual({
+      status: "running",
+      finishedAt: null,
+    })
+    expect(getRunCreationState(123)).toEqual({
+      status: "interrupted",
+      finishedAt: 123,
+    })
+  })
+
   it("recognizes only an exact terminal retry", () => {
     const run = { status: "interrupted", finishedAt: 123 }
 

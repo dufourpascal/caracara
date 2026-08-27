@@ -627,7 +627,7 @@ export async function runCommand(options: RunCommandOptions) {
     process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
   }
 
-  const startRun = (signal?: AbortSignal) =>
+  const startRun = (signal?: AbortSignal, interruptedAt?: number) =>
     createRun({
       apiBaseUrl: config.apiBaseUrl,
       accessToken,
@@ -643,9 +643,11 @@ export async function runCommand(options: RunCommandOptions) {
         targetUrl: environment.targetUrl,
         startedAt: Date.now(),
         creationAttemptId,
+        ...(interruptedAt === undefined ? {} : { interruptedAt }),
       },
       signal,
     })
+  let creationInterruptionFinishedAt: number | null = null
   const startRunWithRecovery = async () => {
     try {
       return await startRun(runAbortController.signal)
@@ -653,7 +655,11 @@ export async function runCommand(options: RunCommandOptions) {
       if (!interruptedSignal) {
         throw error
       }
-      return await startRun(AbortSignal.timeout(10_000))
+      creationInterruptionFinishedAt = Date.now()
+      return await startRun(
+        AbortSignal.timeout(10_000),
+        creationInterruptionFinishedAt
+      )
     }
   }
   const finalizeInterruptedRun = (runId: string, finishedAt = Date.now()) =>
@@ -678,7 +684,10 @@ export async function runCommand(options: RunCommandOptions) {
     })
   const finishSignalInterruption = async (runId: string) => {
     try {
-      await finalizeInterruptedRun(runId)
+      await finalizeInterruptedRun(
+        runId,
+        creationInterruptionFinishedAt ?? Date.now()
+      )
     } catch (error) {
       reportInterruptedFinalizationError(error)
     } finally {

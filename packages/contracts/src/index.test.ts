@@ -217,8 +217,17 @@ describe("contracts", () => {
         runnerType: "codex",
         startedAt: 1,
         creationAttemptId: "00000000-0000-4000-8000-000000000001",
-      }).mode
-    ).toBe("suite")
+        interruptedAt: 2,
+      })
+    ).toMatchObject({ mode: "suite", interruptedAt: 2 })
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        startedAt: 1,
+        interruptedAt: 2,
+      })
+    ).toThrow(/creation attempt ID/i)
 
     expect(
       runSchema.parse({

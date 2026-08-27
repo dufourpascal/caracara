@@ -408,7 +408,10 @@ describe("run interruption", () => {
       const createCalls = mocks.createRun.mock.calls as unknown as Array<
         [
           {
-            payload: { creationAttemptId?: string }
+            payload: {
+              creationAttemptId?: string
+              interruptedAt?: number
+            }
             signal?: AbortSignal
           },
         ]
@@ -418,9 +421,15 @@ describe("run interruption", () => {
       expect(createCalls[1]?.[0].payload.creationAttemptId).toBe(
         createCalls[0]?.[0].payload.creationAttemptId
       )
+      expect(createCalls[1]?.[0].payload.interruptedAt).toEqual(
+        expect.any(Number)
+      )
       expect(mocks.finalizeRun).toHaveBeenCalledWith(
         expect.objectContaining({
-          payload: expect.objectContaining({ status: "interrupted" }),
+          payload: expect.objectContaining({
+            status: "interrupted",
+            finishedAt: createCalls[1]?.[0].payload.interruptedAt,
+          }),
         })
       )
       expect(process.exitCode).toBe(130)

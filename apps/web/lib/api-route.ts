@@ -451,6 +451,9 @@ export async function createRun(
       ...(payload.creationAttemptId
         ? { creationAttemptId: payload.creationAttemptId }
         : {}),
+      ...(payload.interruptedAt
+        ? { interruptedAt: payload.interruptedAt }
+        : {}),
     },
     { token }
   )

@@ -11,6 +11,7 @@ import {
   cliConfigSchema,
   createRunRequestSchema,
   executionPlanResponseSchema,
+  finalizeRunRequestSchema,
   finalizeRunResponseSchema,
   createUniqueSlug,
   formatRunName,
@@ -215,8 +216,18 @@ describe("contracts", () => {
         requestedSuiteSlug: "demo-only",
         runnerType: "codex",
         startedAt: 1,
-      }).mode
-    ).toBe("suite")
+        creationAttemptId: "00000000-0000-4000-8000-000000000001",
+        interruptedAt: 2,
+      })
+    ).toMatchObject({ mode: "suite", interruptedAt: 2 })
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        startedAt: 1,
+        interruptedAt: 2,
+      })
+    ).toThrow(/creation attempt ID/i)
 
     expect(
       runSchema.parse({
@@ -450,6 +461,26 @@ describe("contracts", () => {
       MIN_SUPPORTED_CLI_VERSION
     )
     expect(token.tokenType).toBe("Bearer")
+
+    expect(
+      finalizeRunRequestSchema.parse({
+        status: "interrupted",
+        finishedAt: 10,
+        finalizationAttemptId: "00000000-0000-4000-8000-000000000001",
+        interruptedScenarioResultId: "result-1",
+        interruptedScenarioAttemptId:
+          "00000000-0000-4000-8000-000000000002",
+      }).finalizationAttemptId
+    ).toBe("00000000-0000-4000-8000-000000000001")
+    expect(
+      finalizeRunRequestSchema.parse({
+        status: "interrupted",
+        finishedAt: 10,
+        interruptedScenarioResultId: "result-1",
+        interruptedScenarioAttemptId:
+          "00000000-0000-4000-8000-000000000002",
+      }).interruptedScenarioResultId
+    ).toBe("result-1")
 
     expect(
       finalizeRunResponseSchema.parse({

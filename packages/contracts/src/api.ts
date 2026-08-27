@@ -277,6 +277,8 @@ export const createRunRequestSchema = z
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
     requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
+    creationAttemptId: z.string().uuid().optional(),
+    interruptedAt: z.number().int().positive().optional(),
   })
   .refine(
     (value) =>
@@ -286,6 +288,16 @@ export const createRunRequestSchema = z
     }
   )
   .superRefine((value, ctx) => {
+    if (
+      value.interruptedAt !== undefined &&
+      value.creationAttemptId === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Interrupted run creation requires a creation attempt ID.",
+        path: ["creationAttemptId"],
+      })
+    }
     const hasScenario = value.requestedScenarioSlug != null
     const hasPhase = value.requestedPhaseOrder != null
     const hasSuite = value.requestedSuiteSlug != null
@@ -354,6 +366,7 @@ export const startScenarioExecutionRequestSchema = z.object({
     sequenceIndex: z.number().int().nonnegative(),
     runnerType: runnerTypeSchema,
     startedAt: z.number().int().positive(),
+    executionAttemptId: z.string().uuid().optional(),
   }),
 })
 
@@ -381,6 +394,7 @@ export const submitScenarioResultRequestSchema = z.object({
     executionSummary: nullableStringSchema,
     failureDetail: nullableStringSchema,
     finishedAt: z.number().int().positive(),
+    executionAttemptId: z.string().uuid().optional(),
   }),
 })
 
@@ -397,6 +411,9 @@ export const submitScenarioResultResponseSchema = z.object({
 export const finalizeRunRequestSchema = z.object({
   status: z.enum(["completed", "failed", "interrupted"]),
   finishedAt: z.number().int().positive(),
+  finalizationAttemptId: z.string().uuid().optional(),
+  interruptedScenarioResultId: z.string().min(1).optional(),
+  interruptedScenarioAttemptId: z.string().uuid().optional(),
 })
 
 export const finalizeRunResponseSchema = z.object({

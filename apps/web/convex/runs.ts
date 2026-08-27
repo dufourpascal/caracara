@@ -17,6 +17,7 @@ import {
   getExecutionPlan,
   getScenarioById,
   getSuiteBySlug,
+  interruptRunScenarioResults,
   matchesTerminalScenarioResult,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
@@ -75,6 +76,58 @@ export function addRunEnvironmentName(names: string[], environment: string) {
 
 export function removeRunEnvironmentName(names: string[], environment: string) {
   return names.filter((name) => name !== environment)
+}
+
+export function getRunCreationState(interruptedAt?: number) {
+  return interruptedAt === undefined
+    ? { status: "running" as const, finishedAt: null }
+    : { status: "interrupted" as const, finishedAt: interruptedAt }
+}
+
+export function matchesTerminalRun(
+  existing: { status: string; finishedAt: number | null },
+  submitted: { status: string; finishedAt: number }
+) {
+  return (
+    existing.status === submitted.status &&
+    existing.finishedAt === submitted.finishedAt
+  )
+}
+
+export function canCorrectRunInterruption(
+  existing: { status: string; finalizationAttemptId?: string },
+  submitted: { status: string; finalizationAttemptId?: string }
+) {
+  return (
+    submitted.status === "interrupted" &&
+    submitted.finalizationAttemptId !== undefined &&
+    submitted.finalizationAttemptId === existing.finalizationAttemptId &&
+    (existing.status === "completed" || existing.status === "failed")
+  )
+}
+
+export function canCorrectScenarioInterruption(
+  runStatus: string,
+  existingStatus: string,
+  submittedStatus: string
+) {
+  return (
+    runStatus === "running" &&
+    submittedStatus === "interrupted" &&
+    ["completed", "runner_failed", "dependency_failed"].includes(
+      existingStatus
+    )
+  )
+}
+
+export function matchesScenarioExecutionAttempt(
+  existingAttemptId?: string,
+  submittedAttemptId?: string
+) {
+  return (
+    existingAttemptId === undefined ||
+    submittedAttemptId === existingAttemptId
+  )
 }
 
 export const listForProject = query({
@@ -208,12 +261,48 @@ export const create = mutation({
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     startedAt: v.number(),
+    creationAttemptId: v.optional(v.string()),
+    interruptedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
       ctx,
       args.projectId
     )
+    if (args.interruptedAt !== undefined && !args.creationAttemptId) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: "Interrupted run creation requires a creation attempt ID.",
+      })
+    }
+    if (args.creationAttemptId) {
+      const existing = await ctx.db
+        .query("runs")
+        .withIndex("by_project_creation_attempt", (query) =>
+          query
+            .eq("projectId", project._id)
+            .eq("creationAttemptId", args.creationAttemptId)
+        )
+        .unique()
+      if (existing) {
+        const creationState = getRunCreationState(args.interruptedAt)
+        if (
+          creationState.status === "interrupted" &&
+          existing.status === "running"
+        ) {
+          await ctx.db.patch(existing._id, {
+            ...creationState,
+            updatedAt: Date.now(),
+          })
+          const interruptedRun = await ctx.db.get(existing._id)
+          if (!interruptedRun) {
+            throw new Error("Failed to interrupt recovered run")
+          }
+          return toRun(interruptedRun)
+        }
+        return toRun(existing)
+      }
+    }
     const isSuiteRun = args.mode === "suite"
     if (isSuiteRun !== (args.requestedSuiteSlug != null)) {
       throw new ConvexError({
@@ -252,7 +341,7 @@ export const create = mutation({
       projectId: project._id,
       ownerUserId: identity.subject,
       name: createRunName(),
-      status: "running",
+      ...getRunCreationState(args.interruptedAt),
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
@@ -273,7 +362,9 @@ export const create = mutation({
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,
-      finishedAt: null,
+      ...(args.creationAttemptId
+        ? { creationAttemptId: args.creationAttemptId }
+        : {}),
       updatedAt: timestamp,
     })
 
@@ -302,6 +393,7 @@ export const submitScenarioResult = mutation({
       executionSummary: v.union(v.null(), v.string()),
       failureDetail: v.union(v.null(), v.string()),
       finishedAt: v.number(),
+      executionAttemptId: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
@@ -349,6 +441,17 @@ export const submitScenarioResult = mutation({
         message: "Scenario execution has not started or is already complete.",
       })
     }
+    if (
+      !matchesScenarioExecutionAttempt(
+        existing.executionAttemptId,
+        args.result.executionAttemptId
+      )
+    ) {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Scenario execution belongs to another attempt.",
+      })
+    }
     if (existing.status !== "running") {
       if (matchesTerminalScenarioResult(existing, args.result)) {
         return {
@@ -356,10 +459,18 @@ export const submitScenarioResult = mutation({
           result: toScenarioResult(existing),
         }
       }
-      throw new ConvexError({
-        code: "conflict",
-        message: "Scenario execution has already completed with other data.",
-      })
+      if (
+        !canCorrectScenarioInterruption(
+          run.status,
+          existing.status,
+          args.result.status
+        )
+      ) {
+        throw new ConvexError({
+          code: "conflict",
+          message: "Scenario execution has already completed with other data.",
+        })
+      }
     }
 
     if (args.result.status === "completed") {
@@ -436,6 +547,7 @@ export const startScenarioExecution = mutation({
       sequenceIndex: v.number(),
       runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
       startedAt: v.number(),
+      executionAttemptId: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
@@ -510,6 +622,9 @@ export const startScenarioExecution = mutation({
       sequenceIndex: args.result.sequenceIndex,
       status: "running" as const,
       runnerType: args.result.runnerType,
+      ...(args.result.executionAttemptId
+        ? { executionAttemptId: args.result.executionAttemptId }
+        : {}),
       executionSummary: null,
       failureDetail: null,
       startedAt: args.result.startedAt,
@@ -552,6 +667,9 @@ export const finalize = mutation({
       v.literal("interrupted")
     ),
     finishedAt: v.number(),
+    finalizationAttemptId: v.optional(v.string()),
+    interruptedScenarioResultId: v.optional(v.id("scenarioResults")),
+    interruptedScenarioAttemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -575,10 +693,35 @@ export const finalize = mutation({
     }
 
     if (run.status !== "running") {
+      if (matchesTerminalRun(run, args)) {
+        return { run: toRun(run) }
+      }
+      if (canCorrectRunInterruption(run, args)) {
+        await ctx.db.patch(run._id, {
+          status: "interrupted",
+          finishedAt: args.finishedAt,
+          updatedAt: Date.now(),
+        })
+        const correctedRun = await ctx.db.get(run._id)
+        if (!correctedRun) {
+          throw new Error("Failed to correct interrupted run")
+        }
+        return { run: toRun(correctedRun) }
+      }
       throw new ConvexError({
         code: "conflict",
         message: "Run has already been finalized.",
       })
+    }
+
+    if (args.status === "interrupted") {
+      await interruptRunScenarioResults(
+        ctx,
+        run._id,
+        args.finishedAt,
+        args.interruptedScenarioResultId,
+        args.interruptedScenarioAttemptId
+      )
     }
 
     const counts = await computeRunCheckCounts(ctx, run._id)
@@ -587,6 +730,9 @@ export const finalize = mutation({
       status: args.status,
       ...counts,
       finishedAt: args.finishedAt,
+      ...(args.finalizationAttemptId
+        ? { finalizationAttemptId: args.finalizationAttemptId }
+        : {}),
       updatedAt: Date.now(),
     })
 

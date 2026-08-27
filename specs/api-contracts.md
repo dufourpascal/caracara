@@ -50,6 +50,10 @@ Scenario results are submitted incrementally.
 
 The CLI should report each scenario result back to the hosted service immediately after that scenario finishes or errors rather than waiting for the full run to complete.
 
+Run finalization includes a per-execution attempt ID. The backend may correct a completed or failed run to interrupted only when the correction carries the same attempt ID as the request that finalized it, covering a signal race without allowing unrelated stale clients to rewrite terminal runs. Scenario start similarly includes a per-execution attempt ID. An interrupted finalization may identify the active scenario-result record and matching attempt ID so the same transaction can correct a terminal result whose response was lost during cancellation without trusting a result ID alone.
+
+Run creation accepts a client-generated attempt ID and is idempotent for that project and attempt. A bounded recovery request may also carry an interruption timestamp; the creation mutation then atomically creates the run as interrupted or interrupts the matching running run. A lost recovery response therefore cannot leave a duplicate or running authoring lock behind.
+
 ### API_09
 
 API contracts are versioned and require the most recent supported client version.

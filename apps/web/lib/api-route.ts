@@ -448,6 +448,12 @@ export async function createRun(
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       requestedSuiteSlug: payload.requestedSuiteSlug ?? null,
       startedAt: payload.startedAt,
+      ...(payload.creationAttemptId
+        ? { creationAttemptId: payload.creationAttemptId }
+        : {}),
+      ...(payload.interruptedAt
+        ? { interruptedAt: payload.interruptedAt }
+        : {}),
     },
     { token }
   )
@@ -538,6 +544,21 @@ export async function finalizeRun(args: {
       runId: args.runId as never,
       status: payload.status,
       finishedAt: payload.finishedAt,
+      ...(payload.finalizationAttemptId
+        ? { finalizationAttemptId: payload.finalizationAttemptId }
+        : {}),
+      ...(payload.interruptedScenarioResultId
+        ? {
+            interruptedScenarioResultId:
+              payload.interruptedScenarioResultId as never,
+          }
+        : {}),
+      ...(payload.interruptedScenarioAttemptId
+        ? {
+            interruptedScenarioAttemptId:
+              payload.interruptedScenarioAttemptId,
+          }
+        : {}),
     },
     { token: args.token }
   )

@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises"
+
 import {
   type ApiError,
   API_NAMESPACE,
@@ -37,24 +39,25 @@ function isRetryableStatus(status: number) {
 async function fetchWithTransientRetries(input: string, init: RequestInit) {
   for (let attempt = 0; ; attempt += 1) {
     try {
+      init.signal?.throwIfAborted()
       const response = await fetch(input, init)
       if (
         isRetryableStatus(response.status) &&
         attempt < TRANSIENT_RETRY_DELAYS_MS.length
       ) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
-        )
+        await delay(TRANSIENT_RETRY_DELAYS_MS[attempt], undefined, {
+          signal: init.signal ?? undefined,
+        })
         continue
       }
       return response
     } catch (error) {
-      if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
+      if (init.signal?.aborted || attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
         throw error
       }
-      await new Promise((resolve) =>
-        setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
-      )
+      await delay(TRANSIENT_RETRY_DELAYS_MS[attempt], undefined, {
+        signal: init.signal ?? undefined,
+      })
     }
   }
 }
@@ -131,6 +134,7 @@ export async function fetchExecutionPlan(args: {
   version: string
   projectSlug: string
   suiteSlug?: string
+  signal?: AbortSignal
 }) {
   const search = args.suiteSlug
     ? `?${new URLSearchParams({ suite: args.suiteSlug })}`
@@ -140,6 +144,7 @@ export async function fetchExecutionPlan(args: {
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios${search}`,
     version: args.version,
     accessToken: args.accessToken,
+    init: { signal: args.signal },
     schema: executionPlanResponseSchema,
   })
 }
@@ -184,6 +189,7 @@ export async function createRun(args: {
   version: string
   projectSlug: string
   payload: Parameters<typeof createRunRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs`,
@@ -192,7 +198,9 @@ export async function createRun(args: {
     init: {
       method: "POST",
       body: JSON.stringify(createRunRequestSchema.parse(args.payload)),
+      signal: args.signal,
     },
+    retryTransient: true,
     schema: createRunResponseSchema,
   })
 }
@@ -204,6 +212,7 @@ export async function startScenarioExecution(args: {
   projectSlug: string
   runId: string
   payload: Parameters<typeof startScenarioExecutionRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
@@ -214,6 +223,7 @@ export async function startScenarioExecution(args: {
       body: JSON.stringify(
         startScenarioExecutionRequestSchema.parse(args.payload)
       ),
+      signal: args.signal,
     },
     schema: startScenarioExecutionResponseSchema,
   })
@@ -226,6 +236,7 @@ export async function submitScenarioResult(args: {
   projectSlug: string
   runId: string
   payload: Parameters<typeof submitScenarioResultRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results`,
@@ -236,6 +247,7 @@ export async function submitScenarioResult(args: {
       body: JSON.stringify(
         submitScenarioResultRequestSchema.parse(args.payload)
       ),
+      signal: args.signal,
     },
     retryTransient: true,
     schema: submitScenarioResultResponseSchema,
@@ -249,6 +261,7 @@ export async function finalizeRun(args: {
   projectSlug: string
   runId: string
   payload: Parameters<typeof finalizeRunRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
@@ -257,7 +270,9 @@ export async function finalizeRun(args: {
     init: {
       method: "POST",
       body: JSON.stringify(finalizeRunRequestSchema.parse(args.payload)),
+      signal: args.signal,
     },
+    retryTransient: true,
     schema: finalizeRunResponseSchema,
   })
 }
@@ -270,6 +285,7 @@ export async function uploadRunEvidence(args: {
   checkId: string
   sha256: string
   bytes: Uint8Array
+  signal?: AbortSignal
 }) {
   const response = await fetchWithTransientRetries(args.uploadUrl, {
     method: "POST",
@@ -283,6 +299,7 @@ export async function uploadRunEvidence(args: {
       "x-caracara-sha256": args.sha256,
     },
     body: args.bytes as BodyInit,
+    signal: args.signal,
   })
   const json = await response.json()
   if (!response.ok) {

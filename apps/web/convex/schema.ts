@@ -124,6 +124,8 @@ export default defineSchema({
     totalCheckCount: v.number(),
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
+    creationAttemptId: v.optional(v.string()),
+    finalizationAttemptId: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_project_started_at", ["projectId", "startedAt"])
@@ -133,6 +135,10 @@ export default defineSchema({
       "startedAt",
     ])
     .index("by_project", ["projectId"])
+    .index("by_project_creation_attempt", [
+      "projectId",
+      "creationAttemptId",
+    ])
     .index("by_project_status", ["projectId", "status"]),
   scenarioResults: defineTable({
     runId: v.id("runs"),
@@ -154,6 +160,7 @@ export default defineSchema({
       v.literal("interrupted")
     ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
+    executionAttemptId: v.optional(v.string()),
     executionSummary: v.union(v.null(), v.string()),
     failureDetail: v.union(v.null(), v.string()),
     startedAt: v.number(),

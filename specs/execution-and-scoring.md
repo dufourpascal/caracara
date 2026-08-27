@@ -66,6 +66,8 @@ Execution failures must be represented explicitly.
 
 The system distinguishes completed scenarios, runner failures, dependency failures, and interrupted executions. Failed checks are product findings and do not turn a completed scenario into an infrastructure failure.
 
+The CLI handles `SIGINT` and `SIGTERM` as interrupted executions. It cancels the active local runner, reports any active scenario and enclosing run as interrupted, and only then exits with the conventional signal exit code.
+
 ### EXEC_10
 
 Runs are reported back to the hosted service as durable records.

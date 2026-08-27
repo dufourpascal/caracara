@@ -47,7 +47,7 @@ import {
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.6.0"
+const CLI_VERSION = "0.6.1"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
@@ -587,7 +587,48 @@ export async function runCommand(options: RunCommandOptions) {
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
-  const startRun = () =>
+  const runStartedAt = Date.now()
+  const creationAttemptId = crypto.randomUUID()
+  const finalizationAttemptId = crypto.randomUUID()
+  let interruptedScenarioResultId: string | null = null
+  let interruptedScenarioAttemptId: string | null = null
+  const runAbortController = new AbortController()
+  let interruptedSignal: "SIGINT" | "SIGTERM" | null = null
+  const interrupt = (signal: "SIGINT" | "SIGTERM") => {
+    interruptedSignal ??= signal
+    runAbortController.abort(
+      new Error(`Execution interrupted by ${interruptedSignal}.`)
+    )
+  }
+  const onSigint = () => interrupt("SIGINT")
+  const onSigterm = () => interrupt("SIGTERM")
+  let listeningForInterrupts = false
+  const listenForInterrupts = () => {
+    if (listeningForInterrupts) {
+      return
+    }
+    listeningForInterrupts = true
+    process.on("SIGINT", onSigint)
+    process.on("SIGTERM", onSigterm)
+  }
+  const stopListeningForInterrupts = () => {
+    process.off("SIGINT", onSigint)
+    process.off("SIGTERM", onSigterm)
+    listeningForInterrupts = false
+  }
+  const setSignalExitCode = () => {
+    if (!interruptedSignal) {
+      return false
+    }
+    process.exitCode = interruptedSignal === "SIGINT" ? 130 : 143
+    return true
+  }
+  const reportInterruptedFinalizationError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
+  }
+
+  const startRun = (signal?: AbortSignal, interruptedAt?: number) =>
     createRun({
       apiBaseUrl: config.apiBaseUrl,
       accessToken,
@@ -601,11 +642,77 @@ export async function runCommand(options: RunCommandOptions) {
         runnerType,
         environment: environment.name,
         targetUrl: environment.targetUrl,
-        startedAt: Date.now(),
+        startedAt: runStartedAt,
+        creationAttemptId,
+        ...(interruptedAt === undefined ? {} : { interruptedAt }),
       },
+      signal,
     })
-  let createRunResponse =
-    runSelection.mode === "suite" ? await startRun() : null
+  let creationInterruptionFinishedAt: number | null = null
+  const startRunWithRecovery = async () => {
+    try {
+      return await startRun(runAbortController.signal)
+    } catch (error) {
+      if (!interruptedSignal) {
+        throw error
+      }
+      creationInterruptionFinishedAt = Date.now()
+      return await startRun(
+        AbortSignal.timeout(10_000),
+        creationInterruptionFinishedAt
+      )
+    }
+  }
+  const finalizeInterruptedRun = (runId: string, finishedAt = Date.now()) =>
+    finalizeRun({
+      apiBaseUrl: config.apiBaseUrl,
+      accessToken,
+      version: CLI_VERSION,
+      projectSlug,
+      runId,
+      payload: {
+        status: "interrupted",
+        finishedAt,
+        finalizationAttemptId,
+        ...(interruptedScenarioResultId
+          ? { interruptedScenarioResultId }
+          : {}),
+        ...(interruptedScenarioAttemptId
+          ? { interruptedScenarioAttemptId }
+          : {}),
+      },
+      signal: AbortSignal.timeout(10_000),
+    })
+  const finishSignalInterruption = async (runId: string) => {
+    try {
+      await finalizeInterruptedRun(
+        runId,
+        creationInterruptionFinishedAt ?? Date.now()
+      )
+    } catch (error) {
+      reportInterruptedFinalizationError(error)
+    } finally {
+      stopListeningForInterrupts()
+    }
+    setSignalExitCode()
+  }
+  let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
+  if (runSelection.mode === "suite") {
+    listenForInterrupts()
+    try {
+      createRunResponse = await startRunWithRecovery()
+    } catch (error) {
+      stopListeningForInterrupts()
+      if (setSignalExitCode()) {
+        return
+      }
+      throw error
+    }
+    if (interruptedSignal) {
+      await finishSignalInterruption(createRunResponse.run.id)
+      return
+    }
+  }
   const executionSource = await (
     runSelection.mode === "single"
       ? fetchSingleScenario({
@@ -614,25 +721,30 @@ export async function runCommand(options: RunCommandOptions) {
           version: CLI_VERSION,
           projectSlug,
           scenarioSlug: runSelection.requestedScenarioSlug,
-        }).then((response) => ({
-          project: response.project,
-          phases: [] as RunnablePhase[],
-          suite: null,
-          unassignedScenarioCount: 0,
-          queue: [
-            {
-              phase: null as RunnablePhase | null,
-              scenario: response.scenario,
-            },
-          ],
-        }))
+        }).then((response) => {
+          runAbortController.signal.throwIfAborted()
+          return {
+            project: response.project,
+            phases: [] as RunnablePhase[],
+            suite: null,
+            unassignedScenarioCount: 0,
+            queue: [
+              {
+                phase: null as RunnablePhase | null,
+                scenario: response.scenario,
+              },
+            ],
+          }
+        })
       : fetchExecutionPlan({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
           version: CLI_VERSION,
           projectSlug,
           suiteSlug: runSelection.requestedSuiteSlug ?? undefined,
+          signal: runAbortController.signal,
         }).then((response) => {
+          runAbortController.signal.throwIfAborted()
           const selectedPhases =
             runSelection.mode === "phase"
               ? response.phases.filter(
@@ -667,29 +779,51 @@ export async function runCommand(options: RunCommandOptions) {
           }
         })
   ).catch(async (error) => {
-    if (createRunResponse) {
-      await finalizeRun({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: { status: "interrupted", finishedAt: Date.now() },
-      })
+    let finalizationError: unknown = null
+    try {
+      if (createRunResponse) {
+        await finalizeInterruptedRun(createRunResponse.run.id)
+      }
+    } catch (cleanupError) {
+      finalizationError = cleanupError
+    } finally {
+      stopListeningForInterrupts()
+    }
+    if (setSignalExitCode()) {
+      if (finalizationError) {
+        reportInterruptedFinalizationError(finalizationError)
+      }
+      return null
+    }
+    if (finalizationError) {
+      throw finalizationError
     }
     throw error
   })
 
+  if (!executionSource) {
+    return
+  }
+
   if (executionSource.queue.length === 0) {
-    if (createRunResponse) {
-      await finalizeRun({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: { status: "interrupted", finishedAt: Date.now() },
-      })
+    let finalizationError: unknown = null
+    try {
+      if (createRunResponse) {
+        await finalizeInterruptedRun(createRunResponse.run.id)
+      }
+    } catch (error) {
+      finalizationError = error
+    } finally {
+      stopListeningForInterrupts()
+    }
+    if (setSignalExitCode()) {
+      if (finalizationError) {
+        reportInterruptedFinalizationError(finalizationError)
+      }
+      return
+    }
+    if (finalizationError) {
+      throw finalizationError
     }
     throw new Error(
       runSelection.mode === "phase"
@@ -700,7 +834,22 @@ export async function runCommand(options: RunCommandOptions) {
     )
   }
 
-  createRunResponse ??= await startRun()
+  if (!createRunResponse) {
+    listenForInterrupts()
+    try {
+      createRunResponse = await startRunWithRecovery()
+    } catch (error) {
+      stopListeningForInterrupts()
+      if (setSignalExitCode()) {
+        return
+      }
+      throw error
+    }
+    if (interruptedSignal) {
+      await finishSignalInterruption(createRunResponse.run.id)
+      return
+    }
+  }
 
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
   process.stdout.write(
@@ -735,14 +884,19 @@ export async function runCommand(options: RunCommandOptions) {
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
+  let finalizationError: unknown = null
   let runError: unknown = null
   let runUsage: RunnerUsageReport = { complete: true }
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
+  let activeScenarioResultId: string | null = null
+  let activeScenarioAttemptId: string | null = null
   let lastPrintedPhaseId: string | null = null
 
   try {
+    runAbortController.signal.throwIfAborted()
     for (const [sequenceIndex, item] of executionSource.queue.entries()) {
+      runAbortController.signal.throwIfAborted()
       const startedAt = Date.now()
       const scenarioSnapshot = buildScenarioSnapshot({
         phase: item.phase,
@@ -762,6 +916,8 @@ export async function runCommand(options: RunCommandOptions) {
         `Executing ${item.scenario.slug} with ${runnerType}\n`
       )
 
+      activeScenario = scenarioSnapshot
+      activeScenarioAttemptId = crypto.randomUUID()
       const startedScenario = await startScenarioExecution({
         apiBaseUrl: config.apiBaseUrl,
         accessToken,
@@ -770,10 +926,15 @@ export async function runCommand(options: RunCommandOptions) {
         runId: createRunResponse.run.id,
         payload: {
           runId: createRunResponse.run.id,
-          result: scenarioSnapshot,
+          result: {
+            ...scenarioSnapshot,
+            executionAttemptId: activeScenarioAttemptId,
+          },
         },
+        signal: runAbortController.signal,
       })
-      activeScenario = scenarioSnapshot
+      activeScenarioResultId = startedScenario.result.id
+      runAbortController.signal.throwIfAborted()
 
       if (runFailed) {
         await submitScenarioResult({
@@ -792,10 +953,17 @@ export async function runCommand(options: RunCommandOptions) {
               failureDetail:
                 "Dependency chain stopped after an earlier failure.",
               finishedAt: Date.now(),
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
         activeScenario = null
+        activeScenarioResultId = null
+        activeScenarioAttemptId = null
         continue
       }
 
@@ -806,7 +974,9 @@ export async function runCommand(options: RunCommandOptions) {
           targetUrl: environment.targetUrl,
           model: config.model,
           modelReasoningEffort: config.model_reasoning_effort,
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
 
         const execution = await runSession.executeScenario({
           cwd,
@@ -814,6 +984,7 @@ export async function runCommand(options: RunCommandOptions) {
           targetUrl: environment.targetUrl,
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
+          signal: runAbortController.signal,
         })
         runUsage = mergeRunnerUsage(
           runUsage,
@@ -836,6 +1007,7 @@ export async function runCommand(options: RunCommandOptions) {
               checkId: screenshot.checkId,
               sha256: screenshot.sha256,
               bytes: screenshot.bytes,
+              signal: runAbortController.signal,
             })
           }
         }
@@ -856,10 +1028,17 @@ export async function runCommand(options: RunCommandOptions) {
               executionSummary: execution.executionSummary,
               failureDetail: null,
               finishedAt,
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
         activeScenario = null
+        activeScenarioResultId = null
+        activeScenarioAttemptId = null
         const passed = execution.checkResults.filter(
           (result) => result.verdict === "passed"
         ).length
@@ -869,6 +1048,9 @@ export async function runCommand(options: RunCommandOptions) {
       } catch (error) {
         if (error instanceof RunnerExecutionError) {
           runUsage = mergeRunnerUsage(runUsage, error.usage)
+        }
+        if (runAbortController.signal.aborted) {
+          throw error
         }
         runFailed = true
         await submitScenarioResult({
@@ -887,20 +1069,30 @@ export async function runCommand(options: RunCommandOptions) {
               failureDetail:
                 error instanceof Error ? error.message : "Runner failed",
               finishedAt: Date.now(),
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
         activeScenario = null
+        activeScenarioResultId = null
+        activeScenarioAttemptId = null
         process.stdout.write(
           `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
         )
       }
     }
+    runAbortController.signal.throwIfAborted()
     finalRunStatus = runFailed ? "failed" : "completed"
     finalFinishedAt = Date.now()
   } catch (error) {
     runError = error
     if (activeScenario) {
+      interruptedScenarioResultId = activeScenarioResultId
+      interruptedScenarioAttemptId = activeScenarioAttemptId
       try {
         await submitScenarioResult({
           apiBaseUrl: config.apiBaseUrl,
@@ -915,18 +1107,25 @@ export async function runCommand(options: RunCommandOptions) {
               status: "interrupted",
               checkResults: [],
               executionSummary: null,
-              failureDetail:
-                error instanceof Error
+              failureDetail: interruptedSignal
+                ? `Execution interrupted by ${interruptedSignal}.`
+                : error instanceof Error
                   ? error.message
                   : "Execution interrupted",
               finishedAt: Date.now(),
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
+          signal: AbortSignal.timeout(10_000),
         })
       } catch {
         // Preserve the original interruption error from the run loop.
       }
       activeScenario = null
+      activeScenarioResultId = null
+      activeScenarioAttemptId = null
     }
     finalRunStatus = "interrupted"
     finalFinishedAt = Date.now()
@@ -941,19 +1140,67 @@ export async function runCommand(options: RunCommandOptions) {
       process.stdout.write(`\n${formatRunnerUsage(runUsage)}\n`)
     }
 
-    if (finalRunStatus && finalFinishedAt !== null) {
-      await finalizeRun({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: {
-          status: finalRunStatus,
-          finishedAt: finalFinishedAt,
-        },
-      })
+    if (interruptedSignal) {
+      finalRunStatus = "interrupted"
+      finalFinishedAt = Date.now()
     }
+
+    try {
+      if (finalRunStatus && finalFinishedAt !== null) {
+        try {
+          await finalizeRun({
+            apiBaseUrl: config.apiBaseUrl,
+            accessToken,
+            version: CLI_VERSION,
+            projectSlug,
+            runId: createRunResponse.run.id,
+            payload: {
+              status: finalRunStatus,
+              finishedAt: finalFinishedAt,
+              finalizationAttemptId,
+              ...(interruptedScenarioResultId
+                ? { interruptedScenarioResultId }
+                : {}),
+              ...(interruptedScenarioAttemptId
+                ? { interruptedScenarioAttemptId }
+                : {}),
+            },
+            signal: runAbortController.signal,
+          })
+          if (interruptedSignal && finalRunStatus !== "interrupted") {
+            await finalizeInterruptedRun(createRunResponse.run.id)
+          }
+        } catch (error) {
+          if (!interruptedSignal) {
+            finalizationError = error
+          } else {
+            try {
+              await finalizeInterruptedRun(
+                createRunResponse.run.id,
+                finalRunStatus === "interrupted"
+                  ? finalFinishedAt
+                  : undefined
+              )
+            } catch (correctionError) {
+              finalizationError = correctionError
+            }
+          }
+        }
+      }
+    } finally {
+      stopListeningForInterrupts()
+    }
+  }
+
+  if (setSignalExitCode()) {
+    if (finalizationError) {
+      reportInterruptedFinalizationError(finalizationError)
+    }
+    return
+  }
+
+  if (finalizationError) {
+    throw finalizationError
   }
 
   if (runError) {

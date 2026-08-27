@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  createRun,
   fetchExecutionPlan,
   fetchProjects,
+  finalizeRun,
   submitAuthoringOperation,
   submitScenarioResult,
   uploadRunEvidence,
@@ -12,6 +14,39 @@ describe("api client", () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it("aborts a stalled run-creation request", async () => {
+    const fetchMock = vi.fn(
+      async (_input: string, init?: RequestInit) =>
+        await new Promise<never>((_, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    const controller = new AbortController()
+
+    const creation = createRun({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.6.1",
+      projectSlug: "demo",
+      payload: {
+        mode: "all",
+        runnerType: "codex",
+        startedAt: 123,
+        creationAttemptId: "00000000-0000-4000-8000-000000000001",
+      },
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    controller.abort(new Error("Interrupted"))
+
+    await expect(creation).rejects.toThrow("Interrupted")
   })
 
   it("includes structured API error details in thrown messages", async () => {
@@ -267,5 +302,69 @@ describe("api client", () => {
 
     await expect(submission).resolves.toEqual(response)
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("retries run finalization after a lost response", async () => {
+    vi.useFakeTimers()
+    const response = {
+      run: {
+        id: "run-1",
+        status: "interrupted",
+        passedCheckCount: 0,
+        totalCheckCount: 0,
+        passRate: null,
+        finishedAt: 123,
+        updatedAt: 123,
+      },
+    }
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Response lost"))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => response,
+      })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const finalization = finalizeRun({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.6.1",
+      projectSlug: "project",
+      runId: "run-1",
+      payload: { status: "interrupted", finishedAt: 123 },
+    })
+    await vi.runAllTimersAsync()
+
+    await expect(finalization).resolves.toEqual(response)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("aborts run finalization during a transient retry delay", async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      json: async () => ({}),
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const finalization = finalizeRun({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.6.1",
+      projectSlug: "project",
+      runId: "run-1",
+      payload: { status: "completed", finishedAt: 123 },
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    controller.abort(new Error("Interrupted"))
+
+    await expect(finalization).rejects.toThrow(/aborted/i)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 })

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
+import { setTimeout as delay } from "node:timers/promises"
 
 import {
   Codex,
@@ -63,6 +64,7 @@ export type RunnerScenarioInput = {
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  signal?: AbortSignal
 }
 
 export type RunnerSecrets = Record<string, string>
@@ -73,6 +75,7 @@ type RunnerStartInput = {
   targetUrl: string
   model?: string
   modelReasoningEffort?: ModelReasoningEffort
+  signal?: AbortSignal
 }
 
 export interface RunnerAdapter {
@@ -587,23 +590,189 @@ export function buildCodexThreadOptions(input: {
   }
 }
 
-async function runCommand(args: {
+function signalChildProcess(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+  detached: boolean
+) {
+  if (!child.pid) {
+    return
+  }
+  try {
+    if (detached && process.platform !== "win32") {
+      process.kill(-child.pid, signal)
+    } else {
+      child.kill(signal)
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+      throw error
+    }
+  }
+}
+
+function processGroupExists(pid: number) {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return false
+    }
+    throw error
+  }
+}
+
+export function buildWindowsTaskkillArgs(pid: number) {
+  return ["/PID", String(pid), "/T", "/F"]
+}
+
+async function terminateWindowsProcessTree(child: ChildProcess) {
+  const pid = child.pid
+  if (!pid) {
+    return
+  }
+  await new Promise<void>((resolve, reject) => {
+    const taskkill = spawn(
+      "taskkill.exe",
+      buildWindowsTaskkillArgs(pid),
+      {
+        stdio: "ignore",
+        windowsHide: true,
+      }
+    )
+    taskkill.once("error", reject)
+    taskkill.once("close", (code) => {
+      if (
+        code === 0 ||
+        child.exitCode !== null ||
+        child.signalCode !== null
+      ) {
+        resolve()
+      } else {
+        reject(new Error(`taskkill exited with code ${code}.`))
+      }
+    })
+  })
+}
+
+async function waitForProcessGroupExit(pid: number) {
+  const deadline = Date.now() + 1_000
+  while (processGroupExists(pid) && Date.now() < deadline) {
+    await delay(10)
+  }
+  if (processGroupExists(pid)) {
+    throw new Error("Failed to terminate child process group.")
+  }
+}
+
+export async function terminateChildProcess(
+  child: ChildProcess,
+  detached = false,
+  closePromise?: Promise<void>
+) {
+  if (!child.pid) {
+    return
+  }
+  if (
+    !closePromise &&
+    (child.exitCode !== null || child.signalCode !== null)
+  ) {
+    return
+  }
+
+  const waitForClose =
+    closePromise ??
+    new Promise<void>((resolve) => {
+      child.once("close", () => resolve())
+    })
+  if (process.platform === "win32") {
+    await terminateWindowsProcessTree(child)
+    const closed = await Promise.race([
+      waitForClose.then(() => true),
+      delay(1_000).then(() => false),
+    ])
+    if (!closed) {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      await waitForClose
+    }
+    return
+  }
+  signalChildProcess(child, "SIGTERM", detached)
+
+  const gracePeriod = delay(1_000)
+  const closedBeforeGrace = await Promise.race([
+    waitForClose.then(() => true),
+    gracePeriod.then(() => false),
+  ])
+  const hasRemainingProcessGroup =
+    detached && processGroupExists(child.pid)
+  if (closedBeforeGrace && !hasRemainingProcessGroup) {
+    return
+  }
+
+  await gracePeriod
+  signalChildProcess(child, "SIGKILL", detached)
+  child.stdout?.destroy()
+  child.stderr?.destroy()
+  if (!closedBeforeGrace) {
+    await waitForClose
+  }
+  if (detached) {
+    await waitForProcessGroupExit(child.pid)
+  }
+}
+
+export async function runChildCommand(args: {
   command: string
   commandArgs: string[]
   cwd: string
   env?: NodeJS.ProcessEnv
   secrets?: RunnerSecrets
+  signal?: AbortSignal
 }) {
+  args.signal?.throwIfAborted()
+
   return await new Promise<{ stdout: string; stderr: string }>(
     (resolve, reject) => {
+      const detached = process.platform !== "win32"
       const child = spawn(args.command, args.commandArgs, {
         cwd: args.cwd,
         env: args.env,
+        detached,
         stdio: ["ignore", "pipe", "pipe"],
+      })
+      const childClosed = new Promise<void>((resolve) => {
+        child.once("close", () => resolve())
       })
 
       let stdout = ""
       let stderr = ""
+      let aborting = false
+      let settled = false
+
+      const finish = (complete: () => void) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        args.signal?.removeEventListener("abort", onAbort)
+        complete()
+      }
+      const onAbort = () => {
+        if (settled || aborting) {
+          return
+        }
+        aborting = true
+        void terminateChildProcess(child, detached, childClosed).then(
+          () =>
+            finish(() =>
+              reject(args.signal?.reason ?? new Error("Command interrupted."))
+            ),
+          (error) => finish(() => reject(error))
+        )
+      }
 
       child.stdout.on("data", (chunk) => {
         stdout += chunk.toString()
@@ -611,22 +780,32 @@ async function runCommand(args: {
       child.stderr.on("data", (chunk) => {
         stderr += chunk.toString()
       })
-      child.on("error", reject)
+      child.on("error", (error) => finish(() => reject(error)))
       child.on("close", (code) => {
+        if (aborting) {
+          return
+        }
         if (code === 0) {
-          resolve({ stdout, stderr })
+          finish(() => resolve({ stdout, stderr }))
           return
         }
 
-        reject(
-          new Error(
-            redactSecretValues(
-              `${args.command} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
-              args.secrets ?? {}
+        finish(() =>
+          reject(
+            new Error(
+              redactSecretValues(
+                `${args.command} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+                args.secrets ?? {}
+              )
             )
           )
         )
       })
+
+      args.signal?.addEventListener("abort", onAbort, { once: true })
+      if (args.signal?.aborted) {
+        onAbort()
+      }
     }
   )
 }
@@ -639,12 +818,6 @@ async function withTempFiles<T>(work: (dir: string) => Promise<T>) {
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
 }
 
 export function buildChromiumArgs(input: {
@@ -667,12 +840,14 @@ async function waitForDevToolsActivePort(input: {
   userDataDir: string
   browser: ChildProcess
   timeoutMs?: number
+  signal?: AbortSignal
 }) {
   const devToolsActivePortPath = join(input.userDataDir, "DevToolsActivePort")
   const timeoutMs = input.timeoutMs ?? defaultChromiumStartupTimeoutMs
   const deadline = Date.now() + timeoutMs
 
   while (Date.now() < deadline) {
+    input.signal?.throwIfAborted()
     if (input.browser.exitCode !== null) {
       throw new Error(
         `Chromium exited before DevTools became available (exit code ${input.browser.exitCode}).`
@@ -695,7 +870,7 @@ async function waitForDevToolsActivePort(input: {
       }
     }
 
-    await delay(100)
+    await delay(100, undefined, { signal: input.signal })
   }
 
   throw new Error(
@@ -704,48 +879,22 @@ async function waitForDevToolsActivePort(input: {
 }
 
 async function terminateBrowserProcess(browser: ChildProcess) {
-  if (browser.exitCode !== null || !browser.pid) {
-    return
-  }
-
-  const waitForExit = new Promise<void>((resolve) => {
-    browser.once("exit", () => {
-      resolve()
-    })
-  })
-
-  if (process.platform === "win32") {
-    browser.kill("SIGTERM")
-  } else {
-    process.kill(-browser.pid, "SIGTERM")
-  }
-
-  const terminated = await Promise.race([
-    waitForExit.then(() => true),
-    delay(1_000).then(() => false),
-  ])
-
-  if (terminated) {
-    return
-  }
-
-  if (process.platform === "win32") {
-    browser.kill("SIGKILL")
-  } else {
-    process.kill(-browser.pid, "SIGKILL")
-  }
-
-  await waitForExit
+  await terminateChildProcess(browser, process.platform !== "win32")
 }
 
 async function launchSharedChromium(input: {
   cwd: string
   initialUrl: string
+  signal?: AbortSignal
 }) {
   const runDir = await mkdtemp(join(tmpdir(), "caracara-codex-run-"))
   const userDataDir = join(runDir, "chrome-profile")
   const chromeDevtoolsLogPath = join(runDir, "chrome-devtools-mcp.log")
   await mkdir(userDataDir, { recursive: true })
+  if (input.signal?.aborted) {
+    await rm(runDir, { recursive: true, force: true })
+    input.signal.throwIfAborted()
+  }
 
   const browser = spawn(
     getChromeExecutablePath(),
@@ -769,6 +918,7 @@ async function launchSharedChromium(input: {
       waitForDevToolsActivePort({
         userDataDir,
         browser,
+        signal: input.signal,
       }),
       browserStartupError,
     ])
@@ -795,6 +945,7 @@ class CodexRunner implements RunnerAdapter {
     const sharedBrowser = await launchSharedChromium({
       cwd: input.cwd,
       initialUrl: input.targetUrl,
+      signal: input.signal,
     })
     const runnerEnv = { ...process.env, ...input.secrets }
     const secretNames = Object.keys(input.secrets)
@@ -839,6 +990,7 @@ class CodexRunner implements RunnerAdapter {
                 outputSchema: buildExecutionResultSchema(
                   scenarioInput.scenario
                 ),
+                signal: scenarioInput.signal,
               }
             )
             waitingForUsage = false
@@ -867,7 +1019,8 @@ class CodexRunner implements RunnerAdapter {
                   scenario: scenarioInput.scenario,
                   evidenceDirectory,
                   missingCheckIds: screenshots.missingCheckIds,
-                })
+                }),
+                { signal: scenarioInput.signal }
               )
               waitingForUsage = false
               const correctionUsage = toCodexRunnerUsage(
@@ -928,6 +1081,7 @@ class ClaudeRunner implements RunnerAdapter {
     const sharedBrowser = await launchSharedChromium({
       cwd: runInput.cwd,
       initialUrl: runInput.targetUrl,
+      signal: runInput.signal,
     })
     const runnerEnv = { ...process.env, ...runInput.secrets }
     const secretNames = Object.keys(runInput.secrets)
@@ -952,11 +1106,12 @@ class ClaudeRunner implements RunnerAdapter {
           )
           let usage: RunnerUsageReport = { complete: false }
           try {
-            const execution = await runCommand({
+            const execution = await runChildCommand({
               command: "claude",
               cwd: scenarioInput.cwd,
               env: runnerEnv,
               secrets: runInput.secrets,
+              signal: scenarioInput.signal,
               commandArgs: [
                 "-p",
                 "--permission-mode",

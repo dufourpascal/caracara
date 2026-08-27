@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest"
 
-import { deleteRunAndResults } from "./lib"
+import {
+  deleteRunAndResults,
+  interruptRunScenarioResults,
+} from "./lib"
 import {
   addRunEnvironmentName,
+  canCorrectRunInterruption,
+  canCorrectScenarioInterruption,
+  getRunCreationState,
+  matchesScenarioExecutionAttempt,
+  matchesTerminalRun,
   parseRunEnvironment,
   removeRunEnvironmentName,
 } from "./runs"
@@ -41,6 +49,219 @@ describe("run environments", () => {
     expect(
       removeRunEnvironmentName(["preview", "production"], "preview")
     ).toEqual(["production"])
+  })
+})
+
+describe("run finalization", () => {
+  it("creates an interrupted run for an aborted recovery request", () => {
+    expect(getRunCreationState()).toEqual({
+      status: "running",
+      finishedAt: null,
+    })
+    expect(getRunCreationState(123)).toEqual({
+      status: "interrupted",
+      finishedAt: 123,
+    })
+  })
+
+  it("recognizes only an exact terminal retry", () => {
+    const run = { status: "interrupted", finishedAt: 123 }
+
+    expect(matchesTerminalRun(run, run)).toBe(true)
+    expect(matchesTerminalRun(run, { status: "failed", finishedAt: 123 })).toBe(
+      false
+    )
+    expect(
+      matchesTerminalRun(run, { status: "interrupted", finishedAt: 456 })
+    ).toBe(false)
+    expect(
+      matchesTerminalRun(
+        { status: "completed", finishedAt: 123 },
+        { status: "interrupted", finishedAt: 456 }
+      )
+    ).toBe(false)
+  })
+
+  it("corrects an in-flight finalization only for the same attempt", () => {
+    const run = {
+      status: "completed",
+      finalizationAttemptId: "attempt-1",
+    }
+
+    expect(
+      canCorrectRunInterruption(run, {
+        status: "interrupted",
+        finalizationAttemptId: "attempt-1",
+      })
+    ).toBe(true)
+    expect(
+      canCorrectRunInterruption(run, {
+        status: "interrupted",
+        finalizationAttemptId: "attempt-2",
+      })
+    ).toBe(false)
+    expect(
+      canCorrectRunInterruption(run, { status: "interrupted" })
+    ).toBe(false)
+    expect(
+      canCorrectRunInterruption(run, {
+        status: "failed",
+        finalizationAttemptId: "attempt-1",
+      })
+    ).toBe(false)
+  })
+
+  it("interrupts running scenarios and removes their evidence", async () => {
+    const deletedStorageIds: string[] = []
+    const deletedIds: string[] = []
+    const patches: Array<{ id: string; value: unknown }> = []
+    const ctx = {
+      db: {
+        query(table: string) {
+          return {
+            withIndex(
+              _indexName: string,
+              buildQuery: (query: {
+                eq: (field: string, value: string) => null
+              }) => null
+            ) {
+              let indexedValue = ""
+              buildQuery({
+                eq: (_field, value) => {
+                  indexedValue = value
+                  return null
+                },
+              })
+              return {
+                async collect() {
+                  return table === "scenarioResults"
+                    ? [
+                        { _id: "running-1", status: "running" },
+                        {
+                          _id: "completed-1",
+                          status: "completed",
+                          executionAttemptId: "attempt-1",
+                        },
+                      ]
+                    : [
+                        {
+                          _id: `evidence-${indexedValue}`,
+                          storageId: `storage-${indexedValue}`,
+                        },
+                      ]
+                },
+              }
+            },
+          }
+        },
+        async delete(id: string) {
+          deletedIds.push(id)
+        },
+        async patch(id: string, value: unknown) {
+          patches.push({ id, value })
+        },
+      },
+      storage: {
+        async delete(id: string) {
+          deletedStorageIds.push(id)
+        },
+      },
+    } as never
+
+    await expect(
+      interruptRunScenarioResults(
+        ctx,
+        "run-1" as never,
+        123,
+        "completed-1" as never,
+        "stale-attempt"
+      )
+    ).resolves.toBe(1)
+    expect(patches.map((patch) => patch.id)).toEqual(["running-1"])
+    deletedStorageIds.length = 0
+    deletedIds.length = 0
+    patches.length = 0
+
+    await expect(
+      interruptRunScenarioResults(
+        ctx,
+        "run-1" as never,
+        123,
+        "completed-1" as never,
+        "attempt-1"
+      )
+    ).resolves.toBe(2)
+    expect(deletedStorageIds).toEqual([
+      "storage-running-1",
+      "storage-completed-1",
+    ])
+    expect(deletedIds).toEqual([
+      "evidence-running-1",
+      "evidence-completed-1",
+    ])
+    expect(patches).toEqual([
+      {
+        id: "running-1",
+        value: {
+          status: "interrupted",
+          checkResults: [],
+          executionSummary: null,
+          failureDetail: "Execution interrupted.",
+          finishedAt: 123,
+        },
+      },
+      {
+        id: "completed-1",
+        value: {
+          status: "interrupted",
+          checkResults: [],
+          executionSummary: null,
+          failureDetail: "Execution interrupted.",
+          finishedAt: 123,
+        },
+      },
+    ])
+  })
+})
+
+describe("scenario result correction", () => {
+  it("allows terminal results to become interrupted only while the run is active", () => {
+    expect(
+      canCorrectScenarioInterruption("running", "completed", "interrupted")
+    ).toBe(true)
+    expect(
+      canCorrectScenarioInterruption(
+        "running",
+        "runner_failed",
+        "interrupted"
+      )
+    ).toBe(true)
+    expect(
+      canCorrectScenarioInterruption(
+        "running",
+        "dependency_failed",
+        "interrupted"
+      )
+    ).toBe(true)
+    expect(
+      canCorrectScenarioInterruption("running", "completed", "runner_failed")
+    ).toBe(false)
+    expect(
+      canCorrectScenarioInterruption("completed", "completed", "interrupted")
+    ).toBe(false)
+  })
+
+  it("requires new scenario executions to use their stored attempt ID", () => {
+    expect(matchesScenarioExecutionAttempt(undefined, undefined)).toBe(true)
+    expect(matchesScenarioExecutionAttempt("attempt-1", "attempt-1")).toBe(
+      true
+    )
+    expect(matchesScenarioExecutionAttempt("attempt-1", "attempt-2")).toBe(
+      false
+    )
+    expect(matchesScenarioExecutionAttempt("attempt-1", undefined)).toBe(
+      false
+    )
   })
 })
 

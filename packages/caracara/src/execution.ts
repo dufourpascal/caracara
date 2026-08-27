@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
+import { setTimeout as delay } from "node:timers/promises"
 
 import {
   Codex,
@@ -74,6 +75,7 @@ type RunnerStartInput = {
   targetUrl: string
   model?: string
   modelReasoningEffort?: ModelReasoningEffort
+  signal?: AbortSignal
 }
 
 export interface RunnerAdapter {
@@ -644,12 +646,6 @@ async function withTempFiles<T>(work: (dir: string) => Promise<T>) {
   }
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
 export function buildChromiumArgs(input: {
   userDataDir: string
   initialUrl?: string
@@ -670,12 +666,14 @@ async function waitForDevToolsActivePort(input: {
   userDataDir: string
   browser: ChildProcess
   timeoutMs?: number
+  signal?: AbortSignal
 }) {
   const devToolsActivePortPath = join(input.userDataDir, "DevToolsActivePort")
   const timeoutMs = input.timeoutMs ?? defaultChromiumStartupTimeoutMs
   const deadline = Date.now() + timeoutMs
 
   while (Date.now() < deadline) {
+    input.signal?.throwIfAborted()
     if (input.browser.exitCode !== null) {
       throw new Error(
         `Chromium exited before DevTools became available (exit code ${input.browser.exitCode}).`
@@ -698,7 +696,7 @@ async function waitForDevToolsActivePort(input: {
       }
     }
 
-    await delay(100)
+    await delay(100, undefined, { signal: input.signal })
   }
 
   throw new Error(
@@ -744,11 +742,16 @@ async function terminateBrowserProcess(browser: ChildProcess) {
 async function launchSharedChromium(input: {
   cwd: string
   initialUrl: string
+  signal?: AbortSignal
 }) {
   const runDir = await mkdtemp(join(tmpdir(), "caracara-codex-run-"))
   const userDataDir = join(runDir, "chrome-profile")
   const chromeDevtoolsLogPath = join(runDir, "chrome-devtools-mcp.log")
   await mkdir(userDataDir, { recursive: true })
+  if (input.signal?.aborted) {
+    await rm(runDir, { recursive: true, force: true })
+    input.signal.throwIfAborted()
+  }
 
   const browser = spawn(
     getChromeExecutablePath(),
@@ -772,6 +775,7 @@ async function launchSharedChromium(input: {
       waitForDevToolsActivePort({
         userDataDir,
         browser,
+        signal: input.signal,
       }),
       browserStartupError,
     ])
@@ -798,6 +802,7 @@ class CodexRunner implements RunnerAdapter {
     const sharedBrowser = await launchSharedChromium({
       cwd: input.cwd,
       initialUrl: input.targetUrl,
+      signal: input.signal,
     })
     const runnerEnv = { ...process.env, ...input.secrets }
     const secretNames = Object.keys(input.secrets)
@@ -933,6 +938,7 @@ class ClaudeRunner implements RunnerAdapter {
     const sharedBrowser = await launchSharedChromium({
       cwd: runInput.cwd,
       initialUrl: runInput.targetUrl,
+      signal: runInput.signal,
     })
     const runnerEnv = { ...process.env, ...runInput.secrets }
     const secretNames = Object.keys(runInput.secrets)

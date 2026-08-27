@@ -37,9 +37,10 @@ const mocks = vi.hoisted(() => {
         })
       })
   )
+  const close = vi.fn(async () => undefined)
 
   return {
-    close: vi.fn(async () => undefined),
+    close,
     createRun: vi.fn(async () => ({
       run: {
         id: "run-1",
@@ -56,6 +57,13 @@ const mocks = vi.hoisted(() => {
     startScenarioExecution: vi.fn(async () => ({
       result: { id: "result-1" },
     })),
+    startRun: vi.fn(async (args?: { signal?: AbortSignal }) => {
+      void args
+      return {
+        close,
+        executeScenario,
+      }
+    }),
     submitScenarioResult: vi.fn(async (args?: { signal?: AbortSignal }) => {
       void args
     }),
@@ -90,10 +98,7 @@ vi.mock("./execution.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./execution.js")>()),
   getRunnerAdapter: vi.fn(() => ({
     type: "codex",
-    startRun: vi.fn(async () => ({
-      close: mocks.close,
-      executeScenario: mocks.executeScenario,
-    })),
+    startRun: mocks.startRun,
   })),
 }))
 
@@ -153,6 +158,47 @@ describe("run interruption", () => {
     }
   )
 
+  it("cancels runner startup", async () => {
+    mocks.startRun.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() => expect(mocks.startRun).toHaveBeenCalled())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await run
+
+    const startInput = mocks.startRun.mock.calls[0]?.[0]
+    expect(startInput?.signal?.aborted).toBe(true)
+    expect(mocks.submitScenarioResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({ status: "interrupted" }),
+        }),
+      })
+    )
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
   it("listens before a suite run is created", async () => {
     let finishCreatingRun:
       | ((value: Awaited<ReturnType<typeof mocks.createRun>>) => void)
@@ -192,7 +238,7 @@ describe("run interruption", () => {
     expect(process.exitCode).toBe(130)
   })
 
-  it("preserves the signal exit code while fetching a suite plan", async () => {
+  it("preserves the signal exit code when plan-fetch cleanup fails", async () => {
     let finishFetchingPlan:
       | ((value: typeof mocks.executionPlan) => void)
       | undefined
@@ -202,8 +248,12 @@ describe("run interruption", () => {
           finishFetchingPlan = resolve
         })
     )
+    mocks.finalizeRun.mockRejectedValueOnce(new Error("API unavailable"))
     const existingListeners = new Set(process.listeners("SIGINT"))
     vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
 
     const run = runCommand({ suite: "smoke" })
     await vi.waitFor(() => expect(mocks.fetchExecutionPlan).toHaveBeenCalled())
@@ -223,6 +273,14 @@ describe("run interruption", () => {
       })
     )
     expect(process.exitCode).toBe(130)
+    expect(stderr).toHaveBeenCalledWith(
+      "Failed to finalize interrupted run: API unavailable\n"
+    )
+    expect(
+      process
+        .listeners("SIGINT")
+        .filter((listener) => !existingListeners.has(listener))
+    ).toHaveLength(0)
   })
 
   it("corrects finalization when a signal arrives during the request", async () => {

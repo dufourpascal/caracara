@@ -618,6 +618,10 @@ export async function runCommand(options: RunCommandOptions) {
     process.exitCode = interruptedSignal === "SIGINT" ? 130 : 143
     return true
   }
+  const reportInterruptedFinalizationError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
+  }
 
   const startRun = () =>
     createRun({
@@ -645,6 +649,16 @@ export async function runCommand(options: RunCommandOptions) {
       runId,
       payload: { status: "interrupted", finishedAt: Date.now() },
     })
+  const finishSignalInterruption = async (runId: string) => {
+    try {
+      await finalizeInterruptedRun(runId)
+    } catch (error) {
+      reportInterruptedFinalizationError(error)
+    } finally {
+      stopListeningForInterrupts()
+    }
+    setSignalExitCode()
+  }
   let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
   if (runSelection.mode === "suite") {
     listenForInterrupts()
@@ -655,9 +669,7 @@ export async function runCommand(options: RunCommandOptions) {
       throw error
     }
     if (interruptedSignal) {
-      await finalizeInterruptedRun(createRunResponse.run.id)
-      stopListeningForInterrupts()
-      setSignalExitCode()
+      await finishSignalInterruption(createRunResponse.run.id)
       return
     }
   }
@@ -726,13 +738,14 @@ export async function runCommand(options: RunCommandOptions) {
           }
         })
   ).catch(async (error) => {
+    if (createRunResponse && interruptedSignal) {
+      await finishSignalInterruption(createRunResponse.run.id)
+      return null
+    }
     if (createRunResponse) {
       await finalizeInterruptedRun(createRunResponse.run.id)
     }
     stopListeningForInterrupts()
-    if (setSignalExitCode()) {
-      return null
-    }
     throw error
   })
 
@@ -763,9 +776,7 @@ export async function runCommand(options: RunCommandOptions) {
       throw error
     }
     if (interruptedSignal) {
-      await finalizeInterruptedRun(createRunResponse.run.id)
-      stopListeningForInterrupts()
-      setSignalExitCode()
+      await finishSignalInterruption(createRunResponse.run.id)
       return
     }
   }
@@ -879,6 +890,7 @@ export async function runCommand(options: RunCommandOptions) {
           targetUrl: environment.targetUrl,
           model: config.model,
           modelReasoningEffort: config.model_reasoning_effort,
+          signal: runAbortController.signal,
         })
         runAbortController.signal.throwIfAborted()
 
@@ -1068,11 +1080,7 @@ export async function runCommand(options: RunCommandOptions) {
 
   if (setSignalExitCode()) {
     if (finalizationError) {
-      const message =
-        finalizationError instanceof Error
-          ? finalizationError.message
-          : "Unknown error"
-      process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
+      reportInterruptedFinalizationError(finalizationError)
     }
     return
   }

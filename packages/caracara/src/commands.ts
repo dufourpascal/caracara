@@ -1062,12 +1062,19 @@ export async function runCommand(options: RunCommandOptions) {
     }
   }
 
-  if (finalizationError) {
-    throw finalizationError
+  if (setSignalExitCode()) {
+    if (finalizationError) {
+      const message =
+        finalizationError instanceof Error
+          ? finalizationError.message
+          : "Unknown error"
+      process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
+    }
+    return
   }
 
-  if (setSignalExitCode()) {
-    return
+  if (finalizationError) {
+    throw finalizationError
   }
 
   if (runError) {

@@ -325,4 +325,30 @@ describe("run interruption", () => {
     )
     expect(process.exitCode).toBe(130)
   })
+
+  it("preserves the signal exit code when interruption cleanup fails", async () => {
+    mocks.finalizeRun
+      .mockRejectedValueOnce(new Error("API unavailable"))
+      .mockRejectedValueOnce(new Error("API unavailable"))
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() => expect(mocks.executeScenario).toHaveBeenCalled())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await expect(run).resolves.toBeUndefined()
+
+    expect(process.exitCode).toBe(130)
+    expect(stderr).toHaveBeenCalledWith(
+      "Failed to finalize interrupted run: API unavailable\n"
+    )
+  })
 })

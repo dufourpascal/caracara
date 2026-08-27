@@ -587,6 +587,7 @@ export async function runCommand(options: RunCommandOptions) {
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
+  const finalizationAttemptId = crypto.randomUUID()
   const runAbortController = new AbortController()
   let interruptedSignal: "SIGINT" | "SIGTERM" | null = null
   const interrupt = (signal: "SIGINT" | "SIGTERM") => {
@@ -647,7 +648,11 @@ export async function runCommand(options: RunCommandOptions) {
       version: CLI_VERSION,
       projectSlug,
       runId,
-      payload: { status: "interrupted", finishedAt: Date.now() },
+      payload: {
+        status: "interrupted",
+        finishedAt: Date.now(),
+        finalizationAttemptId,
+      },
     })
   const finishSignalInterruption = async (runId: string) => {
     try {
@@ -1075,6 +1080,7 @@ export async function runCommand(options: RunCommandOptions) {
             payload: {
               status: finalRunStatus,
               finishedAt: finalFinishedAt,
+              finalizationAttemptId,
             },
             signal: runAbortController.signal,
           })

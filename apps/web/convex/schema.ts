@@ -124,6 +124,7 @@ export default defineSchema({
     totalCheckCount: v.number(),
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
+    finalizationAttemptId: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_project_started_at", ["projectId", "startedAt"])

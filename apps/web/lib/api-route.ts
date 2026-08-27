@@ -538,6 +538,9 @@ export async function finalizeRun(args: {
       runId: args.runId as never,
       status: payload.status,
       finishedAt: payload.finishedAt,
+      ...(payload.finalizationAttemptId
+        ? { finalizationAttemptId: payload.finalizationAttemptId }
+        : {}),
     },
     { token: args.token }
   )

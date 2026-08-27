@@ -445,6 +445,16 @@ describe("run interruption", () => {
         payload: expect.objectContaining({ status: "interrupted" }),
       })
     )
+    const finalizeCalls = mocks.finalizeRun.mock.calls as unknown as Array<
+      [{ payload: { finalizationAttemptId?: string } }]
+    >
+    const initialAttemptId = finalizeCalls[0]?.[0].payload.finalizationAttemptId
+    const correctionAttemptId =
+      finalizeCalls[1]?.[0].payload.finalizationAttemptId
+    expect(initialAttemptId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+    expect(correctionAttemptId).toBe(initialAttemptId)
     expect(process.exitCode).toBe(130)
   })
 

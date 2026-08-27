@@ -397,6 +397,7 @@ export const submitScenarioResultResponseSchema = z.object({
 export const finalizeRunRequestSchema = z.object({
   status: z.enum(["completed", "failed", "interrupted"]),
   finishedAt: z.number().int().positive(),
+  finalizationAttemptId: z.string().uuid().optional(),
 })
 
 export const finalizeRunResponseSchema = z.object({

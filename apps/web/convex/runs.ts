@@ -88,6 +88,18 @@ export function matchesTerminalRun(
   )
 }
 
+export function canCorrectRunInterruption(
+  existing: { status: string; finalizationAttemptId?: string },
+  submitted: { status: string; finalizationAttemptId?: string }
+) {
+  return (
+    submitted.status === "interrupted" &&
+    submitted.finalizationAttemptId !== undefined &&
+    submitted.finalizationAttemptId === existing.finalizationAttemptId &&
+    (existing.status === "completed" || existing.status === "failed")
+  )
+}
+
 export function canCorrectScenarioInterruption(
   runStatus: string,
   existingStatus: string,
@@ -585,6 +597,7 @@ export const finalize = mutation({
       v.literal("interrupted")
     ),
     finishedAt: v.number(),
+    finalizationAttemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -611,6 +624,18 @@ export const finalize = mutation({
       if (matchesTerminalRun(run, args)) {
         return { run: toRun(run) }
       }
+      if (canCorrectRunInterruption(run, args)) {
+        await ctx.db.patch(run._id, {
+          status: "interrupted",
+          finishedAt: args.finishedAt,
+          updatedAt: Date.now(),
+        })
+        const correctedRun = await ctx.db.get(run._id)
+        if (!correctedRun) {
+          throw new Error("Failed to correct interrupted run")
+        }
+        return { run: toRun(correctedRun) }
+      }
       throw new ConvexError({
         code: "conflict",
         message: "Run has already been finalized.",
@@ -627,6 +652,9 @@ export const finalize = mutation({
       status: args.status,
       ...counts,
       finishedAt: args.finishedAt,
+      ...(args.finalizationAttemptId
+        ? { finalizationAttemptId: args.finalizationAttemptId }
+        : {}),
       updatedAt: Date.now(),
     })
 

@@ -6,6 +6,7 @@ import {
 } from "./lib"
 import {
   addRunEnvironmentName,
+  canCorrectRunInterruption,
   canCorrectScenarioInterruption,
   matchesTerminalRun,
   parseRunEnvironment,
@@ -65,6 +66,35 @@ describe("run finalization", () => {
         { status: "completed", finishedAt: 123 },
         { status: "interrupted", finishedAt: 456 }
       )
+    ).toBe(false)
+  })
+
+  it("corrects an in-flight finalization only for the same attempt", () => {
+    const run = {
+      status: "completed",
+      finalizationAttemptId: "attempt-1",
+    }
+
+    expect(
+      canCorrectRunInterruption(run, {
+        status: "interrupted",
+        finalizationAttemptId: "attempt-1",
+      })
+    ).toBe(true)
+    expect(
+      canCorrectRunInterruption(run, {
+        status: "interrupted",
+        finalizationAttemptId: "attempt-2",
+      })
+    ).toBe(false)
+    expect(
+      canCorrectRunInterruption(run, { status: "interrupted" })
+    ).toBe(false)
+    expect(
+      canCorrectRunInterruption(run, {
+        status: "failed",
+        finalizationAttemptId: "attempt-1",
+      })
     ).toBe(false)
   })
 

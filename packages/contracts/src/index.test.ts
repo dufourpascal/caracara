@@ -11,6 +11,7 @@ import {
   cliConfigSchema,
   createRunRequestSchema,
   executionPlanResponseSchema,
+  finalizeRunRequestSchema,
   finalizeRunResponseSchema,
   createUniqueSlug,
   formatRunName,
@@ -450,6 +451,14 @@ describe("contracts", () => {
       MIN_SUPPORTED_CLI_VERSION
     )
     expect(token.tokenType).toBe("Bearer")
+
+    expect(
+      finalizeRunRequestSchema.parse({
+        status: "interrupted",
+        finishedAt: 10,
+        finalizationAttemptId: "00000000-0000-4000-8000-000000000001",
+      }).finalizationAttemptId
+    ).toBe("00000000-0000-4000-8000-000000000001")
 
     expect(
       finalizeRunResponseSchema.parse({

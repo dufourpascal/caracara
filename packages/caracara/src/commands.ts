@@ -796,10 +796,25 @@ export async function runCommand(options: RunCommandOptions) {
   }
 
   if (executionSource.queue.length === 0) {
-    if (createRunResponse) {
-      await finalizeInterruptedRun(createRunResponse.run.id)
+    let finalizationError: unknown = null
+    try {
+      if (createRunResponse) {
+        await finalizeInterruptedRun(createRunResponse.run.id)
+      }
+    } catch (error) {
+      finalizationError = error
+    } finally {
+      stopListeningForInterrupts()
     }
-    stopListeningForInterrupts()
+    if (setSignalExitCode()) {
+      if (finalizationError) {
+        reportInterruptedFinalizationError(finalizationError)
+      }
+      return
+    }
+    if (finalizationError) {
+      throw finalizationError
+    }
     throw new Error(
       runSelection.mode === "phase"
         ? `Phase ${runSelection.requestedPhaseOrder} has no active scenarios to run.`
@@ -1093,6 +1108,7 @@ export async function runCommand(options: RunCommandOptions) {
                 : {}),
             },
           },
+          signal: AbortSignal.timeout(10_000),
         })
       } catch {
         // Preserve the original interruption error from the run loop.

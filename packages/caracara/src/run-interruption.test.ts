@@ -506,6 +506,36 @@ describe("run interruption", () => {
     ).toHaveLength(0)
   })
 
+  it("preserves the signal exit code during empty-suite cleanup", async () => {
+    let finishFinalization: (() => void) | undefined
+    mocks.fetchExecutionPlan.mockResolvedValueOnce({
+      ...mocks.executionPlan,
+      phases: [],
+    })
+    mocks.finalizeRun.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFinalization = () => resolve(undefined)
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({ suite: "smoke" })
+    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalled())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+    finishFinalization?.()
+
+    await expect(run).resolves.toBeUndefined()
+
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(130)
+  })
+
   it("corrects finalization when a signal arrives during the request", async () => {
     mocks.executeScenario.mockResolvedValueOnce({
       checkResults: [],
@@ -644,6 +674,7 @@ describe("run interruption", () => {
         payload: expect.objectContaining({
           result: expect.objectContaining({ status: "interrupted" }),
         }),
+        signal: expect.any(AbortSignal),
       })
     )
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
@@ -721,6 +752,7 @@ describe("run interruption", () => {
         payload: expect.objectContaining({
           result: expect.objectContaining({ status: "interrupted" }),
         }),
+        signal: expect.any(AbortSignal),
       })
     )
     expect(process.exitCode).toBe(130)

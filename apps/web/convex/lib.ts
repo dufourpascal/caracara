@@ -951,6 +951,31 @@ export async function deleteScenarioResultEvidence(
   return deletedCount
 }
 
+export async function interruptRunningScenarioResults(
+  ctx: MutationCtx,
+  runId: Id<"runs">,
+  finishedAt: number
+) {
+  const results = await ctx.db
+    .query("scenarioResults")
+    .withIndex("by_run", (query) => query.eq("runId", runId))
+    .collect()
+  const running = results.filter((result) => result.status === "running")
+
+  for (const result of running) {
+    await deleteScenarioResultEvidence(ctx, result._id)
+    await ctx.db.patch(result._id, {
+      status: "interrupted",
+      checkResults: [],
+      executionSummary: null,
+      failureDetail: "Execution interrupted.",
+      finishedAt,
+    })
+  }
+
+  return running.length
+}
+
 export function validateFailedCheckEvidence(
   checkResults: Array<{ checkId: string; verdict: string }>,
   evidence: Array<{ checkId: string }>

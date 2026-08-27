@@ -17,6 +17,7 @@ import {
   getExecutionPlan,
   getScenarioById,
   getSuiteBySlug,
+  interruptRunningScenarioResults,
   matchesTerminalScenarioResult,
   requireProjectOwnerById,
   requireProjectOwnerBySlug,
@@ -598,6 +599,10 @@ export const finalize = mutation({
         code: "unauthorized",
         message: "You do not have access to this run.",
       })
+    }
+
+    if (args.status === "interrupted") {
+      await interruptRunningScenarioResults(ctx, run._id, args.finishedAt)
     }
 
     if (run.status !== "running") {

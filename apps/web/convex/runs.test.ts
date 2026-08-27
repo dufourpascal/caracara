@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
 
-import { deleteRunAndResults } from "./lib"
+import {
+  deleteRunAndResults,
+  interruptRunningScenarioResults,
+} from "./lib"
 import {
   addRunEnvironmentName,
   canCorrectScenarioInterruption,
@@ -57,6 +60,67 @@ describe("run finalization", () => {
     expect(
       matchesTerminalRun(run, { status: "interrupted", finishedAt: 456 })
     ).toBe(false)
+  })
+
+  it("interrupts running scenarios and removes their evidence", async () => {
+    const deletedStorageIds: string[] = []
+    const deletedIds: string[] = []
+    const patches: Array<{ id: string; value: unknown }> = []
+    const ctx = {
+      db: {
+        query(table: string) {
+          return {
+            withIndex(
+              _indexName: string,
+              buildQuery: (query: {
+                eq: (field: string, value: string) => null
+              }) => null
+            ) {
+              buildQuery({ eq: () => null })
+              return {
+                async collect() {
+                  return table === "scenarioResults"
+                    ? [
+                        { _id: "running-1", status: "running" },
+                        { _id: "completed-1", status: "completed" },
+                      ]
+                    : [{ _id: "evidence-1", storageId: "storage-1" }]
+                },
+              }
+            },
+          }
+        },
+        async delete(id: string) {
+          deletedIds.push(id)
+        },
+        async patch(id: string, value: unknown) {
+          patches.push({ id, value })
+        },
+      },
+      storage: {
+        async delete(id: string) {
+          deletedStorageIds.push(id)
+        },
+      },
+    } as never
+
+    await expect(
+      interruptRunningScenarioResults(ctx, "run-1" as never, 123)
+    ).resolves.toBe(1)
+    expect(deletedStorageIds).toEqual(["storage-1"])
+    expect(deletedIds).toEqual(["evidence-1"])
+    expect(patches).toEqual([
+      {
+        id: "running-1",
+        value: {
+          status: "interrupted",
+          checkResults: [],
+          executionSummary: null,
+          failureDetail: "Execution interrupted.",
+          finishedAt: 123,
+        },
+      },
+    ])
   })
 })
 

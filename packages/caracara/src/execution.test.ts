@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { setTimeout as delay } from "node:timers/promises"
 
 import type { OrderedScenario } from "@workspace/contracts"
 
@@ -16,6 +17,7 @@ import {
   parseClaudeJsonResult,
   redactRunnerExecution,
   redactSecretValues,
+  runChildCommand,
   toCodexRunnerUsage,
   validateRunnerExecution,
 } from "./execution.js"
@@ -35,6 +37,31 @@ const scenario: OrderedScenario = {
   ],
   dependencyIds: [],
 }
+
+describe("child command termination", () => {
+  it.skipIf(process.platform === "win32")(
+    "waits for an aborted child and force-kills it after the grace period",
+    async () => {
+      const controller = new AbortController()
+      const execution = runChildCommand({
+        command: process.execPath,
+        commandArgs: [
+          "-e",
+          'process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000)',
+        ],
+        cwd: process.cwd(),
+        signal: controller.signal,
+      })
+      await delay(100)
+
+      const abortedAt = Date.now()
+      controller.abort(new Error("Interrupted"))
+
+      await expect(execution).rejects.toThrow("Interrupted")
+      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(900)
+    }
+  )
+})
 
 describe("Codex SDK configuration", () => {
   afterEach(() => {

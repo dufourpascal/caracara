@@ -587,6 +587,7 @@ export async function runCommand(options: RunCommandOptions) {
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
+  const runStartedAt = Date.now()
   const creationAttemptId = crypto.randomUUID()
   const finalizationAttemptId = crypto.randomUUID()
   let interruptedScenarioResultId: string | null = null
@@ -641,7 +642,7 @@ export async function runCommand(options: RunCommandOptions) {
         runnerType,
         environment: environment.name,
         targetUrl: environment.targetUrl,
-        startedAt: Date.now(),
+        startedAt: runStartedAt,
         creationAttemptId,
         ...(interruptedAt === undefined ? {} : { interruptedAt }),
       },

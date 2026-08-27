@@ -411,24 +411,35 @@ describe("run interruption", () => {
             payload: {
               creationAttemptId?: string
               interruptedAt?: number
+              startedAt: number
             }
             signal?: AbortSignal
           },
         ]
       >
+      const recoveryCall = createCalls[1]?.[0]
+      if (!recoveryCall) {
+        throw new Error("Expected a recovered run creation call")
+      }
       expect(createCalls[0]?.[0].signal?.aborted).toBe(true)
-      expect(createCalls[1]?.[0].signal?.aborted).toBe(false)
-      expect(createCalls[1]?.[0].payload.creationAttemptId).toBe(
+      expect(recoveryCall.signal?.aborted).toBe(false)
+      expect(recoveryCall.payload.creationAttemptId).toBe(
         createCalls[0]?.[0].payload.creationAttemptId
       )
-      expect(createCalls[1]?.[0].payload.interruptedAt).toEqual(
+      expect(recoveryCall.payload.startedAt).toBe(
+        createCalls[0]?.[0].payload.startedAt
+      )
+      expect(recoveryCall.payload.interruptedAt).toEqual(
         expect.any(Number)
+      )
+      expect(recoveryCall.payload.interruptedAt).toBeGreaterThanOrEqual(
+        recoveryCall.payload.startedAt
       )
       expect(mocks.finalizeRun).toHaveBeenCalledWith(
         expect.objectContaining({
           payload: expect.objectContaining({
             status: "interrupted",
-            finishedAt: createCalls[1]?.[0].payload.interruptedAt,
+            finishedAt: recoveryCall.payload.interruptedAt,
           }),
         })
       )

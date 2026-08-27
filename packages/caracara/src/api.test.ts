@@ -307,4 +307,30 @@ describe("api client", () => {
     await expect(finalization).resolves.toEqual(response)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it("aborts run finalization during a transient retry delay", async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      json: async () => ({}),
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const finalization = finalizeRun({
+      apiBaseUrl: "https://example.com",
+      accessToken: "token",
+      version: "0.6.1",
+      projectSlug: "project",
+      runId: "run-1",
+      payload: { status: "completed", finishedAt: 123 },
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    controller.abort(new Error("Interrupted"))
+
+    await expect(finalization).rejects.toThrow(/aborted/i)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
 })

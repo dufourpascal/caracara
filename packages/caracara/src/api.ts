@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises"
+
 import {
   type ApiError,
   API_NAMESPACE,
@@ -37,24 +39,25 @@ function isRetryableStatus(status: number) {
 async function fetchWithTransientRetries(input: string, init: RequestInit) {
   for (let attempt = 0; ; attempt += 1) {
     try {
+      init.signal?.throwIfAborted()
       const response = await fetch(input, init)
       if (
         isRetryableStatus(response.status) &&
         attempt < TRANSIENT_RETRY_DELAYS_MS.length
       ) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
-        )
+        await delay(TRANSIENT_RETRY_DELAYS_MS[attempt], undefined, {
+          signal: init.signal ?? undefined,
+        })
         continue
       }
       return response
     } catch (error) {
-      if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
+      if (init.signal?.aborted || attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
         throw error
       }
-      await new Promise((resolve) =>
-        setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt])
-      )
+      await delay(TRANSIENT_RETRY_DELAYS_MS[attempt], undefined, {
+        signal: init.signal ?? undefined,
+      })
     }
   }
 }
@@ -249,6 +252,7 @@ export async function finalizeRun(args: {
   projectSlug: string
   runId: string
   payload: Parameters<typeof finalizeRunRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/finalize`,
@@ -257,6 +261,7 @@ export async function finalizeRun(args: {
     init: {
       method: "POST",
       body: JSON.stringify(finalizeRunRequestSchema.parse(args.payload)),
+      signal: args.signal,
     },
     retryTransient: true,
     schema: finalizeRunResponseSchema,

@@ -3,6 +3,32 @@ import process from "node:process"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => {
+  const executionPlan = {
+    project: { projectPrompt: "Test the application." },
+    phases: [
+      {
+        id: "phase-1",
+        name: "Setup",
+        order: 1,
+        scenarios: [
+          {
+            id: "scenario-1",
+            name: "Open application",
+            slug: "open-application",
+            status: "active",
+            instructions: "Open the application.",
+            evaluationChecks: [],
+            phaseId: "phase-1",
+            phaseName: "Setup",
+            phaseOrder: 1,
+            dependencyIds: [],
+          },
+        ],
+      },
+    ],
+    suite: null,
+    unassignedScenarioCount: 0,
+  }
   const executeScenario = vi.fn(
     ({ signal }: { signal?: AbortSignal }) =>
       new Promise((_, reject) => {
@@ -22,33 +48,11 @@ const mocks = vi.hoisted(() => {
       },
     })),
     executeScenario,
-    fetchExecutionPlan: vi.fn(async () => ({
-      project: { projectPrompt: "Test the application." },
-      phases: [
-        {
-          id: "phase-1",
-          name: "Setup",
-          order: 1,
-          scenarios: [
-            {
-              id: "scenario-1",
-              name: "Open application",
-              slug: "open-application",
-              status: "active",
-              instructions: "Open the application.",
-              evaluationChecks: [],
-              phaseId: "phase-1",
-              phaseName: "Setup",
-              phaseOrder: 1,
-              dependencyIds: [],
-            },
-          ],
-        },
-      ],
-      suite: null,
-      unassignedScenarioCount: 0,
-    })),
-    finalizeRun: vi.fn(async () => undefined),
+    executionPlan,
+    fetchExecutionPlan: vi.fn(async () => executionPlan),
+    finalizeRun: vi.fn(async (args?: { signal?: AbortSignal }) => {
+      void args
+    }),
     startScenarioExecution: vi.fn(async () => ({
       result: { id: "result-1" },
     })),
@@ -146,4 +150,121 @@ describe("run interruption", () => {
       ).toHaveLength(0)
     }
   )
+
+  it("listens before a suite run is created", async () => {
+    let finishCreatingRun:
+      | ((value: Awaited<ReturnType<typeof mocks.createRun>>) => void)
+      | undefined
+    mocks.createRun.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreatingRun = resolve
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({ suite: "smoke" })
+    await vi.waitFor(() => expect(mocks.createRun).toHaveBeenCalled())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+    finishCreatingRun?.({
+      run: {
+        id: "run-1",
+        name: "steady-hawk-20260827-120000",
+        evidencePolicy: "text_only",
+      },
+    })
+
+    await run
+
+    expect(mocks.fetchExecutionPlan).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
+  it("preserves the signal exit code while fetching a suite plan", async () => {
+    let finishFetchingPlan:
+      | ((value: typeof mocks.executionPlan) => void)
+      | undefined
+    mocks.fetchExecutionPlan.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFetchingPlan = resolve
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({ suite: "smoke" })
+    await vi.waitFor(() => expect(mocks.fetchExecutionPlan).toHaveBeenCalled())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+    finishFetchingPlan?.(mocks.executionPlan)
+
+    await run
+
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
+  it("corrects finalization when a signal arrives during the request", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { complete: true },
+    })
+    mocks.finalizeRun.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalledOnce())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await run
+
+    expect(mocks.finalizeRun).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "completed" }),
+        signal: expect.any(AbortSignal),
+      })
+    )
+    expect(mocks.finalizeRun).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
 })

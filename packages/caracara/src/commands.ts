@@ -611,6 +611,13 @@ export async function runCommand(options: RunCommandOptions) {
     process.off("SIGTERM", onSigterm)
     listeningForInterrupts = false
   }
+  const setSignalExitCode = () => {
+    if (!interruptedSignal) {
+      return false
+    }
+    process.exitCode = interruptedSignal === "SIGINT" ? 130 : 143
+    return true
+  }
 
   const startRun = () =>
     createRun({
@@ -629,10 +636,30 @@ export async function runCommand(options: RunCommandOptions) {
         startedAt: Date.now(),
       },
     })
-  let createRunResponse =
-    runSelection.mode === "suite" ? await startRun() : null
-  if (createRunResponse) {
+  const finalizeInterruptedRun = (runId: string) =>
+    finalizeRun({
+      apiBaseUrl: config.apiBaseUrl,
+      accessToken,
+      version: CLI_VERSION,
+      projectSlug,
+      runId,
+      payload: { status: "interrupted", finishedAt: Date.now() },
+    })
+  let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
+  if (runSelection.mode === "suite") {
     listenForInterrupts()
+    try {
+      createRunResponse = await startRun()
+    } catch (error) {
+      stopListeningForInterrupts()
+      throw error
+    }
+    if (interruptedSignal) {
+      await finalizeInterruptedRun(createRunResponse.run.id)
+      stopListeningForInterrupts()
+      setSignalExitCode()
+      return
+    }
   }
   const executionSource = await (
     runSelection.mode === "single"
@@ -700,29 +727,22 @@ export async function runCommand(options: RunCommandOptions) {
         })
   ).catch(async (error) => {
     if (createRunResponse) {
-      await finalizeRun({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: { status: "interrupted", finishedAt: Date.now() },
-      })
+      await finalizeInterruptedRun(createRunResponse.run.id)
     }
     stopListeningForInterrupts()
+    if (setSignalExitCode()) {
+      return null
+    }
     throw error
   })
 
+  if (!executionSource) {
+    return
+  }
+
   if (executionSource.queue.length === 0) {
     if (createRunResponse) {
-      await finalizeRun({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: { status: "interrupted", finishedAt: Date.now() },
-      })
+      await finalizeInterruptedRun(createRunResponse.run.id)
     }
     stopListeningForInterrupts()
     throw new Error(
@@ -741,6 +761,12 @@ export async function runCommand(options: RunCommandOptions) {
     } catch (error) {
       stopListeningForInterrupts()
       throw error
+    }
+    if (interruptedSignal) {
+      await finalizeInterruptedRun(createRunResponse.run.id)
+      stopListeningForInterrupts()
+      setSignalExitCode()
+      return
     }
   }
 
@@ -777,6 +803,7 @@ export async function runCommand(options: RunCommandOptions) {
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
+  let finalizationError: unknown = null
   let runError: unknown = null
   let runUsage: RunnerUsageReport = { complete: true }
   let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
@@ -999,25 +1026,44 @@ export async function runCommand(options: RunCommandOptions) {
 
     try {
       if (finalRunStatus && finalFinishedAt !== null) {
-        await finalizeRun({
-          apiBaseUrl: config.apiBaseUrl,
-          accessToken,
-          version: CLI_VERSION,
-          projectSlug,
-          runId: createRunResponse.run.id,
-          payload: {
-            status: finalRunStatus,
-            finishedAt: finalFinishedAt,
-          },
-        })
+        try {
+          await finalizeRun({
+            apiBaseUrl: config.apiBaseUrl,
+            accessToken,
+            version: CLI_VERSION,
+            projectSlug,
+            runId: createRunResponse.run.id,
+            payload: {
+              status: finalRunStatus,
+              finishedAt: finalFinishedAt,
+            },
+            signal: runAbortController.signal,
+          })
+          if (interruptedSignal && finalRunStatus !== "interrupted") {
+            await finalizeInterruptedRun(createRunResponse.run.id)
+          }
+        } catch (error) {
+          if (!interruptedSignal) {
+            finalizationError = error
+          } else {
+            try {
+              await finalizeInterruptedRun(createRunResponse.run.id)
+            } catch (correctionError) {
+              finalizationError = correctionError
+            }
+          }
+        }
       }
     } finally {
       stopListeningForInterrupts()
     }
   }
 
-  if (interruptedSignal) {
-    process.exitCode = interruptedSignal === "SIGINT" ? 130 : 143
+  if (finalizationError) {
+    throw finalizationError
+  }
+
+  if (setSignalExitCode()) {
     return
   }
 

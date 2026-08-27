@@ -562,9 +562,20 @@ describe("run interruption", () => {
     const finalizeCalls = mocks.finalizeRun.mock.calls as unknown as Array<
       [{ payload: { interruptedScenarioAttemptId?: string } }]
     >
+    const submitCalls = mocks.submitScenarioResult.mock.calls as unknown as Array<
+      [{ payload: { result: { executionAttemptId?: string } } }]
+    >
+    const executionAttemptId =
+      startCalls[0]?.[0].payload.result.executionAttemptId
+    expect(submitCalls[0]?.[0].payload.result.executionAttemptId).toBe(
+      executionAttemptId
+    )
+    expect(submitCalls[1]?.[0].payload.result.executionAttemptId).toBe(
+      executionAttemptId
+    )
     expect(
       finalizeCalls[0]?.[0].payload.interruptedScenarioAttemptId
-    ).toBe(startCalls[0]?.[0].payload.result.executionAttemptId)
+    ).toBe(executionAttemptId)
     expect(process.exitCode).toBe(130)
   })
 

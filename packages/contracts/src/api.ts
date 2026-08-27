@@ -382,6 +382,7 @@ export const submitScenarioResultRequestSchema = z.object({
     executionSummary: nullableStringSchema,
     failureDetail: nullableStringSchema,
     finishedAt: z.number().int().positive(),
+    executionAttemptId: z.string().uuid().optional(),
   }),
 })
 

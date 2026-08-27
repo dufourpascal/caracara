@@ -611,6 +611,28 @@ function signalChildProcess(
   }
 }
 
+function processGroupExists(pid: number) {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return false
+    }
+    throw error
+  }
+}
+
+async function waitForProcessGroupExit(pid: number) {
+  const deadline = Date.now() + 1_000
+  while (processGroupExists(pid) && Date.now() < deadline) {
+    await delay(10)
+  }
+  if (processGroupExists(pid)) {
+    throw new Error("Failed to terminate child process group.")
+  }
+}
+
 export async function terminateChildProcess(
   child: ChildProcess,
   detached = false,
@@ -633,15 +655,28 @@ export async function terminateChildProcess(
     })
   signalChildProcess(child, "SIGTERM", detached)
 
-  const terminated = await Promise.race([
+  const gracePeriod = delay(1_000)
+  const closedBeforeGrace = await Promise.race([
     waitForClose.then(() => true),
-    delay(1_000).then(() => false),
+    gracePeriod.then(() => false),
   ])
-  if (!terminated) {
-    signalChildProcess(child, "SIGKILL", detached)
-    child.stdout?.destroy()
-    child.stderr?.destroy()
+  const hasRemainingProcessGroup =
+    detached &&
+    process.platform !== "win32" &&
+    processGroupExists(child.pid)
+  if (closedBeforeGrace && !hasRemainingProcessGroup) {
+    return
+  }
+
+  await gracePeriod
+  signalChildProcess(child, "SIGKILL", detached)
+  child.stdout?.destroy()
+  child.stderr?.destroy()
+  if (!closedBeforeGrace) {
     await waitForClose
+  }
+  if (detached && process.platform !== "win32") {
+    await waitForProcessGroupExit(child.pid)
   }
 }
 

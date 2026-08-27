@@ -914,6 +914,9 @@ export async function runCommand(options: RunCommandOptions) {
               failureDetail:
                 "Dependency chain stopped after an earlier failure.",
               finishedAt: Date.now(),
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
           signal: runAbortController.signal,
@@ -986,6 +989,9 @@ export async function runCommand(options: RunCommandOptions) {
               executionSummary: execution.executionSummary,
               failureDetail: null,
               finishedAt,
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
           signal: runAbortController.signal,
@@ -1024,6 +1030,9 @@ export async function runCommand(options: RunCommandOptions) {
               failureDetail:
                 error instanceof Error ? error.message : "Runner failed",
               finishedAt: Date.now(),
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
           signal: runAbortController.signal,
@@ -1065,6 +1074,9 @@ export async function runCommand(options: RunCommandOptions) {
                   ? error.message
                   : "Execution interrupted",
               finishedAt: Date.now(),
+              ...(activeScenarioAttemptId
+                ? { executionAttemptId: activeScenarioAttemptId }
+                : {}),
             },
           },
         })

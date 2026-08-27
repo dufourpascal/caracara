@@ -8,6 +8,7 @@ import {
   addRunEnvironmentName,
   canCorrectRunInterruption,
   canCorrectScenarioInterruption,
+  matchesScenarioExecutionAttempt,
   matchesTerminalRun,
   parseRunEnvironment,
   removeRunEnvironmentName,
@@ -236,6 +237,19 @@ describe("scenario result correction", () => {
     expect(
       canCorrectScenarioInterruption("completed", "completed", "interrupted")
     ).toBe(false)
+  })
+
+  it("requires new scenario executions to use their stored attempt ID", () => {
+    expect(matchesScenarioExecutionAttempt(undefined, undefined)).toBe(true)
+    expect(matchesScenarioExecutionAttempt("attempt-1", "attempt-1")).toBe(
+      true
+    )
+    expect(matchesScenarioExecutionAttempt("attempt-1", "attempt-2")).toBe(
+      false
+    )
+    expect(matchesScenarioExecutionAttempt("attempt-1", undefined)).toBe(
+      false
+    )
   })
 })
 

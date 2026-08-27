@@ -114,6 +114,16 @@ export function canCorrectScenarioInterruption(
   )
 }
 
+export function matchesScenarioExecutionAttempt(
+  existingAttemptId?: string,
+  submittedAttemptId?: string
+) {
+  return (
+    existingAttemptId === undefined ||
+    submittedAttemptId === existingAttemptId
+  )
+}
+
 export const listForProject = query({
   args: {
     projectSlug: v.string(),
@@ -339,6 +349,7 @@ export const submitScenarioResult = mutation({
       executionSummary: v.union(v.null(), v.string()),
       failureDetail: v.union(v.null(), v.string()),
       finishedAt: v.number(),
+      executionAttemptId: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
@@ -384,6 +395,17 @@ export const submitScenarioResult = mutation({
       throw new ConvexError({
         code: "conflict",
         message: "Scenario execution has not started or is already complete.",
+      })
+    }
+    if (
+      !matchesScenarioExecutionAttempt(
+        existing.executionAttemptId,
+        args.result.executionAttemptId
+      )
+    ) {
+      throw new ConvexError({
+        code: "conflict",
+        message: "Scenario execution belongs to another attempt.",
       })
     }
     if (existing.status !== "running") {

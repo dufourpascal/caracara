@@ -39,6 +39,18 @@ const scenario: OrderedScenario = {
   dependencyIds: [],
 }
 
+function processGroupExistsForTest(pid: number) {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return false
+    }
+    throw error
+  }
+}
+
 describe("child command termination", () => {
   it.skipIf(process.platform === "win32")(
     "waits for an aborted child and force-kills it after the grace period",
@@ -84,6 +96,40 @@ describe("child command termination", () => {
         await once(child, "exit")
         await terminateChildProcess(child, true, closed)
         await closed
+      } finally {
+        if (child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL")
+          } catch {
+            // The process group is already gone.
+          }
+        }
+      }
+    }
+  )
+
+  it.skipIf(process.platform === "win32")(
+    "terminates descendants after the leader closes its own pipes",
+    async () => {
+      const descendantScript =
+        'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1_000)'
+      const leaderScript =
+        'const child = require("node:child_process").spawn(process.execPath, ["-e", ' +
+        JSON.stringify(descendantScript) +
+        '], { stdio: ["ignore", "pipe", "ignore"] }); ' +
+        'child.stdout.once("data", () => { process.stdout.write("ready"); child.stdout.destroy() }); child.unref()'
+      const child = spawn(process.execPath, ["-e", leaderScript], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+      const closed = once(child, "close").then(() => undefined)
+
+      try {
+        await once(child.stdout, "data")
+        const pid = child.pid
+        expect(pid).toBeDefined()
+        await terminateChildProcess(child, true, closed)
+        expect(processGroupExistsForTest(pid!)).toBe(false)
       } finally {
         if (child.pid) {
           try {

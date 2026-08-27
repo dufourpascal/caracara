@@ -23,6 +23,7 @@ export type RunCommandOptions = {
   runner?: RunnerType
   environment?: string
   scenario?: string
+  suite?: string
   phase?: string
   throughPhase?: string
 }

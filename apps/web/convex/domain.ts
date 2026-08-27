@@ -262,3 +262,11 @@ export function buildPhaseExecutionPlan(
 
   return executionPhases
 }
+
+export function selectSuitePhases<T extends { id: string }>(
+  phases: T[],
+  phaseIds: string[]
+) {
+  const selectedIds = new Set(phaseIds)
+  return phases.filter((phase) => selectedIds.has(phase.id))
+}

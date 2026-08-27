@@ -16,6 +16,7 @@ import {
   readRunSelectionFromLocation,
   RunEnvironmentFilter,
   ScenarioEditor,
+  SuiteEditor,
   readStoredPanelLayout,
 } from "./project-workspace"
 
@@ -104,6 +105,52 @@ describe("run result metrics", () => {
     expect(formatRunDuration(1_000, null)).toBe("In progress")
     expect(getCheckPassRate(7, 7)).toBe(100)
     expect(getCheckPassRate(5, 7)).toBe(71)
+  })
+})
+
+describe("suite editor", () => {
+  afterEach(cleanup)
+
+  it("renders ordered phase labels and saves membership", async () => {
+    const user = userEvent.setup()
+    const updateSuite = vi.fn().mockResolvedValue({
+      id: "suite-1",
+      name: "Public surfaces",
+      slug: "public-surfaces",
+      phaseIds: ["phase-1", "phase-4"],
+    })
+
+    render(
+      <SuiteEditor
+        onError={vi.fn()}
+        phases={[
+          { id: "phase-1", name: "Landing page", order: 1 },
+          { id: "phase-4", name: "Demo", order: 4 },
+        ]}
+        projectId="project-1"
+        removeSuite={vi.fn() as never}
+        setSelectedSuiteId={vi.fn()}
+        suite={{
+          id: "suite-1",
+          name: "Public surfaces",
+          slug: "public-surfaces",
+          phaseIds: ["phase-1"],
+        }}
+        updateSuite={updateSuite as never}
+      />
+    )
+
+    expect(screen.getByText("Phase 1: Landing page")).toBeTruthy()
+    await user.click(screen.getByText("Phase 4: Demo"))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(updateSuite).toHaveBeenCalledWith({
+      projectId: "project-1",
+      suiteId: "suite-1",
+      name: "Public surfaces",
+      slug: "public-surfaces",
+      phaseIds: ["phase-1", "phase-4"],
+    })
   })
 })
 

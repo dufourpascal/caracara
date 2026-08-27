@@ -7,6 +7,7 @@ import {
   ensurePhaseOwnership,
   getProjectPhases,
   getProjectScenarios,
+  getProjectSuites,
   normalizeProjectPhaseOrders,
   rebuildScenarioNavigationMetadata,
   requireProjectOwnerById,
@@ -151,7 +152,10 @@ export const remove = mutation({
       args.projectId
     )
     await assertProjectAuthoringUnlocked(ctx, project._id)
-    const scenarios = await getProjectScenarios(ctx, project._id)
+    const [scenarios, suites] = await Promise.all([
+      getProjectScenarios(ctx, project._id),
+      getProjectSuites(ctx, project._id),
+    ])
     const affectedScenarios = scenarios.filter(
       (scenario) => (scenario.phaseId ?? null) === phase._id
     )
@@ -161,6 +165,15 @@ export const remove = mutation({
         phaseId: null,
         updatedAt: Date.now(),
       })
+    }
+
+    for (const suite of suites) {
+      if (suite.phaseIds.includes(phase._id)) {
+        await ctx.db.patch(suite._id, {
+          phaseIds: suite.phaseIds.filter((phaseId) => phaseId !== phase._id),
+          updatedAt: Date.now(),
+        })
+      }
     }
 
     await deleteDependenciesTouchingScenarioIds(

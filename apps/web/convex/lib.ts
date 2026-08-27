@@ -186,6 +186,18 @@ export function toPhase(phase: Doc<"phases">, scenarioCount?: number) {
   }
 }
 
+export function toSuite(suite: Doc<"suites">) {
+  return {
+    id: suite._id,
+    projectId: suite.projectId,
+    name: suite.name,
+    slug: suite.slug,
+    phaseIds: suite.phaseIds,
+    createdAt: suite.createdAt,
+    updatedAt: suite.updatedAt,
+  }
+}
+
 export function toScenario(
   scenario: Doc<"scenarios">,
   phase?: Doc<"phases"> | null
@@ -232,6 +244,9 @@ export function toRun(run: Doc<"runs">) {
     mode: run.mode,
     requestedScenarioSlug: run.requestedScenarioSlug,
     requestedPhaseOrder: run.requestedPhaseOrder ?? null,
+    requestedSuiteSlug: run.requestedSuiteSlug ?? null,
+    requestedSuiteName: run.requestedSuiteName ?? null,
+    requestedSuitePhases: run.requestedSuitePhases ?? [],
     runnerType: run.runnerType,
     evidencePolicy: run.evidencePolicy ?? "text_only",
     environment: run.environment ?? null,
@@ -400,6 +415,35 @@ export async function getProjectPhases(ctx: Ctx, projectId: Id<"projects">) {
     .query("phases")
     .withIndex("by_project_order", (query) => query.eq("projectId", projectId))
     .collect()
+}
+
+export async function getProjectSuites(ctx: Ctx, projectId: Id<"projects">) {
+  return await ctx.db
+    .query("suites")
+    .withIndex("by_project", (query) => query.eq("projectId", projectId))
+    .collect()
+}
+
+export async function getSuiteBySlug(
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  slug: string
+) {
+  const suite = await ctx.db
+    .query("suites")
+    .withIndex("by_project_slug", (query) =>
+      query.eq("projectId", projectId).eq("slug", slug)
+    )
+    .unique()
+
+  if (!suite) {
+    throw new ConvexError({
+      code: "not_found",
+      message: 'Suite "' + slug + '" not found.',
+    })
+  }
+
+  return suite
 }
 
 export async function getProjectDependencies(
@@ -613,6 +657,20 @@ export async function ensureUniqueScenarioSlug(
   return createUniqueSlug(normalizeSlug(desiredSlug), existingSlugs)
 }
 
+export async function ensureUniqueSuiteSlug(
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  desiredSlug: string,
+  currentSuiteId?: Id<"suites">
+) {
+  const suites = await getProjectSuites(ctx, projectId)
+  const existingSlugs = suites
+    .filter((suite) => suite._id !== currentSuiteId)
+    .map((suite) => suite.slug)
+
+  return createUniqueSlug(normalizeSlug(desiredSlug), existingSlugs)
+}
+
 export async function ensureScenarioDependenciesReusable(
   ctx: Ctx,
   projectId: Id<"projects">,
@@ -804,6 +862,24 @@ export async function ensurePhaseOwnership(
   return { project, phase }
 }
 
+export async function ensureSuiteOwnership(
+  ctx: Ctx,
+  suiteId: Id<"suites">,
+  projectId: Id<"projects">
+) {
+  const { project } = await requireProjectOwnerById(ctx, projectId)
+  const suite = await ctx.db.get(suiteId)
+
+  if (!suite || suite.projectId !== project._id) {
+    throw new ConvexError({
+      code: "not_found",
+      message: "Suite not found.",
+    })
+  }
+
+  return { project, suite }
+}
+
 export async function ensureRunOwnership(ctx: Ctx, runId: Id<"runs">) {
   const run = await getRunById(ctx, runId)
   const { identity, project } = await requireProjectOwnerById(
@@ -900,10 +976,11 @@ export async function deleteProjectCascade(
   ctx: MutationCtx,
   projectId: Id<"projects">
 ) {
-  const [dependencies, phases, scenarios, runs] = await Promise.all([
+  const [dependencies, phases, scenarios, suites, runs] = await Promise.all([
     getProjectDependencies(ctx, projectId),
     getProjectPhases(ctx, projectId),
     getProjectScenarios(ctx, projectId),
+    getProjectSuites(ctx, projectId),
     ctx.db
       .query("runs")
       .withIndex("by_project", (query) => query.eq("projectId", projectId))
@@ -929,6 +1006,10 @@ export async function deleteProjectCascade(
     await ctx.db.delete(phase._id)
   }
 
+  for (const suite of suites) {
+    await ctx.db.delete(suite._id)
+  }
+
   await ctx.db.delete(projectId)
 
   return {
@@ -938,6 +1019,7 @@ export async function deleteProjectCascade(
     deletedResultCount,
     deletedRunCount: runs.length,
     deletedScenarioCount: scenarios.length,
+    deletedSuiteCount: suites.length,
   }
 }
 

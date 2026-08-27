@@ -4,6 +4,7 @@ import {
   assertValidDependencies,
   buildExecutionOrder,
   filterDependenciesForPhaseExecution,
+  selectSuitePhases,
 } from "./domain"
 
 const scenarios = [
@@ -105,5 +106,20 @@ describe("convex domain helpers", () => {
     expect(
       filterDependenciesForPhaseExecution(withPhases, dependencies)
     ).toEqual([{ scenarioId: "c", dependsOnScenarioId: "b" }])
+  })
+
+  it("selects suite phases without changing project phase order", () => {
+    const phases = [
+      { id: "phase-1", order: 1 },
+      { id: "phase-2", order: 2 },
+      { id: "phase-3", order: 3 },
+      { id: "phase-4", order: 4 },
+    ]
+
+    expect(
+      selectSuitePhases(phases, ["phase-4", "phase-1", "phase-2"]).map(
+        (phase) => phase.id
+      )
+    ).toEqual(["phase-1", "phase-2", "phase-4"])
   })
 })

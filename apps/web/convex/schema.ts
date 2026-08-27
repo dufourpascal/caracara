@@ -66,6 +66,16 @@ export default defineSchema({
   })
     .index("by_project", ["projectId"])
     .index("by_project_order", ["projectId", "order"]),
+  suites: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    slug: v.string(),
+    phaseIds: v.array(v.id("phases")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_slug", ["projectId", "slug"]),
   scenarioDependencies: defineTable({
     projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
@@ -88,10 +98,22 @@ export default defineSchema({
       v.literal("all"),
       v.literal("single"),
       v.literal("phase"),
-      v.literal("through_phase")
+      v.literal("through_phase"),
+      v.literal("suite")
     ),
     requestedScenarioSlug: v.union(v.null(), v.string()),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
+    requestedSuiteName: v.optional(v.union(v.null(), v.string())),
+    requestedSuitePhases: v.optional(
+      v.array(
+        v.object({
+          id: v.id("phases"),
+          name: v.string(),
+          order: v.number(),
+        })
+      )
+    ),
     runnerType: v.union(v.null(), v.literal("codex"), v.literal("claude-code")),
     evidencePolicy: v.optional(
       v.union(v.literal("text_only"), v.literal("failed_check_screenshot"))

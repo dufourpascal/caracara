@@ -23,7 +23,13 @@ export const scenarioResultStatusSchema = z.enum([
   "interrupted",
 ])
 export const runnerTypeSchema = z.enum(["codex", "claude-code"])
-export const runModeSchema = z.enum(["all", "single", "phase", "through_phase"])
+export const runModeSchema = z.enum([
+  "all",
+  "single",
+  "phase",
+  "through_phase",
+  "suite",
+])
 export const evidencePolicySchema = z.enum([
   "text_only",
   "failed_check_screenshot",
@@ -133,6 +139,44 @@ export const phaseSchema = z.object({
   updatedAt: timestampSchema,
 })
 
+export const suiteInputSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Suite name is required.")
+    .max(120, "Suite name must be 120 characters or fewer."),
+  slug: z.preprocess(
+    (value) =>
+      typeof value === "string" && value.trim() === "" ? undefined : value,
+    z
+      .string()
+      .trim()
+      .max(SLUG_MAX_LENGTH, "Slug must be 120 characters or fewer.")
+      .optional()
+  ),
+  phaseIds: z
+    .array(z.string().min(1))
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Suite phase IDs must be unique.",
+    }),
+})
+
+export const suiteSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string().min(1).max(120),
+  slug: slugSchema,
+  phaseIds: z.array(z.string()),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+})
+
+export const suitePhaseSnapshotSchema = phaseSchema.pick({
+  id: true,
+  name: true,
+  order: true,
+})
+
 export const scenarioSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -164,6 +208,9 @@ export const runSchema = z.object({
   mode: runModeSchema,
   requestedScenarioSlug: slugSchema.nullable(),
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+  requestedSuiteSlug: slugSchema.nullable().optional(),
+  requestedSuiteName: z.string().min(1).max(120).nullable().optional(),
+  requestedSuitePhases: z.array(suitePhaseSnapshotSchema).optional(),
   runnerType: runnerTypeSchema.nullable(),
   evidencePolicy: evidencePolicySchema,
   environment: environmentNameSchema.nullable().optional(),
@@ -211,6 +258,8 @@ export type EvidencePolicy = z.infer<typeof evidencePolicySchema>
 export type Project = z.infer<typeof projectSchema>
 export type ProjectInput = z.infer<typeof projectInputSchema>
 export type Phase = z.infer<typeof phaseSchema>
+export type Suite = z.infer<typeof suiteSchema>
+export type SuiteInput = z.infer<typeof suiteInputSchema>
 export type Scenario = z.infer<typeof scenarioSchema>
 export type ScenarioDependency = z.infer<typeof scenarioDependencySchema>
 export type Run = z.infer<typeof runSchema>

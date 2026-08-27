@@ -47,7 +47,7 @@ import {
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.5.0"
+const CLI_VERSION = "0.6.0"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
@@ -494,23 +494,22 @@ function parsePhaseOrder(value: string | undefined, flagName: string) {
   return parsed
 }
 
-function resolveRunMode(options: RunCommandOptions) {
+export function resolveRunMode(options: RunCommandOptions) {
   const requestedPhaseOrder = parsePhaseOrder(options.phase, "--phase")
   const requestedThroughPhaseOrder = parsePhaseOrder(
     options.throughPhase,
     "--through-phase"
   )
 
-  if (options.scenario && requestedPhaseOrder !== null) {
-    throw new Error("`--scenario` cannot be combined with `--phase`.")
-  }
+  const selectors = [
+    options.scenario ? "--scenario" : null,
+    options.suite ? "--suite" : null,
+    requestedPhaseOrder !== null ? "--phase" : null,
+    requestedThroughPhaseOrder !== null ? "--through-phase" : null,
+  ].filter((selector): selector is string => selector !== null)
 
-  if (options.scenario && requestedThroughPhaseOrder !== null) {
-    throw new Error("`--scenario` cannot be combined with `--through-phase`.")
-  }
-
-  if (requestedPhaseOrder !== null && requestedThroughPhaseOrder !== null) {
-    throw new Error("`--phase` cannot be combined with `--through-phase`.")
+  if (selectors.length > 1) {
+    throw new Error(`${selectors.join(", ")} cannot be combined.`)
   }
 
   if (options.scenario) {
@@ -518,6 +517,16 @@ function resolveRunMode(options: RunCommandOptions) {
       mode: "single" as const,
       requestedScenarioSlug: options.scenario,
       requestedPhaseOrder: null,
+      requestedSuiteSlug: null,
+    }
+  }
+
+  if (options.suite) {
+    return {
+      mode: "suite" as const,
+      requestedScenarioSlug: null,
+      requestedPhaseOrder: null,
+      requestedSuiteSlug: options.suite,
     }
   }
 
@@ -526,6 +535,7 @@ function resolveRunMode(options: RunCommandOptions) {
       mode: "phase" as const,
       requestedScenarioSlug: null,
       requestedPhaseOrder,
+      requestedSuiteSlug: null,
     }
   }
 
@@ -534,6 +544,7 @@ function resolveRunMode(options: RunCommandOptions) {
       mode: "through_phase" as const,
       requestedScenarioSlug: null,
       requestedPhaseOrder: requestedThroughPhaseOrder,
+      requestedSuiteSlug: null,
     }
   }
 
@@ -541,6 +552,7 @@ function resolveRunMode(options: RunCommandOptions) {
     mode: "all" as const,
     requestedScenarioSlug: null,
     requestedPhaseOrder: null,
+    requestedSuiteSlug: null,
   }
 }
 
@@ -575,9 +587,28 @@ export async function runCommand(options: RunCommandOptions) {
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
-  const executionSource =
+  const startRun = () =>
+    createRun({
+      apiBaseUrl: config.apiBaseUrl,
+      accessToken,
+      version: CLI_VERSION,
+      projectSlug,
+      payload: {
+        mode: runSelection.mode,
+        requestedScenarioSlug: runSelection.requestedScenarioSlug,
+        requestedPhaseOrder: runSelection.requestedPhaseOrder,
+        requestedSuiteSlug: runSelection.requestedSuiteSlug,
+        runnerType,
+        environment: environment.name,
+        targetUrl: environment.targetUrl,
+        startedAt: Date.now(),
+      },
+    })
+  let createRunResponse =
+    runSelection.mode === "suite" ? await startRun() : null
+  const executionSource = await (
     runSelection.mode === "single"
-      ? await fetchSingleScenario({
+      ? fetchSingleScenario({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
           version: CLI_VERSION,
@@ -586,6 +617,7 @@ export async function runCommand(options: RunCommandOptions) {
         }).then((response) => ({
           project: response.project,
           phases: [] as RunnablePhase[],
+          suite: null,
           unassignedScenarioCount: 0,
           queue: [
             {
@@ -594,11 +626,12 @@ export async function runCommand(options: RunCommandOptions) {
             },
           ],
         }))
-      : await fetchExecutionPlan({
+      : fetchExecutionPlan({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
           version: CLI_VERSION,
           projectSlug,
+          suiteSlug: runSelection.requestedSuiteSlug ?? undefined,
         }).then((response) => {
           const selectedPhases =
             runSelection.mode === "phase"
@@ -612,7 +645,8 @@ export async function runCommand(options: RunCommandOptions) {
                 : response.phases
 
           if (
-            runSelection.mode !== "all" &&
+            (runSelection.mode === "phase" ||
+              runSelection.mode === "through_phase") &&
             !response.phases.some(
               (phase) => phase.order === runSelection.requestedPhaseOrder
             )
@@ -632,35 +666,51 @@ export async function runCommand(options: RunCommandOptions) {
             ),
           }
         })
+  ).catch(async (error) => {
+    if (createRunResponse) {
+      await finalizeRun({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        runId: createRunResponse.run.id,
+        payload: { status: "interrupted", finishedAt: Date.now() },
+      })
+    }
+    throw error
+  })
 
   if (executionSource.queue.length === 0) {
+    if (createRunResponse) {
+      await finalizeRun({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        runId: createRunResponse.run.id,
+        payload: { status: "interrupted", finishedAt: Date.now() },
+      })
+    }
     throw new Error(
       runSelection.mode === "phase"
         ? `Phase ${runSelection.requestedPhaseOrder} has no active scenarios to run.`
-        : "No runnable scenarios found."
+        : runSelection.mode === "suite"
+          ? `Suite "${runSelection.requestedSuiteSlug}" has no active scenarios to run.`
+          : "No runnable scenarios found."
     )
   }
 
-  const createRunResponse = await createRun({
-    apiBaseUrl: config.apiBaseUrl,
-    accessToken,
-    version: CLI_VERSION,
-    projectSlug,
-    payload: {
-      mode: runSelection.mode,
-      requestedScenarioSlug: runSelection.requestedScenarioSlug,
-      requestedPhaseOrder: runSelection.requestedPhaseOrder,
-      runnerType,
-      environment: environment.name,
-      targetUrl: environment.targetUrl,
-      startedAt: Date.now(),
-    },
-  })
+  createRunResponse ??= await startRun()
 
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
   process.stdout.write(
     `Environment ${environment.name} (${environment.targetUrl})\n`
   )
+  if (executionSource.suite) {
+    process.stdout.write(
+      `Suite ${executionSource.suite.name} (${executionSource.suite.slug})\n`
+    )
+  }
 
   const buildScenarioSnapshot = (args: {
     phase: RunnablePhase | null

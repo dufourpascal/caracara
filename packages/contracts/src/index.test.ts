@@ -22,6 +22,8 @@ import {
   phaseSchema,
   runSchema,
   scenarioResultSchema,
+  suiteInputSchema,
+  suiteSchema,
   targetUrlSchema,
   versionMismatchErrorSchema,
 } from "./index.js"
@@ -190,6 +192,64 @@ describe("contracts", () => {
         userEmail: null,
       })
     ).toThrow()
+  })
+
+  it("validates suites and suite run targets", () => {
+    expect(
+      suiteSchema.parse({
+        id: "suite_1",
+        projectId: "project_1",
+        name: "Demo only",
+        slug: "demo-only",
+        phaseIds: ["phase_2", "phase_4"],
+        createdAt: 1,
+        updatedAt: 2,
+      }).phaseIds
+    ).toEqual(["phase_2", "phase_4"])
+    expect(
+      suiteInputSchema.parse({ name: "Empty", phaseIds: [] }).phaseIds
+    ).toEqual([])
+    expect(
+      createRunRequestSchema.parse({
+        mode: "suite",
+        requestedSuiteSlug: "demo-only",
+        runnerType: "codex",
+        startedAt: 1,
+      }).mode
+    ).toBe("suite")
+
+    expect(
+      runSchema.parse({
+        id: "run-1",
+        projectId: "project-1",
+        ownerUserId: "user-1",
+        name: "calm-macaw-20260827-120000",
+        status: "running",
+        mode: "suite",
+        requestedScenarioSlug: null,
+        requestedSuiteSlug: "public-surfaces",
+        requestedSuiteName: "Public surfaces",
+        requestedSuitePhases: [{ id: "phase-1", name: "Landing", order: 1 }],
+        runnerType: "codex",
+        evidencePolicy: "failed_check_screenshot",
+        passedCheckCount: 0,
+        totalCheckCount: 0,
+        passRate: null,
+        startedAt: 1,
+        finishedAt: null,
+        createdAt: 1,
+        updatedAt: 1,
+      }).requestedSuitePhases
+    ).toEqual([{ id: "phase-1", name: "Landing", order: 1 }])
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "suite",
+        requestedPhaseOrder: 2,
+        requestedSuiteSlug: "demo-only",
+        runnerType: "codex",
+        startedAt: 1,
+      })
+    ).toThrow(/target do not match/i)
   })
 
   it("validates environment-aware run creation", () => {

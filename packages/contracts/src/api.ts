@@ -13,6 +13,7 @@ import {
   scenarioResultSchema,
   scenarioSchema,
   slugSchema,
+  suiteSchema,
   targetUrlSchema,
 } from "./domain.js"
 
@@ -108,6 +109,10 @@ export const phaseListResponseSchema = z.object({
   phases: z.array(phaseSchema),
 })
 
+export const suiteListResponseSchema = z.object({
+  suites: z.array(suiteSchema),
+})
+
 export const executionPlanResponseSchema = z.object({
   project: projectSchema.pick({
     id: true,
@@ -116,6 +121,7 @@ export const executionPlanResponseSchema = z.object({
     projectPrompt: true,
   }),
   phases: z.array(runnablePhaseSchema),
+  suite: suiteSchema.pick({ name: true, slug: true }).nullable().optional(),
   unassignedScenarioCount: z.number().int().nonnegative(),
 })
 
@@ -269,6 +275,7 @@ export const createRunRequestSchema = z
     targetUrl: targetUrlSchema.optional(),
     requestedScenarioSlug: slugSchema.nullable().optional(),
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+    requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
   })
   .refine(
@@ -278,6 +285,26 @@ export const createRunRequestSchema = z
       message: "Environment and target URL must be provided together.",
     }
   )
+  .superRefine((value, ctx) => {
+    const hasScenario = value.requestedScenarioSlug != null
+    const hasPhase = value.requestedPhaseOrder != null
+    const hasSuite = value.requestedSuiteSlug != null
+    const isValid =
+      (value.mode === "all" && !hasScenario && !hasPhase && !hasSuite) ||
+      (value.mode === "single" && hasScenario && !hasPhase && !hasSuite) ||
+      ((value.mode === "phase" || value.mode === "through_phase") &&
+        !hasScenario &&
+        hasPhase &&
+        !hasSuite) ||
+      (value.mode === "suite" && !hasScenario && !hasPhase && hasSuite)
+
+    if (!isValid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Run mode and requested target do not match.",
+      })
+    }
+  })
 
 export const createRunResponseSchema = z.object({
   run: runSchema.pick({
@@ -291,6 +318,9 @@ export const createRunResponseSchema = z.object({
     targetUrl: true,
     requestedScenarioSlug: true,
     requestedPhaseOrder: true,
+    requestedSuiteSlug: true,
+    requestedSuiteName: true,
+    requestedSuitePhases: true,
     startedAt: true,
   }),
   evidenceUploadUrl: z.string().url().optional(),

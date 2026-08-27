@@ -1,7 +1,9 @@
 import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
+
 import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
+import { selectSuitePhases } from "./domain"
 import {
   assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
@@ -14,6 +16,7 @@ import {
   getProjectScenarios,
   getScenarioDependencyIds,
   getScenarioBySlug,
+  getSuiteBySlug,
   replaceScenarioDependencies,
   rebuildScenarioNavigationMetadata,
   requireProjectOwnerById,
@@ -239,12 +242,16 @@ export const getBySlug = query({
 export const executionPlanForProject = query({
   args: {
     projectSlug: v.string(),
+    suiteSlug: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const executionPlan = await getExecutionPlan(ctx, project._id, {
-      activeOnly: true,
-    })
+    const [executionPlan, suite] = await Promise.all([
+      getExecutionPlan(ctx, project._id, { activeOnly: true }),
+      args.suiteSlug
+        ? getSuiteBySlug(ctx, project._id, args.suiteSlug)
+        : Promise.resolve(null),
+    ])
 
     return {
       projectPrompt: project.projectPrompt,
@@ -253,7 +260,10 @@ export const executionPlanForProject = query({
         name: project.name,
         slug: project.slug,
       },
-      phases: executionPlan.phases,
+      phases: suite
+        ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
+        : executionPlan.phases,
+      suite: suite ? { name: suite.name, slug: suite.slug } : null,
       unassignedScenarioCount: executionPlan.unassignedScenarioCount,
     }
   },

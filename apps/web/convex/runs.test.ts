@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { deleteRunAndResults } from "./lib"
 import {
   addRunEnvironmentName,
+  matchesTerminalRun,
   parseRunEnvironment,
   removeRunEnvironmentName,
 } from "./runs"
@@ -41,6 +42,20 @@ describe("run environments", () => {
     expect(
       removeRunEnvironmentName(["preview", "production"], "preview")
     ).toEqual(["production"])
+  })
+})
+
+describe("run finalization", () => {
+  it("recognizes only an exact terminal retry", () => {
+    const run = { status: "interrupted", finishedAt: 123 }
+
+    expect(matchesTerminalRun(run, run)).toBe(true)
+    expect(matchesTerminalRun(run, { status: "failed", finishedAt: 123 })).toBe(
+      false
+    )
+    expect(
+      matchesTerminalRun(run, { status: "interrupted", finishedAt: 456 })
+    ).toBe(false)
   })
 })
 

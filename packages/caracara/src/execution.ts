@@ -63,6 +63,7 @@ export type RunnerScenarioInput = {
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  signal?: AbortSignal
 }
 
 export type RunnerSecrets = Record<string, string>
@@ -593,12 +594,14 @@ async function runCommand(args: {
   cwd: string
   env?: NodeJS.ProcessEnv
   secrets?: RunnerSecrets
+  signal?: AbortSignal
 }) {
   return await new Promise<{ stdout: string; stderr: string }>(
     (resolve, reject) => {
       const child = spawn(args.command, args.commandArgs, {
         cwd: args.cwd,
         env: args.env,
+        signal: args.signal,
         stdio: ["ignore", "pipe", "pipe"],
       })
 
@@ -839,6 +842,7 @@ class CodexRunner implements RunnerAdapter {
                 outputSchema: buildExecutionResultSchema(
                   scenarioInput.scenario
                 ),
+                signal: scenarioInput.signal,
               }
             )
             waitingForUsage = false
@@ -867,7 +871,8 @@ class CodexRunner implements RunnerAdapter {
                   scenario: scenarioInput.scenario,
                   evidenceDirectory,
                   missingCheckIds: screenshots.missingCheckIds,
-                })
+                }),
+                { signal: scenarioInput.signal }
               )
               waitingForUsage = false
               const correctionUsage = toCodexRunnerUsage(
@@ -957,6 +962,7 @@ class ClaudeRunner implements RunnerAdapter {
               cwd: scenarioInput.cwd,
               env: runnerEnv,
               secrets: runInput.secrets,
+              signal: scenarioInput.signal,
               commandArgs: [
                 "-p",
                 "--permission-mode",

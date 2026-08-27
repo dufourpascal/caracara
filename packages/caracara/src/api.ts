@@ -258,6 +258,7 @@ export async function finalizeRun(args: {
       method: "POST",
       body: JSON.stringify(finalizeRunRequestSchema.parse(args.payload)),
     },
+    retryTransient: true,
     schema: finalizeRunResponseSchema,
   })
 }

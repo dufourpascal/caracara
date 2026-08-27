@@ -77,6 +77,16 @@ export function removeRunEnvironmentName(names: string[], environment: string) {
   return names.filter((name) => name !== environment)
 }
 
+export function matchesTerminalRun(
+  existing: { status: string; finishedAt: number | null },
+  submitted: { status: string; finishedAt: number }
+) {
+  return (
+    existing.status === submitted.status &&
+    existing.finishedAt === submitted.finishedAt
+  )
+}
+
 export const listForProject = query({
   args: {
     projectSlug: v.string(),
@@ -575,6 +585,9 @@ export const finalize = mutation({
     }
 
     if (run.status !== "running") {
+      if (matchesTerminalRun(run, args)) {
+        return { run: toRun(run) }
+      }
       throw new ConvexError({
         code: "conflict",
         message: "Run has already been finalized.",

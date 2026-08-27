@@ -87,11 +87,16 @@ export function matchesTerminalRun(
   )
 }
 
-export function canCorrectCompletedScenarioInterruption(
+export function canCorrectScenarioInterruption(
   existingStatus: string,
   submittedStatus: string
 ) {
-  return existingStatus === "completed" && submittedStatus === "interrupted"
+  return (
+    submittedStatus === "interrupted" &&
+    ["completed", "runner_failed", "dependency_failed"].includes(
+      existingStatus
+    )
+  )
 }
 
 export const listForProject = query({
@@ -374,10 +379,7 @@ export const submitScenarioResult = mutation({
         }
       }
       if (
-        !canCorrectCompletedScenarioInterruption(
-          existing.status,
-          args.result.status
-        )
+        !canCorrectScenarioInterruption(existing.status, args.result.status)
       ) {
         throw new ConvexError({
           code: "conflict",

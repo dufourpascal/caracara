@@ -326,6 +326,53 @@ describe("run interruption", () => {
     expect(process.exitCode).toBe(130)
   })
 
+  it("corrects a runner failure when its submission is interrupted", async () => {
+    mocks.executeScenario.mockRejectedValueOnce(new Error("Runner failed"))
+    mocks.submitScenarioResult.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() =>
+      expect(mocks.submitScenarioResult).toHaveBeenCalledOnce()
+    )
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await run
+
+    expect(mocks.submitScenarioResult).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({ status: "runner_failed" }),
+        }),
+        signal: expect.any(AbortSignal),
+      })
+    )
+    expect(mocks.submitScenarioResult).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({ status: "interrupted" }),
+        }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
   it("preserves the signal exit code when interruption cleanup fails", async () => {
     mocks.finalizeRun
       .mockRejectedValueOnce(new Error("API unavailable"))

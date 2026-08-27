@@ -865,7 +865,9 @@ export async function runCommand(options: RunCommandOptions) {
               finishedAt: Date.now(),
             },
           },
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
         activeScenario = null
         continue
       }
@@ -968,7 +970,9 @@ export async function runCommand(options: RunCommandOptions) {
               finishedAt: Date.now(),
             },
           },
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
         activeScenario = null
         process.stdout.write(
           `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`

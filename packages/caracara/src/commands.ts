@@ -844,6 +844,7 @@ export async function runCommand(options: RunCommandOptions) {
         `Executing ${item.scenario.slug} with ${runnerType}\n`
       )
 
+      activeScenario = scenarioSnapshot
       const startedScenario = await startScenarioExecution({
         apiBaseUrl: config.apiBaseUrl,
         accessToken,
@@ -854,8 +855,9 @@ export async function runCommand(options: RunCommandOptions) {
           runId: createRunResponse.run.id,
           result: scenarioSnapshot,
         },
+        signal: runAbortController.signal,
       })
-      activeScenario = scenarioSnapshot
+      runAbortController.signal.throwIfAborted()
 
       if (runFailed) {
         await submitScenarioResult({

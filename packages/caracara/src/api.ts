@@ -207,6 +207,7 @@ export async function startScenarioExecution(args: {
   projectSlug: string
   runId: string
   payload: Parameters<typeof startScenarioExecutionRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results/start`,
@@ -217,6 +218,7 @@ export async function startScenarioExecution(args: {
       body: JSON.stringify(
         startScenarioExecutionRequestSchema.parse(args.payload)
       ),
+      signal: args.signal,
     },
     schema: startScenarioExecutionResponseSchema,
   })

@@ -54,9 +54,12 @@ const mocks = vi.hoisted(() => {
     finalizeRun: vi.fn(async (args?: { signal?: AbortSignal }) => {
       void args
     }),
-    startScenarioExecution: vi.fn(async () => ({
-      result: { id: "result-1" },
-    })),
+    startScenarioExecution: vi.fn(
+      async (args?: { signal?: AbortSignal }) => {
+        void args
+        return { result: { id: "result-1" } }
+      }
+    ),
     startRun: vi.fn(async (args?: { signal?: AbortSignal }) => {
       void args
       return {
@@ -183,6 +186,49 @@ describe("run interruption", () => {
     await run
 
     const startInput = mocks.startRun.mock.calls[0]?.[0]
+    expect(startInput?.signal?.aborted).toBe(true)
+    expect(mocks.submitScenarioResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({ status: "interrupted" }),
+        }),
+      })
+    )
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
+  it("cancels scenario startup", async () => {
+    mocks.startScenarioExecution.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() =>
+      expect(mocks.startScenarioExecution).toHaveBeenCalled()
+    )
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await run
+
+    const startInput = mocks.startScenarioExecution.mock.calls[0]?.[0]
     expect(startInput?.signal?.aborted).toBe(true)
     expect(mocks.submitScenarioResult).toHaveBeenCalledWith(
       expect.objectContaining({

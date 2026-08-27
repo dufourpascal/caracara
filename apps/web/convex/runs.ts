@@ -89,10 +89,12 @@ export function matchesTerminalRun(
 }
 
 export function canCorrectScenarioInterruption(
+  runStatus: string,
   existingStatus: string,
   submittedStatus: string
 ) {
   return (
+    runStatus === "running" &&
     submittedStatus === "interrupted" &&
     ["completed", "runner_failed", "dependency_failed"].includes(
       existingStatus
@@ -380,7 +382,11 @@ export const submitScenarioResult = mutation({
         }
       }
       if (
-        !canCorrectScenarioInterruption(existing.status, args.result.status)
+        !canCorrectScenarioInterruption(
+          run.status,
+          existing.status,
+          args.result.status
+        )
       ) {
         throw new ConvexError({
           code: "conflict",

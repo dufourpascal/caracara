@@ -125,19 +125,30 @@ describe("run finalization", () => {
 })
 
 describe("scenario result correction", () => {
-  it("allows terminal results to become interrupted", () => {
-    expect(canCorrectScenarioInterruption("completed", "interrupted")).toBe(
-      true
-    )
+  it("allows terminal results to become interrupted only while the run is active", () => {
     expect(
-      canCorrectScenarioInterruption("runner_failed", "interrupted")
+      canCorrectScenarioInterruption("running", "completed", "interrupted")
     ).toBe(true)
     expect(
-      canCorrectScenarioInterruption("dependency_failed", "interrupted")
+      canCorrectScenarioInterruption(
+        "running",
+        "runner_failed",
+        "interrupted"
+      )
     ).toBe(true)
-    expect(canCorrectScenarioInterruption("completed", "runner_failed")).toBe(
-      false
-    )
+    expect(
+      canCorrectScenarioInterruption(
+        "running",
+        "dependency_failed",
+        "interrupted"
+      )
+    ).toBe(true)
+    expect(
+      canCorrectScenarioInterruption("running", "completed", "runner_failed")
+    ).toBe(false)
+    expect(
+      canCorrectScenarioInterruption("completed", "completed", "interrupted")
+    ).toBe(false)
   })
 })
 

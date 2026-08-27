@@ -435,16 +435,6 @@ export async function createRun(
     )
   }
   const { project } = await getProjectBySlug(token, args.projectSlug)
-  const suite = payload.requestedSuiteSlug
-    ? await fetchQuery(
-        api.suites.getBySlugForProject,
-        {
-          projectSlug: args.projectSlug,
-          suiteSlug: payload.requestedSuiteSlug,
-        },
-        { token }
-      )
-    : null
   const run = await fetchMutation(
     api.runs.create,
     {
@@ -456,8 +446,7 @@ export async function createRun(
       targetUrl: payload.targetUrl,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
-      requestedSuiteSlug: suite?.slug ?? null,
-      requestedSuiteName: suite?.name ?? null,
+      requestedSuiteSlug: payload.requestedSuiteSlug ?? null,
       startedAt: payload.startedAt,
     },
     { token }

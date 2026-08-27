@@ -246,6 +246,7 @@ export function toRun(run: Doc<"runs">) {
     requestedPhaseOrder: run.requestedPhaseOrder ?? null,
     requestedSuiteSlug: run.requestedSuiteSlug ?? null,
     requestedSuiteName: run.requestedSuiteName ?? null,
+    requestedSuitePhases: run.requestedSuitePhases ?? [],
     runnerType: run.runnerType,
     evidencePolicy: run.evidencePolicy ?? "text_only",
     environment: run.environment ?? null,
@@ -864,23 +865,15 @@ export async function ensurePhaseOwnership(
 export async function ensureSuiteOwnership(
   ctx: Ctx,
   suiteId: Id<"suites">,
-  expectedProjectId?: Id<"projects">
+  projectId: Id<"projects">
 ) {
+  const { project } = await requireProjectOwnerById(ctx, projectId)
   const suite = await ctx.db.get(suiteId)
 
-  if (!suite) {
+  if (!suite || suite.projectId !== project._id) {
     throw new ConvexError({
       code: "not_found",
       message: "Suite not found.",
-    })
-  }
-
-  const { project } = await requireProjectOwnerById(ctx, suite.projectId)
-
-  if (expectedProjectId !== undefined && project._id !== expectedProjectId) {
-    throw new ConvexError({
-      code: "unauthorized",
-      message: "Suite does not belong to this project.",
     })
   }
 

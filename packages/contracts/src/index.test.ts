@@ -217,6 +217,30 @@ describe("contracts", () => {
         startedAt: 1,
       }).mode
     ).toBe("suite")
+
+    expect(
+      runSchema.parse({
+        id: "run-1",
+        projectId: "project-1",
+        ownerUserId: "user-1",
+        name: "calm-macaw-20260827-120000",
+        status: "running",
+        mode: "suite",
+        requestedScenarioSlug: null,
+        requestedSuiteSlug: "public-surfaces",
+        requestedSuiteName: "Public surfaces",
+        requestedSuitePhases: [{ id: "phase-1", name: "Landing", order: 1 }],
+        runnerType: "codex",
+        evidencePolicy: "failed_check_screenshot",
+        passedCheckCount: 0,
+        totalCheckCount: 0,
+        passRate: null,
+        startedAt: 1,
+        finishedAt: null,
+        createdAt: 1,
+        updatedAt: 1,
+      }).requestedSuitePhases
+    ).toEqual([{ id: "phase-1", name: "Landing", order: 1 }])
     expect(() =>
       createRunRequestSchema.parse({
         mode: "suite",

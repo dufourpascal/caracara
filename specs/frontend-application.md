@@ -68,4 +68,4 @@ Scenario execution itself happens through the local CLI, so the web app's respon
 
 Suites have a dedicated project workspace.
 
-Each project has a `/projects/:projectSlug/suites` route, and the project dropdown order is Project, Suites, Phases, Scenarios, Runs. The established two-panel editor shows the suite registry and phase counts on the left, with name, slug, and one checkbox per ordered phase on the right. Labels use `Phase N: <phase name>`. Suite-targeted run history shows the snapshotted name and slug without adding a suite filter.
+Each project has a `/projects/:projectSlug/suites` route, and the project dropdown order is Project, Suites, Phases, Scenarios, Runs. The established two-panel editor shows the suite registry and phase counts on the left, with name, slug, and one checkbox per ordered phase on the right. Labels use `Phase N: <phase name>`. Suite-targeted run history shows the snapshotted suite name, slug, and phase names and orders without adding a suite filter.

@@ -587,9 +587,28 @@ export async function runCommand(options: RunCommandOptions) {
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
-  const executionSource =
+  const startRun = () =>
+    createRun({
+      apiBaseUrl: config.apiBaseUrl,
+      accessToken,
+      version: CLI_VERSION,
+      projectSlug,
+      payload: {
+        mode: runSelection.mode,
+        requestedScenarioSlug: runSelection.requestedScenarioSlug,
+        requestedPhaseOrder: runSelection.requestedPhaseOrder,
+        requestedSuiteSlug: runSelection.requestedSuiteSlug,
+        runnerType,
+        environment: environment.name,
+        targetUrl: environment.targetUrl,
+        startedAt: Date.now(),
+      },
+    })
+  let createRunResponse =
+    runSelection.mode === "suite" ? await startRun() : null
+  const executionSource = await (
     runSelection.mode === "single"
-      ? await fetchSingleScenario({
+      ? fetchSingleScenario({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
           version: CLI_VERSION,
@@ -607,7 +626,7 @@ export async function runCommand(options: RunCommandOptions) {
             },
           ],
         }))
-      : await fetchExecutionPlan({
+      : fetchExecutionPlan({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
           version: CLI_VERSION,
@@ -647,8 +666,31 @@ export async function runCommand(options: RunCommandOptions) {
             ),
           }
         })
+  ).catch(async (error) => {
+    if (createRunResponse) {
+      await finalizeRun({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        runId: createRunResponse.run.id,
+        payload: { status: "interrupted", finishedAt: Date.now() },
+      })
+    }
+    throw error
+  })
 
   if (executionSource.queue.length === 0) {
+    if (createRunResponse) {
+      await finalizeRun({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        runId: createRunResponse.run.id,
+        payload: { status: "interrupted", finishedAt: Date.now() },
+      })
+    }
     throw new Error(
       runSelection.mode === "phase"
         ? `Phase ${runSelection.requestedPhaseOrder} has no active scenarios to run.`
@@ -658,22 +700,7 @@ export async function runCommand(options: RunCommandOptions) {
     )
   }
 
-  const createRunResponse = await createRun({
-    apiBaseUrl: config.apiBaseUrl,
-    accessToken,
-    version: CLI_VERSION,
-    projectSlug,
-    payload: {
-      mode: runSelection.mode,
-      requestedScenarioSlug: runSelection.requestedScenarioSlug,
-      requestedPhaseOrder: runSelection.requestedPhaseOrder,
-      requestedSuiteSlug: runSelection.requestedSuiteSlug,
-      runnerType,
-      environment: environment.name,
-      targetUrl: environment.targetUrl,
-      startedAt: Date.now(),
-    },
-  })
+  createRunResponse ??= await startRun()
 
   process.stdout.write(`Run ${createRunResponse.run.name}\n`)
   process.stdout.write(

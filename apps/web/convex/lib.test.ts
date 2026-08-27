@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import {
   computeRunCheckCounts,
   deriveScenarioNavigationMetadata,
+  ensureSuiteOwnership,
   matchesTerminalScenarioResult,
   toRun,
   toScenarioResult,
@@ -12,12 +13,23 @@ import {
 } from "./lib"
 
 describe("convex response mappers", () => {
+  it("authenticates a project before reading a suite", async () => {
+    const get = vi.fn()
+    const ctx = {
+      auth: { getUserIdentity: vi.fn().mockResolvedValue(null) },
+      db: { get },
+    } as never
+
+    await expect(
+      ensureSuiteOwnership(ctx, "suite-id" as never, "project-id" as never)
+    ).rejects.toMatchObject({ data: { code: "unauthenticated" } })
+    expect(get).not.toHaveBeenCalled()
+  })
+
   it("recognizes only exact terminal result retries", () => {
     const result = {
       status: "completed",
-      checkResults: [
-        { checkId: "a", verdict: "passed", evidence: "Visible" },
-      ],
+      checkResults: [{ checkId: "a", verdict: "passed", evidence: "Visible" }],
       executionSummary: "Complete",
       failureDetail: null,
       finishedAt: 123,
@@ -63,12 +75,12 @@ describe("convex response mappers", () => {
       },
     } as never
 
-    await expect(computeRunCheckCounts(ctx, "run-id" as never)).resolves.toEqual(
-      {
-        passedCheckCount: 1,
-        totalCheckCount: 2,
-      }
-    )
+    await expect(
+      computeRunCheckCounts(ctx, "run-id" as never)
+    ).resolves.toEqual({
+      passedCheckCount: 1,
+      totalCheckCount: 2,
+    })
   })
 
   it("requires one evidenced result for every snapshotted check", () => {
@@ -130,6 +142,12 @@ describe("convex response mappers", () => {
       status: "running",
       mode: "all",
       requestedScenarioSlug: null,
+      requestedSuiteSlug: "public-surfaces",
+      requestedSuiteName: "Public surfaces",
+      requestedSuitePhases: [
+        { id: "phase-1", name: "Landing", order: 1 },
+        { id: "phase-4", name: "Demo", order: 4 },
+      ],
       runnerType: "codex",
       passedCheckCount: 0,
       totalCheckCount: 0,
@@ -158,6 +176,10 @@ describe("convex response mappers", () => {
     } as never)
 
     expect(run.createdAt).toBe(1234)
+    expect(run.requestedSuitePhases).toEqual([
+      { id: "phase-1", name: "Landing", order: 1 },
+      { id: "phase-4", name: "Demo", order: 4 },
+    ])
     expect(Number.isInteger(run.createdAt)).toBe(true)
     expect(result.submittedAt).toBe(2345)
     expect(Number.isInteger(result.submittedAt)).toBe(true)

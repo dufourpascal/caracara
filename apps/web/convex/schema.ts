@@ -105,6 +105,15 @@ export default defineSchema({
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     requestedSuiteName: v.optional(v.union(v.null(), v.string())),
+    requestedSuitePhases: v.optional(
+      v.array(
+        v.object({
+          id: v.id("phases"),
+          name: v.string(),
+          order: v.number(),
+        })
+      )
+    ),
     runnerType: v.union(v.null(), v.literal("codex"), v.literal("claude-code")),
     evidencePolicy: v.optional(
       v.union(v.literal("text_only"), v.literal("failed_check_screenshot"))

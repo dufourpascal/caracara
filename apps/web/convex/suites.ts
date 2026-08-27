@@ -120,7 +120,7 @@ export const create = mutation({
 
 export const update = mutation({
   args: {
-    projectId: v.optional(v.id("projects")),
+    projectId: v.id("projects"),
     suiteId: v.id("suites"),
     name: v.string(),
     slug: v.string(),
@@ -158,7 +158,7 @@ export const update = mutation({
 
 export const remove = mutation({
   args: {
-    projectId: v.optional(v.id("projects")),
+    projectId: v.id("projects"),
     suiteId: v.id("suites"),
   },
   handler: async (ctx, args) => {

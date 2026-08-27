@@ -70,4 +70,4 @@ A suite has a name, slug, and unordered set of phase IDs. A phase may belong to 
 
 Suite-targeted runs preserve their target identity.
 
-When a run targets a suite, the run snapshots the suite name and slug so history remains intelligible after the suite is renamed or deleted.
+When a run targets a suite, the run snapshots the suite name, slug, and each selected phase's ID, name, and order so history remains intelligible after the suite or its phases change or are deleted.

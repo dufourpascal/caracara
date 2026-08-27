@@ -171,6 +171,12 @@ export const suiteSchema = z.object({
   updatedAt: timestampSchema,
 })
 
+export const suitePhaseSnapshotSchema = phaseSchema.pick({
+  id: true,
+  name: true,
+  order: true,
+})
+
 export const scenarioSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -204,6 +210,7 @@ export const runSchema = z.object({
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   requestedSuiteSlug: slugSchema.nullable().optional(),
   requestedSuiteName: z.string().min(1).max(120).nullable().optional(),
+  requestedSuitePhases: z.array(suitePhaseSnapshotSchema).optional(),
   runnerType: runnerTypeSchema.nullable(),
   evidencePolicy: evidencePolicySchema,
   environment: environmentNameSchema.nullable().optional(),

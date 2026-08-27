@@ -320,6 +320,7 @@ export const createRunResponseSchema = z.object({
     requestedPhaseOrder: true,
     requestedSuiteSlug: true,
     requestedSuiteName: true,
+    requestedSuitePhases: true,
     startedAt: true,
   }),
   evidenceUploadUrl: z.string().url().optional(),

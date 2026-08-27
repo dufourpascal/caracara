@@ -80,4 +80,4 @@ The environment name and target URL must be supplied together. The backend valid
 
 The execution API supports suite filtering without suite authoring operations.
 
-`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug; the server resolves and stores the suite snapshot. There are no suite authoring REST operations.
+`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running authoring lock. The CLI creates that suite run before fetching the execution plan. There are no suite authoring REST operations.

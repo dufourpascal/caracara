@@ -2049,6 +2049,7 @@ function AuthenticatedProjectWorkspace({
                 key={`${selectedSuite.id}:${selectedSuite.updatedAt}`}
                 onError={setSuiteError}
                 phases={phases ?? []}
+                projectId={project.id}
                 removeSuite={removeSuite}
                 setSelectedSuiteId={setSelectedSuiteId}
                 suite={selectedSuite}
@@ -2518,6 +2519,16 @@ function AuthenticatedProjectWorkspace({
                             <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                               {runDetail.run.requestedSuiteSlug}
                             </p>
+                            {runDetail.run.requestedSuitePhases.length > 0 ? (
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {runDetail.run.requestedSuitePhases
+                                  .map(
+                                    (phase) =>
+                                      `Phase ${phase.order}: ${phase.name}`
+                                  )
+                                  .join(", ")}
+                              </p>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
@@ -3395,6 +3406,7 @@ export function ScenarioEditor({
 export function SuiteEditor({
   suite,
   phases,
+  projectId,
   onError,
   removeSuite,
   setSelectedSuiteId,
@@ -3411,6 +3423,7 @@ export function SuiteEditor({
     name: string
     order: number
   }>
+  projectId: string
   onError: (message: string | null) => void
   removeSuite: ReturnType<typeof useMutation<typeof api.suites.remove>>
   setSelectedSuiteId: (value: string | null) => void
@@ -3435,7 +3448,10 @@ export function SuiteEditor({
             }
 
             await runWithErrorMessage(async () => {
-              await removeSuite({ suiteId: suite.id as never })
+              await removeSuite({
+                projectId: projectId as never,
+                suiteId: suite.id as never,
+              })
               setSelectedSuiteId(null)
             }, onError)
           }}
@@ -3475,6 +3491,7 @@ export function SuiteEditor({
             setFieldErrors({})
             await runWithErrorMessage(async () => {
               const updated = await updateSuite({
+                projectId: projectId as never,
                 suiteId: suite.id as never,
                 name: parsed.data.name,
                 slug: parsed.data.slug ?? parsed.data.name,

@@ -94,4 +94,4 @@ The nearest `.caracara/config.json` maps arbitrary lowercase environment names t
 
 The CLI can execute one named suite.
 
-`caracara run --suite <slug>` executes only active scenarios in the suite's phases. The backend filters the existing ordered phase plan, so selected phases retain project order. `--suite` is mutually exclusive with `--scenario`, `--phase`, and `--through-phase`; an empty or otherwise non-runnable suite returns a specific error.
+`caracara run --suite <slug>` executes only active scenarios in the suite's phases. The backend validates and snapshots the suite while creating the run, which locks authoring before the CLI fetches the execution plan. The backend filters the existing ordered phase plan, so selected phases retain project order. `--suite` is mutually exclusive with `--scenario`, `--phase`, and `--through-phase`; an empty or otherwise non-runnable suite returns a specific error before a run is inserted.

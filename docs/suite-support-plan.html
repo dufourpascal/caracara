@@ -771,8 +771,9 @@ Runs phases 1, 2, and 4 in that order.</pre
             <p>
               Removing a phase removes its membership from every suite. Removing
               a suite does not touch phases or scenarios. Suite runs snapshot
-              the selected suite name and slug, so later suite edits or deletion
-              do not make old run records misleading.
+              the selected suite name and slug plus every selected phase's ID,
+              name, and order, so later suite or phase edits and deletion do not
+              make old run records misleading.
             </p>
             <div class="feedback">
               <button
@@ -1128,10 +1129,11 @@ Runs phases 1, 2, and 4 in that order.</pre
                     Add <code>--suite &lt;slug&gt;</code> as an execution-only
                     flag. Reject combinations with <code>--scenario</code>,
                     <code>--phase</code>, or <code>--through-phase</code>. The
-                    authenticated execution endpoint resolves the suite inside
-                    the selected project and returns only member phases in
+                    run-creation mutation atomically resolves and snapshots the
+                    suite, rejects non-runnable suites, and creates the
+                    authoring lock. The CLI then fetches only member phases in
                     global order. Missing, empty, or non-runnable suites fail
-                    before run creation with a specific message.
+                    before a run is inserted with a specific message.
                   </p>
                   <div class="feedback">
                     <button
@@ -1181,11 +1183,12 @@ Runs phases 1, 2, and 4 in that order.</pre
                     <h3>Keep targets intelligible</h3>
                   </div>
                   <p>
-                    Store the suite name and slug used by each suite run and
-                    show them in run details. Remove deleted phase IDs from
+                    Store the suite name and slug plus each selected phase's ID,
+                    name, and order on every suite run. Show the suite and phase
+                    snapshots in run details. Remove deleted phase IDs from
                     suite memberships inside the phase-removal mutation. Include
-                    suites in project deletion. Deleting or renaming a suite
-                    must not alter prior run snapshots.
+                    suites in project deletion. Deleting or renaming a suite or
+                    phase must not alter prior run snapshots.
                   </p>
                   <div class="feedback">
                     <button

@@ -127,6 +127,7 @@ describe("suite editor", () => {
           { id: "phase-1", name: "Landing page", order: 1 },
           { id: "phase-4", name: "Demo", order: 4 },
         ]}
+        projectId="project-1"
         removeSuite={vi.fn() as never}
         setSelectedSuiteId={vi.fn()}
         suite={{
@@ -144,6 +145,7 @@ describe("suite editor", () => {
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(updateSuite).toHaveBeenCalledWith({
+      projectId: "project-1",
       suiteId: "suite-1",
       name: "Public surfaces",
       slug: "public-surfaces",

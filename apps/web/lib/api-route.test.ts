@@ -208,27 +208,17 @@ describe("api-route helpers", () => {
     )
   })
 
-  it("resolves and stores a suite snapshot when creating a suite run", async () => {
-    vi.mocked(fetchQuery)
-      .mockResolvedValueOnce({
-        id: "project-1",
-        ownerUserId: "user-1",
-        name: "Demo",
-        slug: "demo",
-        description: "",
-        projectPrompt: "",
-        createdAt: 1,
-        updatedAt: 1,
-      })
-      .mockResolvedValueOnce({
-        id: "suite-1",
-        projectId: "project-1",
-        name: "Public surfaces",
-        slug: "public-surfaces",
-        phaseIds: ["phase-1", "phase-4"],
-        createdAt: 1,
-        updatedAt: 1,
-      })
+  it("delegates suite resolution to the run creation mutation", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
     vi.mocked(fetchMutation).mockResolvedValue({ id: "run-1" })
 
     await createRun("token", {
@@ -247,10 +237,10 @@ describe("api-route helpers", () => {
       expect.objectContaining({
         projectId: "project-1",
         requestedSuiteSlug: "public-surfaces",
-        requestedSuiteName: "Public surfaces",
       }),
       { token: "token" }
     )
+    expect(fetchQuery).toHaveBeenCalledTimes(1)
   })
 
   it("maps stringified structured errors in messages to API responses", async () => {

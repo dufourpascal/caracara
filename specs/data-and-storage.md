@@ -78,4 +78,4 @@ CLI and web authoring overwrite the current scenario or phase record. The data m
 
 Suites store phase references and follow project lifecycle rules.
 
-The `suites` table stores project ID, unique project-scoped slug, name, and phase IDs. Deleting a phase removes it from every suite membership; deleting a project deletes its suites. Deleting a suite does not affect phases or scenarios. Suite-targeted runs store the requested suite slug and resolved suite name as immutable metadata.
+The `suites` table stores project ID, unique project-scoped slug, name, and phase IDs. Deleting a phase removes it from every suite membership; deleting a project deletes its suites. Deleting a suite does not affect phases or scenarios. Suite-targeted runs store the requested suite slug, resolved suite name, and selected phase IDs, names, and orders as immutable metadata. These run fields remain optional for runs created before suite support.

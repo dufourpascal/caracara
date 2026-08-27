@@ -320,6 +320,7 @@ describe("Codex SDK configuration", () => {
     )
     expect(prompt).toContain("format webp, quality 80, and fullPage false")
     expect(prompt).toContain("without a filePath")
+    expect(prompt).toContain("same visible viewport without a uid")
     expect(prompt).toContain("Inspect the image itself")
     expect(prompt).toContain("Only after visually confirming the image")
     expect(prompt).toContain(
@@ -335,6 +336,7 @@ describe("Codex SDK configuration", () => {
     })
     expect(correction).toContain("Do not repeat the scenario")
     expect(correction).toContain("without a filePath")
+    expect(correction).toContain("same visible viewport without a uid")
     expect(correction).toContain("visually inspect the returned image")
     expect(correction).toContain("Only after visually confirming the image")
     expect(correction).toContain("Valid article slug")

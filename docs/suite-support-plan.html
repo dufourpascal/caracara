@@ -454,7 +454,7 @@
       class="shell"
       id="main-content"
       data-plan-status="draft"
-      data-plan-revision="1"
+      data-plan-revision="2"
     >
       <header class="plan-header plan-section" data-plan-section="overview">
         <span class="eyebrow">Implementation plan</span>
@@ -466,7 +466,7 @@
         </p>
         <div class="plan-meta" aria-label="Plan metadata">
           <span class="status">Draft</span>
-          <span class="revision">Revision 1</span>
+          <span class="revision">Revision 2</span>
           <span>One vertical implementation phase</span>
         </div>
         <div class="feedback">
@@ -513,14 +513,17 @@
             A suite adds that selection without creating another execution
             hierarchy. Phases stay project-owned and globally ordered. A suite
             stores checkmarks against those phases. The same phase may appear in
-            several suites.
+            several suites. Each checkbox label shows both the phase number and
+            its full name, such as <code>Phase 2: Landing page</code>.
           </p>
           <pre aria-label="Suite membership example">
-Project phases:  1  2  3  4
-Landing suite:  ✓  ✓     ✓
-Demo suite:        ✓  ✓
+Public experience suite:
+✓ Phase 1: Shared setup
+✓ Phase 2: Landing page
+  Phase 3: Main application
+✓ Phase 4: Demo / trial
 
-caracara run --suite landing
+caracara run --suite public-experience
 Runs phases 1, 2, and 4 in that order.</pre
           >
           <p>
@@ -1069,9 +1072,10 @@ Runs phases 1, 2, and 4 in that order.</pre
                     Follow the existing two-panel project workspace. List suites
                     with their selected phase count on the left. On the right,
                     edit name and slug, then show every phase in project order
-                    with a shadcn Checkbox. Include create, Save, Revert, and
-                    confirmed delete actions plus empty, loading, validation,
-                    and locked states.
+                    with a shadcn Checkbox labeled
+                    <code>Phase N: &lt;phase name&gt;</code>. Include create,
+                    Save, Revert, and confirmed delete actions plus empty,
+                    loading, validation, and locked states.
                   </p>
                   <div class="feedback">
                     <button

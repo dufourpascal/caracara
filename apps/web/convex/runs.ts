@@ -607,33 +607,18 @@ export const finalize = mutation({
       })
     }
 
-    if (args.status === "interrupted") {
-      await interruptRunningScenarioResults(ctx, run._id, args.finishedAt)
-    }
-
     if (run.status !== "running") {
       if (matchesTerminalRun(run, args)) {
         return { run: toRun(run) }
-      }
-      if (
-        args.status === "interrupted" &&
-        (run.status === "completed" || run.status === "failed")
-      ) {
-        await ctx.db.patch(run._id, {
-          status: "interrupted",
-          finishedAt: args.finishedAt,
-          updatedAt: Date.now(),
-        })
-        const correctedRun = await ctx.db.get(run._id)
-        if (!correctedRun) {
-          throw new Error("Failed to correct interrupted run")
-        }
-        return { run: toRun(correctedRun) }
       }
       throw new ConvexError({
         code: "conflict",
         message: "Run has already been finalized.",
       })
+    }
+
+    if (args.status === "interrupted") {
+      await interruptRunningScenarioResults(ctx, run._id, args.finishedAt)
     }
 
     const counts = await computeRunCheckCounts(ctx, run._id)

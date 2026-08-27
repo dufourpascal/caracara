@@ -60,6 +60,12 @@ describe("run finalization", () => {
     expect(
       matchesTerminalRun(run, { status: "interrupted", finishedAt: 456 })
     ).toBe(false)
+    expect(
+      matchesTerminalRun(
+        { status: "completed", finishedAt: 123 },
+        { status: "interrupted", finishedAt: 456 }
+      )
+    ).toBe(false)
   })
 
   it("interrupts running scenarios and removes their evidence", async () => {

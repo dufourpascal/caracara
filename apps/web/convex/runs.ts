@@ -87,6 +87,13 @@ export function matchesTerminalRun(
   )
 }
 
+export function canCorrectCompletedScenarioInterruption(
+  existingStatus: string,
+  submittedStatus: string
+) {
+  return existingStatus === "completed" && submittedStatus === "interrupted"
+}
+
 export const listForProject = query({
   args: {
     projectSlug: v.string(),
@@ -366,10 +373,17 @@ export const submitScenarioResult = mutation({
           result: toScenarioResult(existing),
         }
       }
-      throw new ConvexError({
-        code: "conflict",
-        message: "Scenario execution has already completed with other data.",
-      })
+      if (
+        !canCorrectCompletedScenarioInterruption(
+          existing.status,
+          args.result.status
+        )
+      ) {
+        throw new ConvexError({
+          code: "conflict",
+          message: "Scenario execution has already completed with other data.",
+        })
+      }
     }
 
     if (args.result.status === "completed") {

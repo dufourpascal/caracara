@@ -909,6 +909,7 @@ export async function runCommand(options: RunCommandOptions) {
               checkId: screenshot.checkId,
               sha256: screenshot.sha256,
               bytes: screenshot.bytes,
+              signal: runAbortController.signal,
             })
           }
         }
@@ -931,7 +932,9 @@ export async function runCommand(options: RunCommandOptions) {
               finishedAt,
             },
           },
+          signal: runAbortController.signal,
         })
+        runAbortController.signal.throwIfAborted()
         activeScenario = null
         const passed = execution.checkResults.filter(
           (result) => result.verdict === "passed"

@@ -56,7 +56,9 @@ const mocks = vi.hoisted(() => {
     startScenarioExecution: vi.fn(async () => ({
       result: { id: "result-1" },
     })),
-    submitScenarioResult: vi.fn(async () => undefined),
+    submitScenarioResult: vi.fn(async (args?: { signal?: AbortSignal }) => {
+      void args
+    }),
   }
 })
 
@@ -261,6 +263,62 @@ describe("run interruption", () => {
     )
     expect(mocks.finalizeRun).toHaveBeenNthCalledWith(
       2,
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
+  it("corrects a completed scenario when its submission is interrupted", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { complete: true },
+    })
+    mocks.submitScenarioResult.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() =>
+      expect(mocks.submitScenarioResult).toHaveBeenCalledOnce()
+    )
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await run
+
+    expect(mocks.submitScenarioResult).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({ status: "completed" }),
+        }),
+        signal: expect.any(AbortSignal),
+      })
+    )
+    expect(mocks.submitScenarioResult).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({ status: "interrupted" }),
+        }),
+      })
+    )
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({ status: "interrupted" }),
       })

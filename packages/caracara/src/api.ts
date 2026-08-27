@@ -229,6 +229,7 @@ export async function submitScenarioResult(args: {
   projectSlug: string
   runId: string
   payload: Parameters<typeof submitScenarioResultRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs/${args.runId}/results`,
@@ -239,6 +240,7 @@ export async function submitScenarioResult(args: {
       body: JSON.stringify(
         submitScenarioResultRequestSchema.parse(args.payload)
       ),
+      signal: args.signal,
     },
     retryTransient: true,
     schema: submitScenarioResultResponseSchema,
@@ -276,6 +278,7 @@ export async function uploadRunEvidence(args: {
   checkId: string
   sha256: string
   bytes: Uint8Array
+  signal?: AbortSignal
 }) {
   const response = await fetchWithTransientRetries(args.uploadUrl, {
     method: "POST",
@@ -289,6 +292,7 @@ export async function uploadRunEvidence(args: {
       "x-caracara-sha256": args.sha256,
     },
     body: args.bytes as BodyInit,
+    signal: args.signal,
   })
   const json = await response.json()
   if (!response.ok) {

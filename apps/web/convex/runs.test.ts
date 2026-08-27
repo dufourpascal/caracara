@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { deleteRunAndResults } from "./lib"
 import {
   addRunEnvironmentName,
+  canCorrectCompletedScenarioInterruption,
   matchesTerminalRun,
   parseRunEnvironment,
   removeRunEnvironmentName,
@@ -55,6 +56,20 @@ describe("run finalization", () => {
     )
     expect(
       matchesTerminalRun(run, { status: "interrupted", finishedAt: 456 })
+    ).toBe(false)
+  })
+})
+
+describe("scenario result correction", () => {
+  it("allows only completed results to become interrupted", () => {
+    expect(
+      canCorrectCompletedScenarioInterruption("completed", "interrupted")
+    ).toBe(true)
+    expect(
+      canCorrectCompletedScenarioInterruption("runner_failed", "interrupted")
+    ).toBe(false)
+    expect(
+      canCorrectCompletedScenarioInterruption("completed", "runner_failed")
     ).toBe(false)
   })
 })

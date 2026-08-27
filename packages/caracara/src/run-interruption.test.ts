@@ -169,6 +169,45 @@ describe("run interruption", () => {
     }
   )
 
+  it("keeps handling interrupts until cleanup completes", async () => {
+    let releaseFinalization: () => void = () => undefined
+    mocks.finalizeRun.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFinalization = resolve
+        })
+    )
+    const existingListeners = new Set(process.rawListeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() => expect(mocks.executeScenario).toHaveBeenCalled())
+    const interrupt = process
+      .rawListeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalled())
+    try {
+      const installedListeners = process
+        .rawListeners("SIGINT")
+        .filter((listener) => !existingListeners.has(listener))
+      expect(installedListeners).toHaveLength(1)
+      installedListeners[0]?.("SIGINT")
+      expect(
+        process
+          .rawListeners("SIGINT")
+          .filter((listener) => !existingListeners.has(listener))
+      ).toHaveLength(1)
+    } finally {
+      releaseFinalization()
+      await run
+    }
+
+    expect(process.exitCode).toBe(130)
+  })
+
   it("cancels runner startup", async () => {
     mocks.startRun.mockImplementationOnce(
       (args?: { signal?: AbortSignal }) =>

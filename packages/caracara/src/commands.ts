@@ -607,8 +607,8 @@ export async function runCommand(options: RunCommandOptions) {
       return
     }
     listeningForInterrupts = true
-    process.once("SIGINT", onSigint)
-    process.once("SIGTERM", onSigterm)
+    process.on("SIGINT", onSigint)
+    process.on("SIGTERM", onSigterm)
   }
   const stopListeningForInterrupts = () => {
     process.off("SIGINT", onSigint)

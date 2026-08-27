@@ -277,6 +277,7 @@ export const createRunRequestSchema = z
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
     requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
+    creationAttemptId: z.string().uuid().optional(),
   })
   .refine(
     (value) =>

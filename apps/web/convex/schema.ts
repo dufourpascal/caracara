@@ -124,6 +124,7 @@ export default defineSchema({
     totalCheckCount: v.number(),
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
+    creationAttemptId: v.optional(v.string()),
     finalizationAttemptId: v.optional(v.string()),
     updatedAt: v.number(),
   })
@@ -134,6 +135,10 @@ export default defineSchema({
       "startedAt",
     ])
     .index("by_project", ["projectId"])
+    .index("by_project_creation_attempt", [
+      "projectId",
+      "creationAttemptId",
+    ])
     .index("by_project_status", ["projectId", "status"]),
   scenarioResults: defineTable({
     runId: v.id("runs"),

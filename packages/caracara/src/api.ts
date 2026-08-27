@@ -189,6 +189,7 @@ export async function createRun(args: {
   version: string
   projectSlug: string
   payload: Parameters<typeof createRunRequestSchema.parse>[0]
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/runs`,
@@ -197,7 +198,9 @@ export async function createRun(args: {
     init: {
       method: "POST",
       body: JSON.stringify(createRunRequestSchema.parse(args.payload)),
+      signal: args.signal,
     },
+    retryTransient: true,
     schema: createRunResponseSchema,
   })
 }

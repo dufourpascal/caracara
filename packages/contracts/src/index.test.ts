@@ -216,6 +216,7 @@ describe("contracts", () => {
         requestedSuiteSlug: "demo-only",
         runnerType: "codex",
         startedAt: 1,
+        creationAttemptId: "00000000-0000-4000-8000-000000000001",
       }).mode
     ).toBe("suite")
 

@@ -255,12 +255,26 @@ export const create = mutation({
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     startedAt: v.number(),
+    creationAttemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
       ctx,
       args.projectId
     )
+    if (args.creationAttemptId) {
+      const existing = await ctx.db
+        .query("runs")
+        .withIndex("by_project_creation_attempt", (query) =>
+          query
+            .eq("projectId", project._id)
+            .eq("creationAttemptId", args.creationAttemptId)
+        )
+        .unique()
+      if (existing) {
+        return toRun(existing)
+      }
+    }
     const isSuiteRun = args.mode === "suite"
     if (isSuiteRun !== (args.requestedSuiteSlug != null)) {
       throw new ConvexError({
@@ -321,6 +335,9 @@ export const create = mutation({
       totalCheckCount: 0,
       startedAt: args.startedAt,
       finishedAt: null,
+      ...(args.creationAttemptId
+        ? { creationAttemptId: args.creationAttemptId }
+        : {}),
       updatedAt: timestamp,
     })
 

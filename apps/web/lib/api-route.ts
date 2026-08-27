@@ -448,6 +448,9 @@ export async function createRun(
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       requestedSuiteSlug: payload.requestedSuiteSlug ?? null,
       startedAt: payload.startedAt,
+      ...(payload.creationAttemptId
+        ? { creationAttemptId: payload.creationAttemptId }
+        : {}),
     },
     { token }
   )

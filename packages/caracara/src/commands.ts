@@ -587,6 +587,7 @@ export async function runCommand(options: RunCommandOptions) {
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   const runSelection = resolveRunMode(options)
+  const creationAttemptId = crypto.randomUUID()
   const finalizationAttemptId = crypto.randomUUID()
   let interruptedScenarioResultId: string | null = null
   let interruptedScenarioAttemptId: string | null = null
@@ -626,7 +627,7 @@ export async function runCommand(options: RunCommandOptions) {
     process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
   }
 
-  const startRun = () =>
+  const startRun = (signal?: AbortSignal) =>
     createRun({
       apiBaseUrl: config.apiBaseUrl,
       accessToken,
@@ -641,8 +642,20 @@ export async function runCommand(options: RunCommandOptions) {
         environment: environment.name,
         targetUrl: environment.targetUrl,
         startedAt: Date.now(),
+        creationAttemptId,
       },
+      signal,
     })
+  const startRunWithRecovery = async () => {
+    try {
+      return await startRun(runAbortController.signal)
+    } catch (error) {
+      if (!interruptedSignal) {
+        throw error
+      }
+      return await startRun(AbortSignal.timeout(10_000))
+    }
+  }
   const finalizeInterruptedRun = (runId: string, finishedAt = Date.now()) =>
     finalizeRun({
       apiBaseUrl: config.apiBaseUrl,
@@ -676,7 +689,7 @@ export async function runCommand(options: RunCommandOptions) {
   if (runSelection.mode === "suite") {
     listenForInterrupts()
     try {
-      createRunResponse = await startRun()
+      createRunResponse = await startRunWithRecovery()
     } catch (error) {
       stopListeningForInterrupts()
       if (setSignalExitCode()) {
@@ -798,7 +811,7 @@ export async function runCommand(options: RunCommandOptions) {
   if (!createRunResponse) {
     listenForInterrupts()
     try {
-      createRunResponse = await startRun()
+      createRunResponse = await startRunWithRecovery()
     } catch (error) {
       stopListeningForInterrupts()
       if (setSignalExitCode()) {

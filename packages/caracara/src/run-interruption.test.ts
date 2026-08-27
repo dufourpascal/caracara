@@ -38,16 +38,21 @@ const mocks = vi.hoisted(() => {
       })
   )
   const close = vi.fn(async () => undefined)
+  const createRunResponse = {
+    run: {
+      id: "run-1",
+      name: "steady-hawk-20260827-120000",
+      evidencePolicy: "text_only",
+    },
+  }
 
   return {
     close,
-    createRun: vi.fn(async () => ({
-      run: {
-        id: "run-1",
-        name: "steady-hawk-20260827-120000",
-        evidencePolicy: "text_only",
-      },
-    })),
+    createRun: vi.fn(async (args?: { signal?: AbortSignal }) => {
+      void args
+      return createRunResponse
+    }),
+    createRunResponse,
     executeScenario,
     executionPlan,
     fetchExecutionPlan: vi.fn(async (args?: { signal?: AbortSignal }) => {
@@ -297,12 +302,14 @@ describe("run interruption", () => {
     "preserves the signal exit code when %s run creation rejects",
     async (_mode, options) => {
       let failCreatingRun: ((error: Error) => void) | undefined
-      mocks.createRun.mockImplementationOnce(
-        () =>
-          new Promise((_, reject) => {
-            failCreatingRun = reject
-          })
-      )
+      mocks.createRun
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              failCreatingRun = reject
+            })
+        )
+        .mockRejectedValueOnce(new Error("Recovery unavailable"))
       const existingListeners = new Set(process.listeners("SIGINT"))
       vi.spyOn(process.stdout, "write").mockImplementation(() => true)
 
@@ -324,6 +331,60 @@ describe("run interruption", () => {
           .listeners("SIGINT")
           .filter((listener) => !existingListeners.has(listener))
       ).toHaveLength(0)
+    }
+  )
+
+  it.each([
+    ["suite", { suite: "smoke" }],
+    ["non-suite", {}],
+  ] as const)(
+    "recovers and interrupts a stalled %s run creation",
+    async (_mode, options) => {
+      mocks.createRun
+        .mockImplementationOnce(
+          (args?: { signal?: AbortSignal }) =>
+            new Promise((_, reject) => {
+              args?.signal?.addEventListener(
+                "abort",
+                () => reject(args.signal?.reason),
+                { once: true }
+              )
+            })
+        )
+        .mockResolvedValueOnce(mocks.createRunResponse)
+      const existingListeners = new Set(process.listeners("SIGINT"))
+      vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+      const run = runCommand(options)
+      await vi.waitFor(() => expect(mocks.createRun).toHaveBeenCalledOnce())
+      const interrupt = process
+        .listeners("SIGINT")
+        .find((listener) => !existingListeners.has(listener))
+      expect(interrupt).toBeDefined()
+      interrupt?.("SIGINT")
+
+      await run
+
+      expect(mocks.createRun).toHaveBeenCalledTimes(2)
+      const createCalls = mocks.createRun.mock.calls as unknown as Array<
+        [
+          {
+            payload: { creationAttemptId?: string }
+            signal?: AbortSignal
+          },
+        ]
+      >
+      expect(createCalls[0]?.[0].signal?.aborted).toBe(true)
+      expect(createCalls[1]?.[0].signal?.aborted).toBe(false)
+      expect(createCalls[1]?.[0].payload.creationAttemptId).toBe(
+        createCalls[0]?.[0].payload.creationAttemptId
+      )
+      expect(mocks.finalizeRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({ status: "interrupted" }),
+        })
+      )
+      expect(process.exitCode).toBe(130)
     }
   )
 

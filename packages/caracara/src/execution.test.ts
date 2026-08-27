@@ -307,7 +307,7 @@ describe("Codex SDK configuration", () => {
     expect(prompt).not.toContain("Scoring prompt:")
   })
 
-  it("requires deterministic WebP evidence for failed Codex checks", () => {
+  it("requires visually verified WebP evidence for failed Codex checks", () => {
     const prompt = buildRunnerPrompt({
       environment: "preview",
       targetUrl: "https://preview.example.com/",
@@ -319,6 +319,14 @@ describe("Codex SDK configuration", () => {
       "Failure screenshot: /tmp/caracara-evidence/00000000-0000-4000-8000-000000000001.webp"
     )
     expect(prompt).toContain("format webp, quality 80, and fullPage false")
+    expect(prompt).toContain("without a filePath")
+    expect(prompt).toContain("same visible viewport without a uid")
+    expect(prompt).toContain("Inspect the image itself")
+    expect(prompt).toContain("Only after visually confirming the image")
+    expect(prompt).toContain(
+      "Attempted: <specific action and expected result>. Failed: <exact observed behavior"
+    )
+    expect(prompt).toContain("Do not merely restate the check")
     expect(prompt).toContain("Never include screenshot paths or image bytes")
 
     const correction = buildMissingScreenshotPrompt({
@@ -327,6 +335,10 @@ describe("Codex SDK configuration", () => {
       missingCheckIds: ["00000000-0000-4000-8000-000000000001"],
     })
     expect(correction).toContain("Do not repeat the scenario")
+    expect(correction).toContain("without a filePath")
+    expect(correction).toContain("same visible viewport without a uid")
+    expect(correction).toContain("visually inspect the returned image")
+    expect(correction).toContain("Only after visually confirming the image")
     expect(correction).toContain("Valid article slug")
   })
 

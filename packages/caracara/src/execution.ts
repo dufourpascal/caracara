@@ -383,10 +383,16 @@ export function buildRunnerPrompt(input: {
     'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "not_observed" when you could not reach or inspect it.',
     ...(input.evidenceDirectory
       ? [
-          "For every failed check, immediately call chrome-devtools take_screenshot with the exact failure screenshot path listed for that check, format webp, quality 80, and fullPage false.",
+          "For every failed check, put the browser in the state that demonstrates the failure. Scroll to the relevant region and remove unrelated overlays.",
+          "Call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, so you can visually inspect the returned image. Capture the visible viewport without a uid.",
+          "Inspect the image itself. Confirm that the failed behavior is clearly visible and that enough surrounding UI is shown to understand the problem. For a missing element, show the region where it should appear.",
+          "If the image does not clearly show the defect, adjust the browser and repeat the preview screenshot. Do not save an unrelated, overly broad, obscured, or unreadable screenshot.",
+          "Only after visually confirming the image, call take_screenshot again with the exact failure screenshot path listed for that check, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
           "A failed check is incomplete without its screenshot. Do not capture screenshots for passed or not-observed checks. Never include screenshot paths or image bytes in the JSON response.",
         ]
       : []),
+    'For every failed check, write the evidence as: "Attempted: <specific action and expected result>. Failed: <exact observed behavior, including the relevant page, control, value, or visible message>."',
+    'Do not merely restate the check or use vague phrases such as "did not work", "unexpected behavior", or "the check failed".',
     "Every verdict needs concise, concrete browser evidence. Do not calculate or return a score.",
   ].join("\n")
 }
@@ -401,7 +407,10 @@ export function buildMissingScreenshotPrompt(input: {
   )
   return [
     "Required screenshot evidence is missing for the failed checks below.",
-    "Do not repeat the scenario. Use the current browser state and call chrome-devtools take_screenshot once for each check with format webp, quality 80, and fullPage false.",
+    "Do not repeat the scenario. Use the current browser state and put the relevant failure region in view.",
+    "For each check, call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, and visually inspect the returned image. Capture the visible viewport without a uid.",
+    "If the image does not clearly show the defect and enough surrounding context, adjust the browser and repeat the preview screenshot.",
+    "Only after visually confirming the image, call take_screenshot again with the listed path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
     ...checks.map(
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`

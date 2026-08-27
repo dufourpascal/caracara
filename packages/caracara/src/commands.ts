@@ -641,7 +641,7 @@ export async function runCommand(options: RunCommandOptions) {
         startedAt: Date.now(),
       },
     })
-  const finalizeInterruptedRun = (runId: string) =>
+  const finalizeInterruptedRun = (runId: string, finishedAt = Date.now()) =>
     finalizeRun({
       apiBaseUrl: config.apiBaseUrl,
       accessToken,
@@ -650,7 +650,7 @@ export async function runCommand(options: RunCommandOptions) {
       runId,
       payload: {
         status: "interrupted",
-        finishedAt: Date.now(),
+        finishedAt,
         finalizationAttemptId,
       },
     })
@@ -1092,7 +1092,12 @@ export async function runCommand(options: RunCommandOptions) {
             finalizationError = error
           } else {
             try {
-              await finalizeInterruptedRun(createRunResponse.run.id)
+              await finalizeInterruptedRun(
+                createRunResponse.run.id,
+                finalRunStatus === "interrupted"
+                  ? finalFinishedAt
+                  : undefined
+              )
             } catch (correctionError) {
               finalizationError = correctionError
             }

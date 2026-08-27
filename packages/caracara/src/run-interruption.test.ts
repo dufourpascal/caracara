@@ -458,6 +458,43 @@ describe("run interruption", () => {
     expect(process.exitCode).toBe(130)
   })
 
+  it("retries an in-flight interrupted finalization with the same payload", async () => {
+    mocks.startScenarioExecution.mockRejectedValueOnce(
+      new Error("Scenario start failed")
+    )
+    mocks.finalizeRun.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalledOnce())
+    const interrupt = process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+    expect(interrupt).toBeDefined()
+    interrupt?.("SIGINT")
+
+    await run
+
+    const finalizeCalls = mocks.finalizeRun.mock.calls as unknown as Array<
+      [{ payload: unknown }]
+    >
+    expect(finalizeCalls).toHaveLength(2)
+    expect(finalizeCalls[1]?.[0].payload).toEqual(
+      finalizeCalls[0]?.[0].payload
+    )
+    expect(process.exitCode).toBe(130)
+  })
+
   it("corrects a completed scenario when its submission is interrupted", async () => {
     mocks.executeScenario.mockResolvedValueOnce({
       checkResults: [],

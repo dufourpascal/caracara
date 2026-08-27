@@ -707,6 +707,9 @@ describe("run interruption", () => {
 
     await expect(run).resolves.toBeUndefined()
 
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
     expect(process.exitCode).toBe(130)
     expect(stderr).toHaveBeenCalledWith(
       "Failed to finalize interrupted run: API unavailable\n"

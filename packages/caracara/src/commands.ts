@@ -674,6 +674,7 @@ export async function runCommand(options: RunCommandOptions) {
           ? { interruptedScenarioAttemptId }
           : {}),
       },
+      signal: AbortSignal.timeout(10_000),
     })
   const finishSignalInterruption = async (runId: string) => {
     try {

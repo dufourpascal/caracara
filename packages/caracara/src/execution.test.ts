@@ -12,6 +12,7 @@ import {
   buildExecutionResultSchema,
   buildMissingScreenshotPrompt,
   buildRunnerPrompt,
+  buildWindowsTaskkillArgs,
   formatRunnerUsage,
   hasWebpSignature,
   mergeRunnerUsage,
@@ -52,6 +53,15 @@ function processGroupExistsForTest(pid: number) {
 }
 
 describe("child command termination", () => {
+  it("builds a forced Windows process-tree termination command", () => {
+    expect(buildWindowsTaskkillArgs(1234)).toEqual([
+      "/PID",
+      "1234",
+      "/T",
+      "/F",
+    ])
+  })
+
   it.skipIf(process.platform === "win32")(
     "waits for an aborted child and force-kills it after the grace period",
     async () => {

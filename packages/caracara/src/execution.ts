@@ -623,6 +623,39 @@ function processGroupExists(pid: number) {
   }
 }
 
+export function buildWindowsTaskkillArgs(pid: number) {
+  return ["/PID", String(pid), "/T", "/F"]
+}
+
+async function terminateWindowsProcessTree(child: ChildProcess) {
+  const pid = child.pid
+  if (!pid) {
+    return
+  }
+  await new Promise<void>((resolve, reject) => {
+    const taskkill = spawn(
+      "taskkill.exe",
+      buildWindowsTaskkillArgs(pid),
+      {
+        stdio: "ignore",
+        windowsHide: true,
+      }
+    )
+    taskkill.once("error", reject)
+    taskkill.once("close", (code) => {
+      if (
+        code === 0 ||
+        child.exitCode !== null ||
+        child.signalCode !== null
+      ) {
+        resolve()
+      } else {
+        reject(new Error(`taskkill exited with code ${code}.`))
+      }
+    })
+  })
+}
+
 async function waitForProcessGroupExit(pid: number) {
   const deadline = Date.now() + 1_000
   while (processGroupExists(pid) && Date.now() < deadline) {
@@ -653,6 +686,19 @@ export async function terminateChildProcess(
     new Promise<void>((resolve) => {
       child.once("close", () => resolve())
     })
+  if (process.platform === "win32") {
+    await terminateWindowsProcessTree(child)
+    const closed = await Promise.race([
+      waitForClose.then(() => true),
+      delay(1_000).then(() => false),
+    ])
+    if (!closed) {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      await waitForClose
+    }
+    return
+  }
   signalChildProcess(child, "SIGTERM", detached)
 
   const gracePeriod = delay(1_000)
@@ -661,9 +707,7 @@ export async function terminateChildProcess(
     gracePeriod.then(() => false),
   ])
   const hasRemainingProcessGroup =
-    detached &&
-    process.platform !== "win32" &&
-    processGroupExists(child.pid)
+    detached && processGroupExists(child.pid)
   if (closedBeforeGrace && !hasRemainingProcessGroup) {
     return
   }
@@ -675,7 +719,7 @@ export async function terminateChildProcess(
   if (!closedBeforeGrace) {
     await waitForClose
   }
-  if (detached && process.platform !== "win32") {
+  if (detached) {
     await waitForProcessGroupExit(child.pid)
   }
 }

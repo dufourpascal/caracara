@@ -379,8 +379,11 @@ export function buildRunnerPrompt(input: {
       : []),
     "",
     "Use the Chrome DevTools browser tools to perform the task once and inspect the actual frontend.",
+    "Before interacting, review every evaluation check and plan the browser states and actions needed to observe each one. Preserve or revisit relevant states so later checks are not skipped.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
     'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "not_observed" when you could not reach or inspect it.',
+    'Use "not_observed" only after one reasonable, safe recovery attempt, such as navigating back, reloading, reopening the relevant control, or retrying the inspection. Do not repeat destructive state-changing actions.',
+    'Do not use "not_observed" when the behavior you saw contradicts the expectation. If an earlier failed check prevents a later check from being observed, mark the later check "not_observed" and identify the blocking check or behavior.',
     ...(input.evidenceDirectory
       ? [
           "For every failed check, put the browser in the state that demonstrates the failure. Scroll to the relevant region and remove unrelated overlays.",
@@ -392,6 +395,7 @@ export function buildRunnerPrompt(input: {
         ]
       : []),
     'For every failed check, write the evidence as: "Attempted: <specific action and expected result>. Failed: <exact observed behavior, including the relevant page, control, value, or visible message>."',
+    'For every not-observed check, write the evidence as: "Attempted: <specific action and expected state>. Blocked: <exact reason the state or evidence could not be reached, including any earlier failed check or browser-tool limitation>."',
     'Do not merely restate the check or use vague phrases such as "did not work", "unexpected behavior", or "the check failed".',
     "Every verdict needs concise, concrete browser evidence. Do not calculate or return a score.",
   ].join("\n")

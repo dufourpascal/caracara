@@ -48,7 +48,7 @@ Each scenario run should include both project-level shared context and scenario-
 
 Evaluation checks are executed in the same runner invocation as task instructions.
 
-The runner receives the ordered authored checks and must return exactly one passed, failed, or not-observed verdict with concrete browser evidence for every check. It never returns a numeric score.
+The runner receives the ordered authored checks and must return exactly one passed, failed, or blocked verdict with concrete browser evidence for every check. A blocked verdict includes one structured reason: `blocked_by_check`, `setup_incomplete`, `environment_failure`, or `tool_limit`. The runner retries only blocked checks once, using the current browser state, before returning their final verdicts. Historical `not_observed` verdicts remain readable for compatibility but are not emitted by current runners. It never returns a numeric score.
 
 For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same SDK thread if the screenshot is missing. A second miss is a runner failure.
 
@@ -78,7 +78,7 @@ After local execution, the CLI submits the resulting run and per-scenario output
 
 Caracara calculates the final pass rate.
 
-For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheckCount)`. Failed and not-observed checks stay in the denominator. Failed or interrupted runs have no final pass rate.
+For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheckCount)`. Failed, blocked, and historical not-observed checks stay in the denominator. Failed or interrupted runs have no final pass rate.
 
 ### EXEC_12
 

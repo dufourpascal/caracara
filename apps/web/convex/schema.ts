@@ -7,14 +7,23 @@ const evaluationCheck = v.object({
   expectation: v.string(),
 })
 
+const blockedReason = v.union(
+  v.literal("blocked_by_check"),
+  v.literal("setup_incomplete"),
+  v.literal("environment_failure"),
+  v.literal("tool_limit")
+)
+
 const checkResult = v.object({
   checkId: v.string(),
   verdict: v.union(
     v.literal("passed"),
     v.literal("failed"),
+    v.literal("blocked"),
     v.literal("not_observed")
   ),
   evidence: v.string(),
+  blockedReason: v.optional(v.union(v.null(), blockedReason)),
 })
 
 export default defineSchema({

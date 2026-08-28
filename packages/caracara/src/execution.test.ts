@@ -6,6 +6,8 @@ import type { OrderedScenario } from "@workspace/contracts"
 
 import {
   buildCodexClientOptions,
+  buildBlockedRetryPrompt,
+  buildBlockedRetryResultSchema,
   buildCodexChromeMcpArgs,
   buildChromiumArgs,
   buildCodexThreadOptions,
@@ -16,12 +18,14 @@ import {
   formatRunnerUsage,
   hasWebpSignature,
   mergeRunnerUsage,
+  mergeBlockedRetryExecution,
   parseClaudeJsonResult,
   redactRunnerExecution,
   redactSecretValues,
   terminateChildProcess,
   toCodexRunnerUsage,
   validateRunnerExecution,
+  validateBlockedRetryExecution,
 } from "./execution.js"
 
 const scenario: OrderedScenario = {
@@ -307,7 +311,7 @@ describe("Codex SDK configuration", () => {
     expect(prompt).not.toContain("Scoring prompt:")
   })
 
-  it("requires a justified recovery attempt for not-observed checks", () => {
+  it("requires structured reasons for blocked checks", () => {
     const prompt = buildRunnerPrompt({
       environment: "preview",
       targetUrl: "https://preview.example.com/",
@@ -316,11 +320,10 @@ describe("Codex SDK configuration", () => {
     })
 
     expect(prompt).toContain("review every evaluation check")
-    expect(prompt).toContain("only after one reasonable, safe recovery attempt")
     expect(prompt).toContain(
-      'Do not use "not_observed" when the behavior you saw contradicts the expectation'
+      'Do not use "blocked" when the behavior you saw contradicts the expectation'
     )
-    expect(prompt).toContain("identify the blocking check or behavior")
+    expect(prompt).toContain('"blocked_by_check"')
     expect(prompt).toContain(
       "Attempted: <specific action and expected state>. Blocked: <exact reason"
     )
@@ -430,6 +433,7 @@ describe("Codex SDK configuration", () => {
             checkId: "00000000-0000-4000-8000-000000000001",
             verdict: "passed",
             evidence: " The URL ended in /hello-world. ",
+            blockedReason: null,
           },
         ],
       })
@@ -440,9 +444,70 @@ describe("Codex SDK configuration", () => {
           checkId: "00000000-0000-4000-8000-000000000001",
           verdict: "passed",
           evidence: "The URL ended in /hello-world.",
+          blockedReason: null,
         },
       ],
     })
+  })
+
+  it("retries and replaces only blocked check results", () => {
+    const checkId = "00000000-0000-4000-8000-000000000001"
+    const blockedResult = {
+      checkId,
+      verdict: "blocked" as const,
+      evidence: "Attempted: Opened the editor. Blocked: It did not load.",
+      blockedReason: "environment_failure" as const,
+    }
+    const prompt = buildBlockedRetryPrompt({
+      scenario,
+      blockedResults: [blockedResult],
+    })
+    const schema = buildBlockedRetryResultSchema([checkId])
+
+    expect(prompt).toContain("Retry only the blocked evaluation checks")
+    expect(prompt).toContain("Previous reason: environment_failure")
+    expect(schema.properties.checkResults.minItems).toBe(1)
+
+    const retry = validateBlockedRetryExecution([checkId], {
+      executionSummary: "Reloaded the editor.",
+      checkResults: [
+        {
+          checkId,
+          verdict: "passed",
+          evidence: "The editor loaded and the slug was visible.",
+          blockedReason: null,
+        },
+      ],
+    })
+    expect(
+      mergeBlockedRetryExecution(
+        {
+          executionSummary: "Initial execution.",
+          checkResults: [blockedResult],
+        },
+        retry
+      )
+    ).toEqual({
+      executionSummary:
+        "Initial execution.\nBlocked-check retry: Reloaded the editor.",
+      checkResults: retry.checkResults,
+    })
+  })
+
+  it("rejects blocked runner results without a structured reason", () => {
+    expect(() =>
+      validateRunnerExecution(scenario, {
+        executionSummary: "Could not open the editor.",
+        checkResults: [
+          {
+            checkId: "00000000-0000-4000-8000-000000000001",
+            verdict: "blocked",
+            evidence: "The editor did not load.",
+            blockedReason: null,
+          },
+        ],
+      })
+    ).toThrow(/every evaluation check/i)
   })
 })
 

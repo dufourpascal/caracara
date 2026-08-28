@@ -3742,8 +3742,14 @@ function RunResultDetail({
     }>
     checkResults: Array<{
       checkId: string
-      verdict: "passed" | "failed" | "not_observed"
+      verdict: "passed" | "failed" | "blocked" | "not_observed"
       evidence: string
+      blockedReason?:
+        | "blocked_by_check"
+        | "setup_incomplete"
+        | "environment_failure"
+        | "tool_limit"
+        | null
     }>
     evidence: Array<{
       id: string
@@ -3880,9 +3886,15 @@ function RunResultDetail({
                 </Badge>
               </div>
               {checkResult ? (
-                <p className="border-l-2 border-border pl-3 text-sm text-foreground">
-                  {checkResult.evidence}
-                </p>
+                <div className="border-l-2 border-border pl-3 text-sm text-foreground">
+                  {checkResult.verdict === "blocked" &&
+                  checkResult.blockedReason ? (
+                    <p className="mb-1 font-mono text-[11px] text-muted-foreground">
+                      Reason: {formatStatusLabel(checkResult.blockedReason)}
+                    </p>
+                  ) : null}
+                  <p>{checkResult.evidence}</p>
+                </div>
               ) : null}
               {checkResult?.verdict === "failed" && screenshot ? (
                 <CheckScreenshotEvidence

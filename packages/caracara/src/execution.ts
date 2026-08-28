@@ -12,7 +12,9 @@ import {
   type ThreadOptions,
   type Usage,
 } from "@openai/codex-sdk"
+import { BLOCKED_REASONS } from "@workspace/contracts"
 import type {
+  BlockedReason,
   CheckResult,
   OrderedScenario,
   RunnerType,
@@ -88,7 +90,7 @@ export interface RunnerSession {
   close(): Promise<void>
 }
 
-export function buildExecutionResultSchema(scenario: OrderedScenario) {
+function buildResultSchema(checkIds: string[]) {
   return {
     type: "object",
     additionalProperties: false,
@@ -97,22 +99,28 @@ export function buildExecutionResultSchema(scenario: OrderedScenario) {
       executionSummary: { type: "string", minLength: 1 },
       checkResults: {
         type: "array",
-        minItems: scenario.evaluationChecks.length,
-        maxItems: scenario.evaluationChecks.length,
+        minItems: checkIds.length,
+        maxItems: checkIds.length,
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["checkId", "verdict", "evidence"],
+          required: ["checkId", "verdict", "evidence", "blockedReason"],
           properties: {
             checkId: {
               type: "string",
-              enum: scenario.evaluationChecks.map((check) => check.id),
+              enum: checkIds,
             },
             verdict: {
               type: "string",
-              enum: ["passed", "failed", "not_observed"],
+              enum: ["passed", "failed", "blocked"],
             },
             evidence: { type: "string", minLength: 1, maxLength: 2_000 },
+            blockedReason: {
+              anyOf: [
+                { type: "string", enum: BLOCKED_REASONS },
+                { type: "null" },
+              ],
+            },
           },
         },
       },
@@ -120,18 +128,30 @@ export function buildExecutionResultSchema(scenario: OrderedScenario) {
   } as const
 }
 
-export function validateRunnerExecution(
-  scenario: OrderedScenario,
-  execution: RunnerExecution
-) {
-  const expectedIds = scenario.evaluationChecks.map((check) => check.id)
+export function buildExecutionResultSchema(scenario: OrderedScenario) {
+  return buildResultSchema(scenario.evaluationChecks.map((check) => check.id))
+}
+
+export function buildBlockedRetryResultSchema(blockedCheckIds: string[]) {
+  return buildResultSchema(blockedCheckIds)
+}
+
+function validateExecution(expectedIds: string[], execution: RunnerExecution) {
   const returnedIds = execution.checkResults.map((result) => result.checkId)
+  const hasInvalidVerdict = execution.checkResults.some(
+    (result) =>
+      !["passed", "failed", "blocked"].includes(result.verdict) ||
+      (result.verdict === "blocked"
+        ? !BLOCKED_REASONS.includes(result.blockedReason as BlockedReason)
+        : result.blockedReason !== null)
+  )
   if (
     execution.executionSummary.trim() === "" ||
     returnedIds.length !== expectedIds.length ||
     new Set(returnedIds).size !== returnedIds.length ||
     expectedIds.some((id) => !returnedIds.includes(id)) ||
-    execution.checkResults.some((result) => result.evidence.trim() === "")
+    execution.checkResults.some((result) => result.evidence.trim() === "") ||
+    hasInvalidVerdict
   ) {
     throw new Error("Runner output did not account for every evaluation check.")
   }
@@ -142,6 +162,36 @@ export function validateRunnerExecution(
       ...result,
       evidence: result.evidence.trim(),
     })),
+  }
+}
+
+export function validateRunnerExecution(
+  scenario: OrderedScenario,
+  execution: RunnerExecution
+) {
+  const expectedIds = scenario.evaluationChecks.map((check) => check.id)
+  return validateExecution(expectedIds, execution)
+}
+
+export function validateBlockedRetryExecution(
+  blockedCheckIds: string[],
+  execution: RunnerExecution
+) {
+  return validateExecution(blockedCheckIds, execution)
+}
+
+export function mergeBlockedRetryExecution(
+  initial: RunnerExecution,
+  retry: RunnerExecution
+): RunnerExecution {
+  const retryResults = new Map(
+    retry.checkResults.map((result) => [result.checkId, result])
+  )
+  return {
+    executionSummary: `${initial.executionSummary}\nBlocked-check retry: ${retry.executionSummary}`,
+    checkResults: initial.checkResults.map(
+      (result) => retryResults.get(result.checkId) ?? result
+    ),
   }
 }
 
@@ -381,9 +431,9 @@ export function buildRunnerPrompt(input: {
     "Use the Chrome DevTools browser tools to perform the task once and inspect the actual frontend.",
     "Before interacting, review every evaluation check and plan the browser states and actions needed to observe each one. Preserve or revisit relevant states so later checks are not skipped.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
-    'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "not_observed" when you could not reach or inspect it.',
-    'Use "not_observed" only after one reasonable, safe recovery attempt, such as navigating back, reloading, reopening the relevant control, or retrying the inspection. Do not repeat destructive state-changing actions.',
-    'Do not use "not_observed" when the behavior you saw contradicts the expectation. If an earlier failed check prevents a later check from being observed, mark the later check "not_observed" and identify the blocking check or behavior.',
+    'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "blocked" when you could not reach or inspect it.',
+    'For "blocked", set blockedReason to exactly one of: "blocked_by_check", "setup_incomplete", "environment_failure", or "tool_limit". Set blockedReason to null for passed and failed checks.',
+    'Do not use "blocked" when the behavior you saw contradicts the expectation. If an earlier failed check prevents a later check from being observed, use "blocked" with "blocked_by_check" and identify the blocking check or behavior.',
     ...(input.evidenceDirectory
       ? [
           "For every failed check, put the browser in the state that demonstrates the failure. Scroll to the relevant region and remove unrelated overlays.",
@@ -391,13 +441,58 @@ export function buildRunnerPrompt(input: {
           "Inspect the image itself. Confirm that the failed behavior is clearly visible and that enough surrounding UI is shown to understand the problem. For a missing element, show the region where it should appear.",
           "If the image does not clearly show the defect, adjust the browser and repeat the preview screenshot. Do not save an unrelated, overly broad, obscured, or unreadable screenshot.",
           "Only after visually confirming the image, call take_screenshot again with the exact failure screenshot path listed for that check, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
-          "A failed check is incomplete without its screenshot. Do not capture screenshots for passed or not-observed checks. Never include screenshot paths or image bytes in the JSON response.",
+          "A failed check is incomplete without its screenshot. Do not capture screenshots for passed or blocked checks. Never include screenshot paths or image bytes in the JSON response.",
         ]
       : []),
     'For every failed check, write the evidence as: "Attempted: <specific action and expected result>. Failed: <exact observed behavior, including the relevant page, control, value, or visible message>."',
-    'For every not-observed check, write the evidence as: "Attempted: <specific action and expected state>. Blocked: <exact reason the state or evidence could not be reached, including any earlier failed check or browser-tool limitation>."',
+    'For every blocked check, write the evidence as: "Attempted: <specific action and expected state>. Blocked: <exact reason the state or evidence could not be reached, including any earlier failed check or browser-tool limitation>."',
     'Do not merely restate the check or use vague phrases such as "did not work", "unexpected behavior", or "the check failed".',
     "Every verdict needs concise, concrete browser evidence. Do not calculate or return a score.",
+  ].join("\n")
+}
+
+export function buildBlockedRetryPrompt(input: {
+  scenario: OrderedScenario
+  blockedResults: CheckResult[]
+  evidenceDirectory?: string
+}) {
+  const blockedById = new Map(
+    input.blockedResults.map((result) => [result.checkId, result])
+  )
+  const checks = input.scenario.evaluationChecks.filter((check) =>
+    blockedById.has(check.id)
+  )
+
+  return [
+    "Retry only the blocked evaluation checks below exactly once.",
+    "Use the current browser state. Make one reasonable, safe recovery attempt appropriate to the structured reason, such as navigating back, reloading, reopening the relevant control, or retrying the inspection.",
+    "Do not repeat destructive state-changing actions and do not rerun checks that already passed or failed.",
+    "Return JSON with a concise executionSummary and exactly one checkResults entry for each listed check ID.",
+    'Use only "passed", "failed", or "blocked". Set blockedReason to null for passed and failed; for blocked, set it to "blocked_by_check", "setup_incomplete", "environment_failure", or "tool_limit".',
+    ...checks.flatMap((check) => {
+      const result = blockedById.get(check.id)!
+      return [
+        `- ${check.name} [${check.id}]`,
+        `  Expected: ${check.expectation}`,
+        `  Previous reason: ${result.blockedReason}`,
+        `  Previous evidence: ${result.evidence}`,
+        ...(input.evidenceDirectory
+          ? [
+              `  Failure screenshot if the retry observes a failure: ${join(input.evidenceDirectory, `${check.id}.webp`)}`,
+            ]
+          : []),
+      ]
+    }),
+    ...(input.evidenceDirectory
+      ? [
+          "If a retry changes a check to failed, put the browser in the state that demonstrates the failure and capture the visible viewport only.",
+          "First call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false. Inspect the image itself and adjust the browser until the defect and enough surrounding context are clearly visible.",
+          "Only then call take_screenshot again with the listed failure screenshot path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+        ]
+      : []),
+    'For failed evidence use: "Attempted: <specific action and expected result>. Failed: <exact observed behavior>."',
+    'For blocked evidence use: "Attempted: <specific action and expected state>. Blocked: <exact reason the state or evidence still could not be reached>."',
+    "This is the only retry. Report the final observed result for each listed check.",
   ].join("\n")
 }
 
@@ -1013,10 +1108,43 @@ class CodexRunner implements RunnerAdapter {
               complete: turnUsage !== undefined,
             })
 
-            const validated = validateRunnerExecution(
+            let validated = validateRunnerExecution(
               scenarioInput.scenario,
               JSON.parse(turn.finalResponse) as RunnerExecution
             )
+            const blockedResults = validated.checkResults.filter(
+              (result) => result.verdict === "blocked"
+            )
+            if (blockedResults.length > 0) {
+              const blockedCheckIds = blockedResults.map(
+                (result) => result.checkId
+              )
+              waitingForUsage = true
+              const retry = await thread.run(
+                buildBlockedRetryPrompt({
+                  scenario: scenarioInput.scenario,
+                  blockedResults,
+                  evidenceDirectory,
+                }),
+                {
+                  outputSchema: buildBlockedRetryResultSchema(blockedCheckIds),
+                  signal: scenarioInput.signal,
+                }
+              )
+              waitingForUsage = false
+              const retryUsage = toCodexRunnerUsage(retry.usage, input.model)
+              usage = mergeRunnerUsage(usage, {
+                usage: retryUsage,
+                complete: retryUsage !== undefined,
+              })
+              validated = mergeBlockedRetryExecution(
+                validated,
+                validateBlockedRetryExecution(
+                  blockedCheckIds,
+                  JSON.parse(retry.finalResponse) as RunnerExecution
+                )
+              )
+            }
             const failedCheckIds = validated.checkResults
               .filter((result) => result.verdict === "failed")
               .map((result) => result.checkId)
@@ -1147,14 +1275,58 @@ class ClaudeRunner implements RunnerAdapter {
               usage: parsed.usage,
               complete: parsed.usage !== undefined,
             }
+            let validated = validateRunnerExecution(
+              scenarioInput.scenario,
+              parsed.execution
+            )
+            const blockedResults = validated.checkResults.filter(
+              (result) => result.verdict === "blocked"
+            )
+            if (blockedResults.length > 0) {
+              const blockedCheckIds = blockedResults.map(
+                (result) => result.checkId
+              )
+              const retry = await runChildCommand({
+                command: "claude",
+                cwd: scenarioInput.cwd,
+                env: runnerEnv,
+                secrets: runInput.secrets,
+                signal: scenarioInput.signal,
+                commandArgs: [
+                  "-p",
+                  "--permission-mode",
+                  process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
+                    "bypassPermissions",
+                  "--output-format",
+                  "json",
+                  "--mcp-config",
+                  mcpConfigPath,
+                  "--strict-mcp-config",
+                  "--json-schema",
+                  JSON.stringify(
+                    buildBlockedRetryResultSchema(blockedCheckIds)
+                  ),
+                  buildBlockedRetryPrompt({
+                    scenario: scenarioInput.scenario,
+                    blockedResults,
+                  }),
+                ],
+              })
+              const parsedRetry = parseClaudeJsonResult(retry.stdout)
+              usage = mergeRunnerUsage(usage, {
+                usage: parsedRetry.usage,
+                complete: parsedRetry.usage !== undefined,
+              })
+              validated = mergeBlockedRetryExecution(
+                validated,
+                validateBlockedRetryExecution(
+                  blockedCheckIds,
+                  parsedRetry.execution
+                )
+              )
+            }
             return {
-              ...redactRunnerExecution(
-                validateRunnerExecution(
-                  scenarioInput.scenario,
-                  parsed.execution
-                ),
-                runInput.secrets
-              ),
+              ...redactRunnerExecution(validated, runInput.secrets),
               screenshotEvidence: [],
               usage,
             }

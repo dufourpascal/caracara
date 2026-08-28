@@ -9,6 +9,7 @@ import {
   authoringResponseSchema,
   authTokenResponseSchema,
   cliConfigSchema,
+  checkResultSchema,
   createRunRequestSchema,
   executionPlanResponseSchema,
   finalizeRunRequestSchema,
@@ -30,6 +31,32 @@ import {
 } from "./index.js"
 
 describe("contracts", () => {
+  it("requires structured reasons for blocked check results", () => {
+    const blocked = {
+      checkId: "00000000-0000-4000-8000-000000000001",
+      verdict: "blocked",
+      evidence: "The target environment was unavailable.",
+    }
+
+    expect(
+      checkResultSchema.parse({
+        ...blocked,
+        blockedReason: "environment_failure",
+      }).blockedReason
+    ).toBe("environment_failure")
+    expect(() => checkResultSchema.parse(blocked)).toThrow(/structured reason/i)
+    expect(() =>
+      checkResultSchema.parse({
+        ...blocked,
+        verdict: "passed",
+        blockedReason: "environment_failure",
+      })
+    ).toThrow(/only blocked/i)
+    expect(
+      checkResultSchema.parse({ ...blocked, verdict: "not_observed" }).verdict
+    ).toBe("not_observed")
+  })
+
   it("validates core project and scenario shapes", () => {
     const project = projectSchema.parse({
       id: "project_1",

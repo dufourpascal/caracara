@@ -307,6 +307,25 @@ describe("Codex SDK configuration", () => {
     expect(prompt).not.toContain("Scoring prompt:")
   })
 
+  it("requires a justified recovery attempt for not-observed checks", () => {
+    const prompt = buildRunnerPrompt({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+      projectPrompt: "Use the seeded demo account.",
+      scenario,
+    })
+
+    expect(prompt).toContain("review every evaluation check")
+    expect(prompt).toContain("only after one reasonable, safe recovery attempt")
+    expect(prompt).toContain(
+      'Do not use "not_observed" when the behavior you saw contradicts the expectation'
+    )
+    expect(prompt).toContain("identify the blocking check or behavior")
+    expect(prompt).toContain(
+      "Attempted: <specific action and expected state>. Blocked: <exact reason"
+    )
+  })
+
   it("requires visually verified WebP evidence for failed Codex checks", () => {
     const prompt = buildRunnerPrompt({
       environment: "preview",

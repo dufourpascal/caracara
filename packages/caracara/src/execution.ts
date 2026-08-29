@@ -1286,6 +1286,8 @@ class ClaudeRunner implements RunnerAdapter {
               const blockedCheckIds = blockedResults.map(
                 (result) => result.checkId
               )
+              const usageBeforeRetry = usage
+              usage = { ...usage, complete: false }
               const retry = await runChildCommand({
                 command: "claude",
                 cwd: scenarioInput.cwd,
@@ -1313,7 +1315,7 @@ class ClaudeRunner implements RunnerAdapter {
                 ],
               })
               const parsedRetry = parseClaudeJsonResult(retry.stdout)
-              usage = mergeRunnerUsage(usage, {
+              usage = mergeRunnerUsage(usageBeforeRetry, {
                 usage: parsedRetry.usage,
                 complete: parsedRetry.usage !== undefined,
               })

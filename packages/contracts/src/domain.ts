@@ -111,12 +111,46 @@ export const evaluationCheckSchema = z.object({
   name: z.string().min(1).max(120),
   expectation: z.string().min(1).max(2_000),
 })
-export const checkVerdictSchema = z.enum(["passed", "failed", "not_observed"])
-export const checkResultSchema = z.object({
-  checkId: z.string().uuid(),
-  verdict: checkVerdictSchema,
-  evidence: z.string().min(1).max(2_000),
-})
+export const BLOCKED_REASONS = [
+  "blocked_by_check",
+  "setup_incomplete",
+  "environment_failure",
+  "tool_limit",
+] as const
+export const blockedReasonSchema = z.enum(BLOCKED_REASONS)
+export const checkVerdictSchema = z.enum([
+  "passed",
+  "failed",
+  "blocked",
+  "not_observed",
+])
+export const checkResultSchema = z
+  .object({
+    checkId: z.string().uuid(),
+    verdict: checkVerdictSchema,
+    evidence: z.string().min(1).max(2_000),
+    blockedReason: blockedReasonSchema.nullable().optional(),
+  })
+  .superRefine((result, context) => {
+    if (result.verdict === "blocked" && !result.blockedReason) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Blocked checks require a structured reason.",
+        path: ["blockedReason"],
+      })
+    }
+    if (
+      result.verdict !== "blocked" &&
+      result.blockedReason !== undefined &&
+      result.blockedReason !== null
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Only blocked checks can include a blocked reason.",
+        path: ["blockedReason"],
+      })
+    }
+  })
 
 export const projectSchema = z.object({
   id: z.string(),
@@ -250,6 +284,7 @@ export type ScenarioStatus = z.infer<typeof scenarioStatusSchema>
 export type RunStatus = z.infer<typeof runStatusSchema>
 export type ScenarioResultStatus = z.infer<typeof scenarioResultStatusSchema>
 export type EvaluationCheck = z.infer<typeof evaluationCheckSchema>
+export type BlockedReason = z.infer<typeof blockedReasonSchema>
 export type CheckVerdict = z.infer<typeof checkVerdictSchema>
 export type CheckResult = z.infer<typeof checkResultSchema>
 export type RunnerType = z.infer<typeof runnerTypeSchema>

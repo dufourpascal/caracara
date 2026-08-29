@@ -83,7 +83,7 @@ const resultFields = [
   },
   {
     label: "Check verdicts",
-    body: "Passed, failed, or not observed, with no model-generated number.",
+    body: "Passed, failed, or blocked, with no model-generated number.",
   },
 ] as const
 

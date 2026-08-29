@@ -42,6 +42,32 @@ describe("convex response mappers", () => {
         executionSummary: "Different",
       })
     ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult(
+        {
+          ...result,
+          checkResults: [
+            {
+              checkId: "a",
+              verdict: "blocked",
+              evidence: "Unavailable",
+              blockedReason: "environment_failure",
+            },
+          ],
+        },
+        {
+          ...result,
+          checkResults: [
+            {
+              checkId: "a",
+              verdict: "blocked",
+              evidence: "Unavailable",
+              blockedReason: "tool_limit",
+            },
+          ],
+        }
+      )
+    ).toBe(false)
   })
 
   it("retains completed check counts when a later scenario fails", async () => {
@@ -88,17 +114,45 @@ describe("convex response mappers", () => {
       validateCompletedCheckResults(
         [{ id: "a" }, { id: "b" }],
         [
-          { checkId: "a", evidence: "Visible" },
-          { checkId: "a", evidence: "Visible twice" },
+          { checkId: "a", verdict: "passed", evidence: "Visible" },
+          { checkId: "a", verdict: "passed", evidence: "Visible twice" },
         ]
       )
     ).toThrow(/match the scenario snapshot/i)
     expect(() =>
       validateCompletedCheckResults(
         [{ id: "a" }],
-        [{ checkId: "a", evidence: "Visible" }]
+        [{ checkId: "a", verdict: "passed", evidence: "Visible" }]
       )
     ).not.toThrow()
+  })
+
+  it("requires a structured reason only for blocked results", () => {
+    expect(() =>
+      validateCompletedCheckResults(
+        [{ id: "a" }],
+        [
+          {
+            checkId: "a",
+            verdict: "blocked",
+            evidence: "The environment did not respond.",
+            blockedReason: "environment_failure",
+          },
+        ]
+      )
+    ).not.toThrow()
+    expect(() =>
+      validateCompletedCheckResults(
+        [{ id: "a" }],
+        [
+          {
+            checkId: "a",
+            verdict: "blocked",
+            evidence: "The environment did not respond.",
+          },
+        ]
+      )
+    ).toThrow(/match the scenario snapshot/i)
   })
 
   it("requires exactly one screenshot for every failed check", () => {

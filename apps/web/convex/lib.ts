@@ -1065,7 +1065,12 @@ export function createRunName() {
 
 export function validateCompletedCheckResults(
   evaluationChecks: Array<{ id: string }>,
-  checkResults: Array<{ checkId: string; evidence: string }>
+  checkResults: Array<{
+    checkId: string
+    verdict: string
+    evidence: string
+    blockedReason?: string | null
+  }>
 ) {
   const expectedIds = evaluationChecks.map((check) => check.id)
   const returnedIds = checkResults.map((check) => check.checkId)
@@ -1075,6 +1080,16 @@ export function validateCompletedCheckResults(
     expectedIds.some((id) => !returnedIds.includes(id)) ||
     checkResults.some(
       (check) => check.evidence.trim() === "" || check.evidence.length > 2_000
+    ) ||
+    checkResults.some((check) =>
+      check.verdict === "blocked"
+        ? ![
+            "blocked_by_check",
+            "setup_incomplete",
+            "environment_failure",
+            "tool_limit",
+          ].includes(check.blockedReason ?? "")
+        : check.blockedReason !== undefined && check.blockedReason !== null
     )
   ) {
     throw new ConvexError({
@@ -1103,6 +1118,7 @@ export function matchesTerminalScenarioResult(
       checkId: string
       verdict: string
       evidence: string
+      blockedReason?: string | null
     }>
     executionSummary: string | null
     failureDetail: string | null
@@ -1114,6 +1130,7 @@ export function matchesTerminalScenarioResult(
       checkId: string
       verdict: string
       evidence: string
+      blockedReason?: string | null
     }>
     executionSummary: string | null
     failureDetail: string | null
@@ -1131,7 +1148,8 @@ export function matchesTerminalScenarioResult(
       return (
         candidate?.checkId === check.checkId &&
         candidate.verdict === check.verdict &&
-        candidate.evidence === check.evidence
+        candidate.evidence === check.evidence &&
+        (candidate.blockedReason ?? null) === (check.blockedReason ?? null)
       )
     })
   )

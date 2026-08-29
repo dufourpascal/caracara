@@ -452,10 +452,15 @@ export function buildRunnerPrompt(input: {
 }
 
 export function buildBlockedRetryPrompt(input: {
+  environment: string
+  targetUrl: string
+  projectPrompt: string
   scenario: OrderedScenario
   blockedResults: CheckResult[]
+  secretNames?: string[]
   evidenceDirectory?: string
 }) {
+  const secretNames = [...(input.secretNames ?? [])].sort()
   const blockedById = new Map(
     input.blockedResults.map((result) => [result.checkId, result])
   )
@@ -465,6 +470,25 @@ export function buildBlockedRetryPrompt(input: {
 
   return [
     "Retry only the blocked evaluation checks below exactly once.",
+    "",
+    `Target environment: ${input.environment}`,
+    `Application URL: ${input.targetUrl}`,
+    "Use this URL as the application origin. If project or scenario text names another origin, keep its path but use the URL above.",
+    "",
+    "Project context:",
+    input.projectPrompt.trim(),
+    "",
+    "Task instructions:",
+    input.scenario.instructions.trim(),
+    ...(secretNames.length > 0
+      ? [
+          "",
+          "Local secret environment variables available to this retry:",
+          ...secretNames.map((name) => `- ${name}`),
+          "Read a secret only when the retry requires it. Never repeat secret values in the execution summary, evidence, or other user-facing output.",
+        ]
+      : []),
+    "",
     "Use the current browser state. Make one reasonable, safe recovery attempt appropriate to the structured reason, such as navigating back, reloading, reopening the relevant control, or retrying the inspection.",
     "Do not repeat destructive state-changing actions and do not rerun checks that already passed or failed.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry for each listed check ID.",
@@ -1122,8 +1146,12 @@ class CodexRunner implements RunnerAdapter {
               waitingForUsage = true
               const retry = await thread.run(
                 buildBlockedRetryPrompt({
+                  environment: scenarioInput.environment,
+                  targetUrl: scenarioInput.targetUrl,
+                  projectPrompt: scenarioInput.projectPrompt,
                   scenario: scenarioInput.scenario,
                   blockedResults,
+                  secretNames,
                   evidenceDirectory,
                 }),
                 {
@@ -1309,8 +1337,12 @@ class ClaudeRunner implements RunnerAdapter {
                     buildBlockedRetryResultSchema(blockedCheckIds)
                   ),
                   buildBlockedRetryPrompt({
+                    environment: scenarioInput.environment,
+                    targetUrl: scenarioInput.targetUrl,
+                    projectPrompt: scenarioInput.projectPrompt,
                     scenario: scenarioInput.scenario,
                     blockedResults,
+                    secretNames,
                   }),
                 ],
               })

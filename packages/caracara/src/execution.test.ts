@@ -459,12 +459,22 @@ describe("Codex SDK configuration", () => {
       blockedReason: "environment_failure" as const,
     }
     const prompt = buildBlockedRetryPrompt({
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+      projectPrompt: "Use the seeded demo account.",
       scenario,
       blockedResults: [blockedResult],
+      secretNames: ["CARACARA_SECRET_USERNAME"],
     })
     const schema = buildBlockedRetryResultSchema([checkId])
 
     expect(prompt).toContain("Retry only the blocked evaluation checks")
+    expect(prompt).toContain("Application URL: https://preview.example.com/")
+    expect(prompt).toContain("Project context:\nUse the seeded demo account.")
+    expect(prompt).toContain(
+      "Task instructions:\nLog in and create an article titled Hello World."
+    )
+    expect(prompt).toContain("- CARACARA_SECRET_USERNAME")
     expect(prompt).toContain("Previous reason: environment_failure")
     expect(schema.properties.checkResults.minItems).toBe(1)
 

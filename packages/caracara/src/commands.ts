@@ -47,7 +47,7 @@ import {
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.6.1"
+const CLI_VERSION = "0.6.2"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {

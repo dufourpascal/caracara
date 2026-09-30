@@ -1,6 +1,6 @@
 {
   "name": "caracara",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "private": true,
   "engines": {
@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.149.1",
+    "@openai/codex-sdk": "^0.159.2",
     "@workspace/contracts": "workspace:*",
     "commander": "^14.0.2",
     "zod": "^3.25.76"

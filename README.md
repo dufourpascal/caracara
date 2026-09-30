@@ -101,7 +101,7 @@ Set the Codex model and reasoning effort in `.caracara/config.json`:
 
 Both settings are optional. Without them, Codex uses its own configuration. You can also set them with `caracara init --model <model> --model-reasoning-effort <effort>`.
 
-Caracara runs Codex through `@openai/codex-sdk`. The SDK uses the existing local Codex authentication and starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
+Caracara runs Codex through `@openai/codex-sdk` and its bundled Codex runtime. Updating a globally installed `codex` does not update Caracara's runtime. The SDK uses the existing local Codex authentication and starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
 
 When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
 

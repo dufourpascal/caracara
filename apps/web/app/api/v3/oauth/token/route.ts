@@ -1,4 +1,4 @@
-import { createClerkClient } from "@clerk/backend"
+import { createClerkClient } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 
 import {

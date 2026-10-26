@@ -1,6 +1,8 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+/* shadcn/tailwind.css is intentionally not imported. Components added with
+   `shadcn add` must use explicit data-[state=...] variants instead of the
+   data-open:/data-closed: shorthands, and the animate-in/animate-out
+   utilities are not available; use the fade keyframes defined below. */
 
 @custom-variant dark (&:is(.dark *));
 @source "../../../apps/**/*.{ts,tsx}";
@@ -122,6 +124,20 @@
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
     --font-sans: var(--font-sans);
+    --animate-fade-in: fade-in 150ms ease-out;
+    --animate-fade-out: fade-out 150ms ease-in;
+
+    @keyframes fade-in {
+        from {
+            opacity: 0;
+        }
+    }
+
+    @keyframes fade-out {
+        to {
+            opacity: 0;
+        }
+    }
 }
 
 @layer base {

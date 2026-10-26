@@ -1,4 +1,4 @@
-import { verifyToken } from "@clerk/backend"
+import { verifyToken } from "@clerk/nextjs/server"
 import { fetchMutation, fetchQuery } from "convex/nextjs"
 import { NextResponse } from "next/server"
 

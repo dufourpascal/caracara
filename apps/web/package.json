@@ -12,7 +12,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --project convex --noEmit"
   },
   "dependencies": {
     "@clerk/backend": "^3.26.2",

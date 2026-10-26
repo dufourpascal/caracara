@@ -14,17 +14,17 @@
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
     "jsdom": "^27.4.0",
-    "msw": "^2.12.10",
-    "prettier": "^3.8.1",
-    "prettier-plugin-tailwindcss": "^0.7.2",
-    "turbo": "^2.8.8",
+    "msw": "^2.15.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "turbo": "^2.11.10",
     "typescript": "5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   },
   "packageManager": "pnpm@9.0.6",
   "engines": {

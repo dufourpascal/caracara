@@ -43,7 +43,11 @@ export function formatRunTimestamp(date: Date) {
 }
 
 function pickRandom(words: readonly string[]) {
-  return words[Math.floor(Math.random() * words.length)]
+  const word = words[Math.floor(Math.random() * words.length)]
+  if (word === undefined) {
+    throw new Error("Run name word list is empty")
+  }
+  return word
 }
 
 export function formatRunName(date = new Date()) {

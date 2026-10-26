@@ -11,6 +11,7 @@ The UI must follow the generated shadcn setup instead of introducing a separate 
 ## 1. Source of Truth
 
 - App preset: `radix-lyra`
+- Radix imports: use the individual `@radix-ui/react-*` packages (`import * as DialogPrimitive from "@radix-ui/react-dialog"`). The `radix-ui` umbrella is not a dependency; rewrite imports emitted by `shadcn add`.
 - Base color: `neutral`
 - CSS variables: enabled
 - Icons: `lucide`

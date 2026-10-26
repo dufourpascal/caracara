@@ -34,13 +34,3 @@ export const config = [
     ignores: ["dist/**", ".next/**", "**/.turbo/**", "**/coverage/**"],
   },
 ]
-
-/**
- * React Compiler rules that still fire in existing components. They are kept
- * visible as warnings until the affected code is reworked; new violations
- * should be fixed rather than added to this list.
- */
-export const reactCompilerRuleOverrides = {
-  "react-hooks/set-state-in-effect": "warn",
-  "react-hooks/static-components": "warn",
-}

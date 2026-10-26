@@ -1,7 +1,7 @@
 import pluginReactHooks from "eslint-plugin-react-hooks"
 import globals from "globals"
 
-import { config as baseConfig, reactCompilerRuleOverrides } from "./base.js"
+import { config as baseConfig } from "./base.js"
 
 /**
  * A custom ESLint configuration for libraries that use React.
@@ -23,7 +23,6 @@ export const config = [
     },
     rules: {
       ...pluginReactHooks.configs.recommended.rules,
-      ...reactCompilerRuleOverrides,
     },
   },
 ]

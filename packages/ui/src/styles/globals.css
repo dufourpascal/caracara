@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* shadcn/tailwind.css is intentionally not imported. Components added with
+   `shadcn add` must use explicit data-[state=...] variants instead of the
+   data-open:/data-closed: shorthands, and the animate-in/animate-out
+   utilities are not available; use the fade keyframes defined below. */
 
 @custom-variant dark (&:is(.dark *));
 @source "../../../apps/**/*.{ts,tsx}";

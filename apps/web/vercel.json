@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "corepack pnpm install --frozen-lockfile",
+  "buildCommand": "mkdir -p ../../node_modules/.corepack-bin && corepack enable pnpm --install-directory ../../node_modules/.corepack-bin && PATH=\"$PWD/../../node_modules/.corepack-bin:$PATH\" pnpm exec turbo run build --filter=web"
+}

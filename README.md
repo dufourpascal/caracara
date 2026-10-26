@@ -12,6 +12,27 @@ Initial setup for the web app now includes Clerk authentication, Convex wiring, 
 - A first authenticated Convex query in [apps/web/convex/users.ts](/home/pascal/src/caracarascore/apps/web/convex/users.ts)
 - A protected placeholder projects page in [apps/web/app/projects/page.tsx](/home/pascal/src/caracarascore/apps/web/app/projects/page.tsx)
 
+## Requirements
+
+- Node.js 24 (24.15 or newer). This is the version used for validation and on Vercel. `engines` also allows `^22.22.2` and `>=26`, but those are untested.
+- pnpm 12.15.0, pinned in `packageManager`. Global pnpm 9 and 10 cannot read the lockfile.
+
+Node 24 ships Corepack, which runs the pinned pnpm:
+
+```bash
+corepack pnpm install --frozen-lockfile
+```
+
+The root scripts (`dev`, `lint`, `typecheck`, `test`, `build`) run through Turborepo, which looks for a `pnpm` binary on `PATH`. Put Corepack's `pnpm` shim on `PATH` once, then use `pnpm` as usual:
+
+```bash
+corepack enable pnpm   # writes pnpm/pnpx shims next to the active Node 24 binary
+# or keep the shims elsewhere:
+# corepack enable pnpm --install-directory <directory already on PATH>
+```
+
+Vercel builds use the same route (see `apps/web/vercel.json`).
+
 ## Manual Clerk flow
 
 1. Create a Clerk application for the web app.

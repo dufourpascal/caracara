@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url"
 
-import { defineConfig } from "vitest/config"
+import { configDefaults, defineConfig } from "vitest/config"
 
 export default defineConfig({
   resolve: {
@@ -12,5 +12,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Vitest 4 stopped excluding dist/ by default; tsc emits compiled tests there.
+    exclude: [...configDefaults.exclude, "**/dist/**"],
   },
 })

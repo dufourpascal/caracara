@@ -23,6 +23,7 @@ import {
   isCliVersionSupported,
   normalizeSlug,
   oauthAuthorizeRequestSchema,
+  oauthTokenRequestSchema,
   phaseListResponseSchema,
   projectDetailResponseSchema,
   projectInputSchema,
@@ -915,5 +916,540 @@ describe("contract compatibility across schema library upgrades", () => {
         result: { ...submit, checkResults: submit.checkResults.slice(0, 20) },
       }).success
     ).toBe(true)
+  })
+})
+
+describe("string bounds measured in UTF-16 code units", () => {
+  // Zod 3 clients count UTF-16 code units. "😀" is one code point but two
+  // units, so these cases fail if a bound is measured in code points.
+  const units = (count: number) =>
+    "😀".repeat(Math.floor(count / 2)) + (count % 2 === 1 ? "a" : "")
+
+  const checkId = "00000000-0000-4000-8000-000000000001"
+  const check = { id: checkId, name: "Receipt", expectation: "Visible." }
+  const projectInput = { name: "Demo", description: "", projectPrompt: "" }
+  const suiteInput = { name: "Smoke", phaseIds: [] }
+  const project = {
+    id: "project_1",
+    ownerUserId: "user_1",
+    name: "Demo",
+    slug: "demo",
+    description: "",
+    projectPrompt: "",
+    createdAt: 1,
+    updatedAt: 2,
+  }
+  const phase = {
+    id: "phase_1",
+    projectId: "project_1",
+    name: "Setup",
+    order: 1,
+    createdAt: 1,
+    updatedAt: 2,
+  }
+  const orderedScenario = {
+    id: "scenario_1",
+    name: "Checkout",
+    slug: "checkout",
+    status: "active",
+    instructions: "Check out.",
+    evaluationChecks: [check],
+    phaseId: "phase_1",
+    phaseName: "Setup",
+    phaseOrder: 1,
+    dependencyIds: [],
+  }
+  const plan = (overrides: {
+    projectName?: string
+    projectPrompt?: string
+    phaseName?: string
+    scenario?: Record<string, unknown>
+    suiteName?: string
+  }) => ({
+    project: {
+      id: "project_1",
+      name: overrides.projectName ?? "Demo",
+      slug: "demo",
+      projectPrompt: overrides.projectPrompt ?? "",
+    },
+    phases: [
+      {
+        id: "phase_1",
+        name: overrides.phaseName ?? "Setup",
+        order: 1,
+        scenarios: [{ ...orderedScenario, ...overrides.scenario }],
+      },
+    ],
+    suite: { name: overrides.suiteName ?? "Smoke", slug: "smoke" },
+    unassignedScenarioCount: 0,
+  })
+  const startRequest = {
+    runId: "run_1",
+    result: {
+      scenarioId: "scenario_1",
+      scenarioSlug: "checkout",
+      scenarioName: "Checkout",
+      executionInstructions: "Check out.",
+      evaluationChecks: [check],
+      sequenceIndex: 0,
+      runnerType: "codex",
+      startedAt: 1,
+    },
+  }
+  const submitRequest = {
+    runId: "run_1",
+    result: {
+      scenarioId: "scenario_1",
+      status: "completed",
+      checkResults: [] as unknown[],
+      executionSummary: null,
+      failureDetail: null,
+      finishedAt: 2,
+    },
+  }
+  const scenarioResult = {
+    id: "result_1",
+    runId: "run_1",
+    scenarioId: "scenario_1",
+    scenarioSlug: "checkout",
+    scenarioName: "Checkout",
+    executionInstructions: "Check out.",
+    evaluationChecks: [check],
+    checkResults: [],
+    phaseId: "phase_1",
+    phaseName: "Setup",
+    phaseOrder: 1,
+    sequenceIndex: 0,
+    status: "completed",
+    runnerType: "codex",
+    executionSummary: null,
+    failureDetail: null,
+    startedAt: 1,
+    finishedAt: 2,
+    submittedAt: 3,
+  }
+
+  type BoundCase = {
+    label: string
+    max: number
+    path: PropertyKey[]
+    message?: string
+    trimmed?: boolean
+    parse: (value: string) => { success: boolean; error?: ZodError }
+  }
+  const projectNameMessage = "Project name must be 120 characters or fewer."
+  const descriptionMessage = "Description must be 1,500 characters or fewer."
+  const promptMessage = "Project prompt must be 12,000 characters or fewer."
+  const slugMessage = "Slug must be 120 characters or fewer."
+  const cases: BoundCase[] = [
+    {
+      label: "project input name",
+      max: 120,
+      path: ["name"],
+      message: projectNameMessage,
+      trimmed: true,
+      parse: (name) => projectInputSchema.safeParse({ ...projectInput, name }),
+    },
+    {
+      label: "project input slug",
+      max: 120,
+      path: ["slug"],
+      message: slugMessage,
+      trimmed: true,
+      parse: (slug) => projectInputSchema.safeParse({ ...projectInput, slug }),
+    },
+    {
+      label: "project input description",
+      max: 1_500,
+      path: ["description"],
+      message: descriptionMessage,
+      parse: (description) =>
+        projectInputSchema.safeParse({ ...projectInput, description }),
+    },
+    {
+      label: "project input prompt",
+      max: 12_000,
+      path: ["projectPrompt"],
+      message: promptMessage,
+      parse: (projectPrompt) =>
+        projectInputSchema.safeParse({ ...projectInput, projectPrompt }),
+    },
+    {
+      label: "suite input name",
+      max: 120,
+      path: ["name"],
+      message: "Suite name must be 120 characters or fewer.",
+      trimmed: true,
+      parse: (name) => suiteInputSchema.safeParse({ ...suiteInput, name }),
+    },
+    {
+      label: "suite input slug",
+      max: 120,
+      path: ["slug"],
+      message: slugMessage,
+      trimmed: true,
+      parse: (slug) => suiteInputSchema.safeParse({ ...suiteInput, slug }),
+    },
+    {
+      label: "project detail name",
+      max: 120,
+      path: ["project", "name"],
+      message: projectNameMessage,
+      trimmed: true,
+      parse: (name) =>
+        projectDetailResponseSchema.safeParse({
+          project: { ...project, name },
+        }),
+    },
+    {
+      label: "project detail description",
+      max: 1_500,
+      path: ["project", "description"],
+      message: descriptionMessage,
+      parse: (description) =>
+        projectDetailResponseSchema.safeParse({
+          project: { ...project, description },
+        }),
+    },
+    {
+      label: "phase list name",
+      max: 120,
+      path: ["phases", 0, "name"],
+      parse: (name) =>
+        phaseListResponseSchema.safeParse({ phases: [{ ...phase, name }] }),
+    },
+    {
+      label: "suite name",
+      max: 120,
+      path: ["name"],
+      parse: (name) =>
+        suiteSchema.safeParse({
+          id: "suite_1",
+          projectId: "project_1",
+          name,
+          slug: "smoke",
+          phaseIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+    },
+    {
+      label: "execution plan project name",
+      max: 120,
+      path: ["project", "name"],
+      message: projectNameMessage,
+      trimmed: true,
+      parse: (projectName) =>
+        executionPlanResponseSchema.safeParse(plan({ projectName })),
+    },
+    {
+      label: "execution plan project prompt",
+      max: 12_000,
+      path: ["project", "projectPrompt"],
+      message: promptMessage,
+      parse: (projectPrompt) =>
+        executionPlanResponseSchema.safeParse(plan({ projectPrompt })),
+    },
+    {
+      label: "execution plan suite name",
+      max: 120,
+      path: ["suite", "name"],
+      parse: (suiteName) =>
+        executionPlanResponseSchema.safeParse(plan({ suiteName })),
+    },
+    {
+      label: "execution plan phase name",
+      max: 120,
+      path: ["phases", 0, "name"],
+      parse: (phaseName) =>
+        executionPlanResponseSchema.safeParse(plan({ phaseName })),
+    },
+    ...(["name", "phaseName"] as const).map((field) => ({
+      label: `execution plan scenario ${field}`,
+      max: 120,
+      path: ["phases", 0, "scenarios", 0, field],
+      parse: (value: string) =>
+        executionPlanResponseSchema.safeParse(
+          plan({ scenario: { [field]: value } })
+        ),
+    })),
+    {
+      label: "execution plan scenario instructions",
+      max: 20_000,
+      path: ["phases", 0, "scenarios", 0, "instructions"],
+      parse: (instructions) =>
+        executionPlanResponseSchema.safeParse(
+          plan({ scenario: { instructions } })
+        ),
+    },
+    ...(["name", "expectation"] as const).map((field) => ({
+      label: `execution plan check ${field}`,
+      max: field === "name" ? 120 : 2_000,
+      path: ["phases", 0, "scenarios", 0, "evaluationChecks", 0, field],
+      parse: (value: string) =>
+        executionPlanResponseSchema.safeParse(
+          plan({
+            scenario: { evaluationChecks: [{ ...check, [field]: value }] },
+          })
+        ),
+    })),
+    {
+      label: "addPhase name",
+      max: 120,
+      path: ["name"],
+      trimmed: true,
+      parse: (name) =>
+        authoringRequestSchema.safeParse({ operation: "addPhase", name }),
+    },
+    {
+      label: "editPhase name",
+      max: 120,
+      path: ["name"],
+      trimmed: true,
+      parse: (name) =>
+        authoringRequestSchema.safeParse({
+          operation: "editPhase",
+          phaseId: "phase_1",
+          name,
+        }),
+    },
+    ...(["createScenario", "updateScenario"] as const).flatMap((operation) =>
+      (["name", "instructions"] as const).map((field) => ({
+        label: `${operation} ${field}`,
+        max: field === "name" ? 120 : 20_000,
+        path: [field],
+        trimmed: true,
+        parse: (value: string) =>
+          authoringRequestSchema.safeParse({
+            operation,
+            ...(operation === "createScenario"
+              ? { name: "Checkout", instructions: "Check out." }
+              : { scenarioId: "scenario_1" }),
+            [field]: value,
+          }),
+      }))
+    ),
+    ...(["name", "expectation"] as const).flatMap((field) => [
+      {
+        label: `addCheck ${field}`,
+        max: field === "name" ? 120 : 2_000,
+        path: ["check", field],
+        parse: (value: string) =>
+          authoringRequestSchema.safeParse({
+            operation: "addCheck",
+            scenarioId: "scenario_1",
+            check: { ...check, [field]: value },
+          }),
+      },
+      {
+        label: `updateCheck ${field}`,
+        max: field === "name" ? 120 : 2_000,
+        path: [field],
+        trimmed: true,
+        parse: (value: string) =>
+          authoringRequestSchema.safeParse({
+            operation: "updateCheck",
+            scenarioId: "scenario_1",
+            checkId,
+            [field]: value,
+          }),
+      },
+    ]),
+    ...(
+      [
+        ["scenarioName", 120],
+        ["executionInstructions", 20_000],
+        ["phaseName", 120],
+      ] as const
+    ).map(([field, max]) => ({
+      label: `start scenario ${field}`,
+      max,
+      path: ["result", field],
+      parse: (value: string) =>
+        startScenarioExecutionRequestSchema.safeParse({
+          ...startRequest,
+          result: { ...startRequest.result, [field]: value },
+        }),
+    })),
+    ...(["executionSummary", "failureDetail"] as const).map((field) => ({
+      label: `submit result ${field}`,
+      max: 20_000,
+      path: ["result", field],
+      parse: (value: string) =>
+        submitScenarioResultRequestSchema.safeParse({
+          ...submitRequest,
+          result: { ...submitRequest.result, [field]: value },
+        }),
+    })),
+    {
+      label: "submit result check evidence",
+      max: 2_000,
+      path: ["result", "checkResults", 0, "evidence"],
+      parse: (evidence) =>
+        submitScenarioResultRequestSchema.safeParse({
+          ...submitRequest,
+          result: {
+            ...submitRequest.result,
+            checkResults: [{ checkId, verdict: "passed", evidence }],
+          },
+        }),
+    },
+    ...(
+      [
+        ["scenarioName", 120],
+        ["executionInstructions", 20_000],
+        ["phaseName", 120],
+        ["executionSummary", 20_000],
+        ["failureDetail", 20_000],
+      ] as const
+    ).map(([field, max]) => ({
+      label: `scenario result ${field}`,
+      max,
+      path: [field],
+      parse: (value: string) =>
+        scenarioResultSchema.safeParse({ ...scenarioResult, [field]: value }),
+    })),
+    {
+      label: "run requested suite name",
+      max: 120,
+      path: [],
+      parse: (name) => runSchema.shape.requestedSuiteName.safeParse(name),
+    },
+  ]
+
+  it("accepts astral text at each exact UTF-16 limit, after trimming", () => {
+    for (const { label, max, parse, trimmed } of cases) {
+      expect(parse(units(max)).success, label).toBe(true)
+      if (trimmed) {
+        expect(parse(` ${units(max)}\t`).success, label).toBe(true)
+      }
+    }
+  })
+
+  it("rejects astral text one UTF-16 unit over each limit", () => {
+    for (const { label, max, path, message, parse } of cases) {
+      const parsed = parse(units(max + 1))
+      expect(parsed.success, label).toBe(false)
+      expect(parsed.error?.issues, label).toEqual([
+        expect.objectContaining({
+          code: "too_big",
+          maximum: max,
+          path,
+          ...(message === undefined ? {} : { message }),
+        }),
+      ])
+    }
+  })
+
+  it("keeps default messages and continues to later refinements", () => {
+    expect(
+      evaluationCheckSchema.safeParse({ ...check, name: units(121) }).error
+        ?.issues[0]?.message
+    ).toBe(
+      z.string().max(120).safeParse("a".repeat(121)).error?.issues[0]?.message
+    )
+
+    const blocked = checkResultSchema.safeParse({
+      checkId,
+      verdict: "blocked",
+      evidence: units(2_001),
+    })
+    expect(
+      blocked.error && Object.keys(z.flattenError(blocked.error).fieldErrors)
+    ).toEqual(["evidence", "blockedReason"])
+
+    const project = projectInputSchema.safeParse({
+      name: units(121),
+      description: units(1_501),
+      projectPrompt: units(12_001),
+    })
+    expect(project.error && z.flattenError(project.error)).toEqual({
+      formErrors: [],
+      fieldErrors: {
+        name: [projectNameMessage],
+        description: [descriptionMessage],
+        projectPrompt: [promptMessage],
+      },
+    })
+  })
+
+  it("keeps PKCE challenge and verifier bounds at 43 to 128 UTF-16 units", () => {
+    const redirectUri = "http://127.0.0.1:43123/callback"
+    const pkce = [
+      {
+        field: "codeChallenge",
+        parse: (codeChallenge: string) =>
+          oauthAuthorizeRequestSchema.safeParse({
+            clientId: "caracara-cli",
+            redirectUri,
+            state: "state",
+            codeChallenge,
+            codeChallengeMethod: "S256",
+          }),
+      },
+      {
+        field: "codeVerifier",
+        parse: (codeVerifier: string) =>
+          oauthTokenRequestSchema.safeParse({
+            grantType: "authorization_code",
+            clientId: "caracara-cli",
+            code: "code",
+            codeVerifier,
+            redirectUri,
+          }),
+      },
+    ]
+
+    for (const { field, parse } of pkce) {
+      // 21 emoji plus "a" is 43 units but only 22 code points.
+      for (const value of [units(43), units(128), "a".repeat(43)]) {
+        expect(parse(value).success, field).toBe(true)
+      }
+      expect(parse(units(42)).error?.issues, field).toEqual([
+        expect.objectContaining({
+          code: "too_small",
+          minimum: 43,
+          path: [field],
+        }),
+      ])
+      expect(parse(units(129)).error?.issues, field).toEqual([
+        expect.objectContaining({
+          code: "too_big",
+          maximum: 128,
+          path: [field],
+        }),
+      ])
+    }
+  })
+
+  it("only serves suite and project values that UTF-16 clients can parse", () => {
+    const suite = suiteInputSchema.parse({
+      name: ` ${units(120)} `,
+      phaseIds: [],
+    })
+    const input = projectInputSchema.parse({
+      name: units(120),
+      description: units(1_500),
+      projectPrompt: units(12_000),
+    })
+    const response = JSON.parse(
+      JSON.stringify(
+        plan({
+          projectName: input.name,
+          projectPrompt: input.projectPrompt,
+          suiteName: suite.name,
+        })
+      )
+    )
+
+    const parsed = executionPlanResponseSchema.parse(response)
+    expect(parsed.suite?.name.length).toBe(120)
+    expect(parsed.project.name.length).toBe(120)
+    expect(parsed.project.projectPrompt.length).toBe(12_000)
+    // The reported case: 61 emoji are 122 units, over the 120-unit limit.
+    expect(
+      suiteInputSchema.safeParse({ name: "😀".repeat(61), phaseIds: [] })
+        .success
+    ).toBe(false)
   })
 })

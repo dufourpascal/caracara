@@ -319,6 +319,37 @@ describe("config", () => {
     ])
   })
 
+  it("rejects a JSON __proto__ environment name beside valid ones", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-config-env-proto-"))
+    await mkdir(join(dir, ".caracara"), { recursive: true })
+    const configPath = join(dir, ".caracara", "config.json")
+    // JSON.parse creates an own "__proto__" key; an object literal would set
+    // the prototype instead, so the fixture stays raw JSON.
+    const raw = `{"environments":{"preview":"https://preview.example.com","__proto__":"https://proto.example.com"},"defaultEnvironment":"preview"}\n`
+    expect(Object.hasOwn(JSON.parse(raw).environments, "__proto__")).toBe(true)
+    await writeFile(configPath, raw, "utf8")
+
+    const error = await readLocalConfig(dir).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ZodError)
+    expect((error as ZodError).issues).toEqual([
+      expect.objectContaining({
+        code: "invalid_key",
+        path: ["environments", "__proto__"],
+      }),
+    ])
+
+    await expect(
+      writeLocalConfig(
+        {
+          environments: JSON.parse(raw).environments,
+          defaultEnvironment: "preview",
+        },
+        dir
+      )
+    ).rejects.toBeInstanceOf(ZodError)
+    expect(await readFile(configPath, "utf8")).toBe(raw)
+  })
+
   it("resolves the runner from overrides, env, local config, and defaults", () => {
     vi.stubEnv("CARACARA_RUNNER", "claude-code")
 

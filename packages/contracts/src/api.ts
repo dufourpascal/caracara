@@ -16,6 +16,7 @@ import {
   suiteSchema,
   targetUrlSchema,
 } from "./domain.js"
+import { maxUtf16Length, minUtf16Length } from "./string-length.js"
 
 export const apiErrorCodeSchema = z.enum([
   "unauthenticated",
@@ -43,7 +44,7 @@ export const oauthAuthorizeRequestSchema = z.object({
   clientId: z.string().min(1),
   redirectUri: z.url(),
   state: z.string().min(1),
-  codeChallenge: z.string().min(43).max(128),
+  codeChallenge: z.string().check(minUtf16Length(43), maxUtf16Length(128)),
   codeChallengeMethod: z.literal("S256"),
 })
 
@@ -51,7 +52,7 @@ export const oauthTokenRequestSchema = z.object({
   grantType: z.literal("authorization_code"),
   clientId: z.string().min(1),
   code: z.string().min(1),
-  codeVerifier: z.string().min(43).max(128),
+  codeVerifier: z.string().check(minUtf16Length(43), maxUtf16Length(128)),
   redirectUri: z.url(),
 })
 
@@ -137,13 +138,13 @@ export const singleScenarioResponseSchema = z.object({
 
 const addPhaseRequestSchema = z.object({
   operation: z.literal("addPhase"),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
 })
 
 const editPhaseRequestSchema = z.object({
   operation: z.literal("editPhase"),
   phaseId: z.string().min(1),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
 })
 
 const removePhaseRequestSchema = z.object({
@@ -159,9 +160,9 @@ const scenarioDependencyIdsSchema = z
 
 const createScenarioRequestSchema = z.object({
   operation: z.literal("createScenario"),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
   slug: slugSchema.optional(),
-  instructions: z.string().trim().min(1).max(20_000),
+  instructions: z.string().trim().min(1).check(maxUtf16Length(20_000)),
   phaseId: z.string().min(1).nullable().optional(),
   dependsOnScenarioIds: scenarioDependencyIdsSchema.default([]),
 })
@@ -169,10 +170,15 @@ const createScenarioRequestSchema = z.object({
 const updateScenarioRequestSchema = z.object({
   operation: z.literal("updateScenario"),
   scenarioId: z.string().min(1),
-  name: z.string().trim().min(1).max(120).optional(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)).optional(),
   slug: slugSchema.optional(),
   status: z.enum(["draft", "active"]).optional(),
-  instructions: z.string().trim().min(1).max(20_000).optional(),
+  instructions: z
+    .string()
+    .trim()
+    .min(1)
+    .check(maxUtf16Length(20_000))
+    .optional(),
   phaseId: z.string().min(1).nullable().optional(),
   dependsOnScenarioIds: scenarioDependencyIdsSchema.optional(),
 })
@@ -193,8 +199,8 @@ const updateCheckRequestSchema = z.object({
   operation: z.literal("updateCheck"),
   scenarioId: z.string().min(1),
   checkId: z.guid(),
-  name: z.string().trim().min(1).max(120).optional(),
-  expectation: z.string().trim().min(1).max(2_000).optional(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)).optional(),
+  expectation: z.string().trim().min(1).check(maxUtf16Length(2_000)).optional(),
 })
 
 export const authoringRequestSchema = z
@@ -357,11 +363,16 @@ export const startScenarioExecutionRequestSchema = z.object({
   result: z.object({
     scenarioId: z.string().min(1),
     scenarioSlug: slugSchema,
-    scenarioName: z.string().min(1).max(120),
-    executionInstructions: z.string().min(1).max(20_000),
+    scenarioName: z.string().min(1).check(maxUtf16Length(120)),
+    executionInstructions: z.string().min(1).check(maxUtf16Length(20_000)),
     evaluationChecks: scenarioSchema.shape.evaluationChecks.min(1),
     phaseId: z.string().nullable().optional(),
-    phaseName: z.string().min(1).max(120).nullable().optional(),
+    phaseName: z
+      .string()
+      .min(1)
+      .check(maxUtf16Length(120))
+      .nullable()
+      .optional(),
     phaseOrder: z.number().int().positive().nullable().optional(),
     sequenceIndex: z.number().int().nonnegative(),
     runnerType: runnerTypeSchema,

@@ -20,6 +20,34 @@ describe("project input validation", () => {
     })
   })
 
+  it("bounds project text in UTF-16 code units", () => {
+    // Each emoji is two UTF-16 units, so these values sit exactly at the limits.
+    const atLimit = {
+      name: "😀".repeat(60),
+      description: "😀".repeat(750),
+      projectPrompt: "😀".repeat(6_000),
+    }
+    expect(parseProjectInput(atLimit)).toEqual({ ...atLimit, slug: undefined })
+
+    let error: unknown
+    try {
+      parseProjectInput({
+        name: `${atLimit.name}a`,
+        description: `${atLimit.description}a`,
+        projectPrompt: `${atLimit.projectPrompt}a`,
+      })
+    } catch (caught) {
+      error = caught
+    }
+    expect(
+      (error as { data: { fieldErrors: unknown } }).data.fieldErrors
+    ).toEqual({
+      name: ["Project name must be 120 characters or fewer."],
+      description: ["Description must be 1,500 characters or fewer."],
+      projectPrompt: ["Project prompt must be 12,000 characters or fewer."],
+    })
+  })
+
   it("returns field-specific validation errors", () => {
     expect(() =>
       parseProjectInput({

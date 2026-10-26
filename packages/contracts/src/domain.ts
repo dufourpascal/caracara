@@ -6,6 +6,7 @@ import {
   PROJECT_PROMPT_MAX_LENGTH,
   SLUG_MAX_LENGTH,
 } from "./constants.js"
+import { maxUtf16Length } from "./string-length.js"
 
 export const scenarioStatusSchema = z.enum(["draft", "active"])
 export const runStatusSchema = z.enum([
@@ -39,7 +40,7 @@ export const timestampSchema = z.number().int().nonnegative()
 export const slugSchema = z
   .string()
   .min(1)
-  .max(SLUG_MAX_LENGTH)
+  .check(maxUtf16Length(SLUG_MAX_LENGTH))
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 export const environmentNameSchema = slugSchema
 export const targetUrlSchema = z
@@ -78,18 +79,27 @@ export const projectNameSchema = z
   .string()
   .trim()
   .min(1, "Project name is required.")
-  .max(PROJECT_NAME_MAX_LENGTH, "Project name must be 120 characters or fewer.")
+  .check(
+    maxUtf16Length(
+      PROJECT_NAME_MAX_LENGTH,
+      "Project name must be 120 characters or fewer."
+    )
+  )
 export const projectDescriptionSchema = z
   .string()
-  .max(
-    PROJECT_DESCRIPTION_MAX_LENGTH,
-    "Description must be 1,500 characters or fewer."
+  .check(
+    maxUtf16Length(
+      PROJECT_DESCRIPTION_MAX_LENGTH,
+      "Description must be 1,500 characters or fewer."
+    )
   )
 export const projectPromptSchema = z
   .string()
-  .max(
-    PROJECT_PROMPT_MAX_LENGTH,
-    "Project prompt must be 12,000 characters or fewer."
+  .check(
+    maxUtf16Length(
+      PROJECT_PROMPT_MAX_LENGTH,
+      "Project prompt must be 12,000 characters or fewer."
+    )
   )
 export const projectInputSchema = z.object({
   name: projectNameSchema,
@@ -99,17 +109,22 @@ export const projectInputSchema = z.object({
     z
       .string()
       .trim()
-      .max(SLUG_MAX_LENGTH, "Slug must be 120 characters or fewer.")
+      .check(
+        maxUtf16Length(SLUG_MAX_LENGTH, "Slug must be 120 characters or fewer.")
+      )
       .optional()
   ),
   description: projectDescriptionSchema,
   projectPrompt: projectPromptSchema,
 })
-export const nullableStringSchema = z.string().max(20_000).nullable()
+export const nullableStringSchema = z
+  .string()
+  .check(maxUtf16Length(20_000))
+  .nullable()
 export const evaluationCheckSchema = z.object({
   id: z.guid(),
-  name: z.string().min(1).max(120),
-  expectation: z.string().min(1).max(2_000),
+  name: z.string().min(1).check(maxUtf16Length(120)),
+  expectation: z.string().min(1).check(maxUtf16Length(2_000)),
 })
 export const BLOCKED_REASONS = [
   "blocked_by_check",
@@ -128,7 +143,7 @@ export const checkResultSchema = z
   .object({
     checkId: z.guid(),
     verdict: checkVerdictSchema,
-    evidence: z.string().min(1).max(2_000),
+    evidence: z.string().min(1).check(maxUtf16Length(2_000)),
     blockedReason: blockedReasonSchema.nullable().optional(),
   })
   .superRefine((result, context) => {
@@ -166,7 +181,7 @@ export const projectSchema = z.object({
 export const phaseSchema = z.object({
   id: z.string(),
   projectId: z.string(),
-  name: z.string().min(1).max(120),
+  name: z.string().min(1).check(maxUtf16Length(120)),
   order: z.number().int().positive(),
   scenarioCount: z.number().int().nonnegative().optional(),
   createdAt: timestampSchema,
@@ -178,14 +193,16 @@ export const suiteInputSchema = z.object({
     .string()
     .trim()
     .min(1, "Suite name is required.")
-    .max(120, "Suite name must be 120 characters or fewer."),
+    .check(maxUtf16Length(120, "Suite name must be 120 characters or fewer.")),
   slug: z.preprocess(
     (value) =>
       typeof value === "string" && value.trim() === "" ? undefined : value,
     z
       .string()
       .trim()
-      .max(SLUG_MAX_LENGTH, "Slug must be 120 characters or fewer.")
+      .check(
+        maxUtf16Length(SLUG_MAX_LENGTH, "Slug must be 120 characters or fewer.")
+      )
       .optional()
   ),
   phaseIds: z
@@ -198,7 +215,7 @@ export const suiteInputSchema = z.object({
 export const suiteSchema = z.object({
   id: z.string(),
   projectId: z.string(),
-  name: z.string().min(1).max(120),
+  name: z.string().min(1).check(maxUtf16Length(120)),
   slug: slugSchema,
   phaseIds: z.array(z.string()),
   createdAt: timestampSchema,
@@ -214,13 +231,13 @@ export const suitePhaseSnapshotSchema = phaseSchema.pick({
 export const scenarioSchema = z.object({
   id: z.string(),
   projectId: z.string(),
-  name: z.string().min(1).max(120),
+  name: z.string().min(1).check(maxUtf16Length(120)),
   slug: slugSchema,
   status: scenarioStatusSchema,
-  instructions: z.string().min(1).max(20_000),
+  instructions: z.string().min(1).check(maxUtf16Length(20_000)),
   evaluationChecks: z.array(evaluationCheckSchema).max(20),
   phaseId: z.string().nullable().optional(),
-  phaseName: z.string().min(1).max(120).nullable().optional(),
+  phaseName: z.string().min(1).check(maxUtf16Length(120)).nullable().optional(),
   phaseOrder: z.number().int().positive().nullable().optional(),
   updatedAt: timestampSchema,
 })
@@ -243,7 +260,12 @@ export const runSchema = z.object({
   requestedScenarioSlug: slugSchema.nullable(),
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
   requestedSuiteSlug: slugSchema.nullable().optional(),
-  requestedSuiteName: z.string().min(1).max(120).nullable().optional(),
+  requestedSuiteName: z
+    .string()
+    .min(1)
+    .check(maxUtf16Length(120))
+    .nullable()
+    .optional(),
   requestedSuitePhases: z.array(suitePhaseSnapshotSchema).optional(),
   runnerType: runnerTypeSchema.nullable(),
   evidencePolicy: evidencePolicySchema,
@@ -263,12 +285,12 @@ export const scenarioResultSchema = z.object({
   runId: z.string(),
   scenarioId: z.string().min(1),
   scenarioSlug: slugSchema,
-  scenarioName: z.string().min(1).max(120),
-  executionInstructions: z.string().min(1).max(20_000),
+  scenarioName: z.string().min(1).check(maxUtf16Length(120)),
+  executionInstructions: z.string().min(1).check(maxUtf16Length(20_000)),
   evaluationChecks: z.array(evaluationCheckSchema).max(20),
   checkResults: z.array(checkResultSchema).max(20),
   phaseId: z.string().nullable().optional(),
-  phaseName: z.string().min(1).max(120).nullable().optional(),
+  phaseName: z.string().min(1).check(maxUtf16Length(120)).nullable().optional(),
   phaseOrder: z.number().int().positive().nullable().optional(),
   sequenceIndex: z.number().int().nonnegative(),
   status: scenarioResultStatusSchema,

@@ -199,6 +199,46 @@ describe("api-route helpers", () => {
     expect(updateArgs).not.toHaveProperty("dependsOnScenarioIds")
   })
 
+  it("bounds request strings in UTF-16 code units like published CLIs", async () => {
+    // 60 emoji are 120 UTF-16 units but only 60 code points.
+    const atLimit = "😀".repeat(60)
+    const request = (name: string) =>
+      new Request("https://caracara.test/api", {
+        method: "POST",
+        body: JSON.stringify({ operation: "addPhase", name }),
+      })
+
+    await expect(
+      parseJsonBody(request(atLimit), routeSchemas.authoringRequestSchema)
+    ).resolves.toEqual({ operation: "addPhase", name: atLimit })
+
+    const error = await parseJsonBody(
+      request(`${atLimit}a`),
+      routeSchemas.authoringRequestSchema
+    ).catch((caught: unknown) => caught)
+    const response = handleApiError(error)
+    expect(response.status).toBe(400)
+    const body = await response.json()
+    expect(JSON.parse(body.details.reason)).toEqual([
+      expect.objectContaining({
+        code: "too_big",
+        maximum: 120,
+        path: ["name"],
+      }),
+    ])
+
+    // 21 emoji plus "a" is a 43-unit PKCE verifier, which Zod 3 accepted.
+    expect(
+      routeSchemas.oauthTokenRequestSchema.parse({
+        grantType: "authorization_code",
+        clientId: "caracara-cli",
+        code: "code",
+        codeVerifier: `${"😀".repeat(21)}a`,
+        redirectUri: "http://127.0.0.1:43123/callback",
+      }).codeVerifier
+    ).toHaveLength(43)
+  })
+
   it("maps invalid request bodies to validation errors with issue details", async () => {
     const error = await parseJsonBody(
       new Request("https://caracara.test/api", {

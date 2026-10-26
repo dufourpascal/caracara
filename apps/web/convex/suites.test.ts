@@ -57,4 +57,21 @@ describe("suite input validation", () => {
     })
     expect(convexToJson(fieldErrors as never)).toEqual(fieldErrors)
   })
+
+  it("bounds suite names in UTF-16 code units", () => {
+    // 60 emoji are 120 UTF-16 units; 61 are 122 and must not be stored.
+    expect(
+      parseSuiteInput({ name: "😀".repeat(60), phaseIds: [] }).name
+    ).toHaveLength(120)
+
+    let error: unknown
+    try {
+      parseSuiteInput({ name: "😀".repeat(61), phaseIds: [] })
+    } catch (caught) {
+      error = caught
+    }
+    expect(
+      (error as { data: { fieldErrors: unknown } }).data.fieldErrors
+    ).toEqual({ name: ["Suite name must be 120 characters or fewer."] })
+  })
 })

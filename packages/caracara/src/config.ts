@@ -46,6 +46,29 @@ const modelReasoningEffortSchema = z.enum([
   "max",
 ])
 
+// Zod 4 records drop an own "__proto__" key (which JSON.parse creates) without
+// validating it, so reject it like any other invalid environment name.
+const environmentsSchema = z.preprocess(
+  (value, ctx) => {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      Object.hasOwn(value, "__proto__")
+    ) {
+      ctx.addIssue({
+        code: "invalid_key",
+        origin: "record",
+        issues:
+          environmentNameSchema.safeParse("__proto__").error?.issues ?? [],
+        input: "__proto__",
+        path: ["__proto__"],
+      })
+    }
+    return value
+  },
+  z.record(environmentNameSchema, targetUrlSchema)
+)
+
 const localConfigSchema = z
   .strictObject({
     apiBaseUrl: z.url().optional(),
@@ -53,7 +76,7 @@ const localConfigSchema = z
     runner: runnerTypeSchema.optional(),
     model: z.string().trim().min(1).optional(),
     model_reasoning_effort: modelReasoningEffortSchema.optional(),
-    environments: z.record(environmentNameSchema, targetUrlSchema).optional(),
+    environments: environmentsSchema.optional(),
     defaultEnvironment: environmentNameSchema.optional(),
   })
   .superRefine((config, ctx) => {

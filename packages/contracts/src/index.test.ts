@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest"
+import { z, ZodError } from "zod"
 
 import birdNames from "./birds-safe.json" with { type: "json" }
 
 import {
   API_VERSION,
   MIN_SUPPORTED_CLI_VERSION,
+  apiErrorSchema,
   authoringRequestSchema,
   authoringResponseSchema,
   authTokenResponseSchema,
   cliConfigSchema,
   checkResultSchema,
   createRunRequestSchema,
+  createRunResponseSchema,
+  evaluationCheckSchema,
   executionPlanResponseSchema,
   finalizeRunRequestSchema,
   finalizeRunResponseSchema,
@@ -18,16 +22,22 @@ import {
   formatRunName,
   isCliVersionSupported,
   normalizeSlug,
+  oauthAuthorizeRequestSchema,
   phaseListResponseSchema,
+  projectDetailResponseSchema,
   projectInputSchema,
   projectSchema,
   phaseSchema,
   runSchema,
   scenarioResultSchema,
+  startScenarioExecutionRequestSchema,
+  submitScenarioResultRequestSchema,
   suiteInputSchema,
   suiteSchema,
   targetUrlSchema,
+  timestampSchema,
   versionMismatchErrorSchema,
+  whoAmIResponseSchema,
 } from "./index.js"
 
 describe("contracts", () => {
@@ -434,7 +444,7 @@ describe("contracts", () => {
 
     expect(invalid.success).toBe(false)
     if (!invalid.success) {
-      expect(invalid.error.flatten().fieldErrors).toMatchObject({
+      expect(z.flattenError(invalid.error).fieldErrors).toMatchObject({
         name: ["Project name is required."],
         description: ["Description must be 1,500 characters or fewer."],
         projectPrompt: ["Project prompt must be 12,000 characters or fewer."],
@@ -522,5 +532,388 @@ describe("contracts", () => {
         },
       }).run.passRate
     ).toBe(80)
+  })
+})
+
+describe("contract compatibility across schema library upgrades", () => {
+  const check = {
+    id: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b",
+    name: "Receipt",
+    expectation: "The receipt is visible.",
+  }
+
+  it("accepts any hyphenated hex GUID as a check or attempt ID", () => {
+    for (const id of [
+      "00000000-0000-0000-0000-000000000000",
+      "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "12345678-1234-0234-0234-123456789abc",
+      "12345678-1234-1234-c234-123456789abc",
+      "6F1C2A3B-4D5E-4F60-8A7B-9C0D1E2F3A4B",
+    ]) {
+      expect(evaluationCheckSchema.parse({ ...check, id }).id).toBe(id)
+      expect(
+        authoringRequestSchema.parse({
+          operation: "updateCheck",
+          scenarioId: "scenario_1",
+          checkId: id,
+          name: "Renamed",
+        })
+      ).toMatchObject({ checkId: id })
+      expect(
+        finalizeRunRequestSchema.parse({
+          status: "completed",
+          finishedAt: 1,
+          finalizationAttemptId: id,
+        }).finalizationAttemptId
+      ).toBe(id)
+    }
+
+    const legacyId = "12345678-1234-0234-0234-123456789abc"
+    expect(
+      executionPlanResponseSchema.parse({
+        project: {
+          id: "project_1",
+          name: "Demo",
+          slug: "demo",
+          projectPrompt: "",
+        },
+        phases: [
+          {
+            id: "phase_1",
+            name: "Setup",
+            order: 1,
+            scenarios: [
+              {
+                id: "scenario_1",
+                name: "Login",
+                slug: "login",
+                status: "active",
+                instructions: "Sign in.",
+                evaluationChecks: [{ ...check, id: legacyId }],
+                dependencyIds: [],
+              },
+            ],
+          },
+        ],
+        unassignedScenarioCount: 0,
+      }).phases[0]?.scenarios[0]?.evaluationChecks[0]?.id
+    ).toBe(legacyId)
+
+    for (const id of [
+      "6f1c2a3b4d5e4f608a7b9c0d1e2f3a4b",
+      "{6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b}",
+      "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4",
+      "not-a-uuid",
+    ]) {
+      expect(evaluationCheckSchema.safeParse({ ...check, id }).success).toBe(
+        false
+      )
+    }
+  })
+
+  it("defaults omitted createScenario dependencies without inventing updateScenario ones", () => {
+    const base = {
+      operation: "createScenario",
+      name: "Login",
+      instructions: "Sign in.",
+    }
+
+    expect(authoringRequestSchema.parse(base)).toEqual({
+      ...base,
+      dependsOnScenarioIds: [],
+    })
+    expect(
+      authoringRequestSchema.parse({ ...base, dependsOnScenarioIds: undefined })
+    ).toMatchObject({ dependsOnScenarioIds: [] })
+    expect(
+      authoringRequestSchema.safeParse({ ...base, dependsOnScenarioIds: null })
+        .success
+    ).toBe(false)
+
+    const duplicate = authoringRequestSchema.safeParse({
+      ...base,
+      dependsOnScenarioIds: ["scenario_1", "scenario_1"],
+    })
+    expect(duplicate.success).toBe(false)
+    if (!duplicate.success) {
+      expect(z.flattenError(duplicate.error).fieldErrors).toEqual({
+        dependsOnScenarioIds: ["Dependency IDs must be unique."],
+      })
+    }
+
+    const unknownOperation = authoringRequestSchema.safeParse({
+      operation: "deleteProject",
+    })
+    expect(unknownOperation.success).toBe(false)
+    if (!unknownOperation.success) {
+      expect(
+        Object.keys(z.flattenError(unknownOperation.error).fieldErrors)
+      ).toEqual(["operation"])
+    }
+
+    const update = authoringRequestSchema.parse({
+      operation: "updateScenario",
+      scenarioId: "scenario_1",
+      status: "active",
+    })
+    expect(Object.keys(update).sort()).toEqual([
+      "operation",
+      "scenarioId",
+      "status",
+    ])
+  })
+
+  it("keeps blank and omitted project slugs distinguishable only as undefined", () => {
+    const project = { name: "Demo", description: "", projectPrompt: "" }
+
+    expect(Object.hasOwn(projectInputSchema.parse(project), "slug")).toBe(false)
+    for (const slug of ["", "   ", undefined]) {
+      const parsed = projectInputSchema.parse({ ...project, slug })
+      expect(Object.hasOwn(parsed, "slug")).toBe(true)
+      expect(parsed.slug).toBeUndefined()
+    }
+    expect(
+      projectInputSchema.parse({ ...project, slug: " My Slug " }).slug
+    ).toBe("My Slug")
+    expect(
+      projectInputSchema.safeParse({ ...project, slug: null }).success
+    ).toBe(false)
+  })
+
+  it("reports field errors per field and form errors for cross-field rules", () => {
+    const suite = suiteInputSchema.safeParse({
+      name: "   ",
+      phaseIds: ["phase_1", "phase_1"],
+    })
+    expect(suite.success).toBe(false)
+    if (!suite.success) {
+      expect(z.flattenError(suite.error)).toEqual({
+        formErrors: [],
+        fieldErrors: {
+          name: ["Suite name is required."],
+          phaseIds: ["Suite phase IDs must be unique."],
+        },
+      })
+    }
+
+    const blocked = checkResultSchema.safeParse({
+      checkId: check.id,
+      verdict: "blocked",
+      evidence: "",
+    })
+    expect(blocked.success).toBe(false)
+    if (!blocked.success) {
+      expect(
+        Object.keys(z.flattenError(blocked.error).fieldErrors).sort()
+      ).toEqual(["blockedReason", "evidence"])
+    }
+
+    const run = createRunRequestSchema.safeParse({
+      mode: "single",
+      runnerType: "codex",
+      environment: "preview",
+      startedAt: 1,
+    })
+    expect(run.success).toBe(false)
+    if (!run.success) {
+      expect(z.flattenError(run.error)).toEqual({
+        formErrors: [
+          "Environment and target URL must be provided together.",
+          "Run mode and requested target do not match.",
+        ],
+        fieldErrors: {},
+      })
+      expect(run.error).toBeInstanceOf(ZodError)
+    }
+  })
+
+  it("accepts integer millisecond timestamps and rejects non-integers", () => {
+    expect(timestampSchema.parse(0)).toBe(0)
+    expect(timestampSchema.parse(Date.UTC(2026, 9, 26))).toBe(
+      Date.UTC(2026, 9, 26)
+    )
+    expect(timestampSchema.parse(Number.MAX_SAFE_INTEGER)).toBe(
+      Number.MAX_SAFE_INTEGER
+    )
+    for (const value of [-1, 1.5, Number.NaN, Infinity, "1", null]) {
+      expect(timestampSchema.safeParse(value).success).toBe(false)
+    }
+    // Integers beyond 2^53 - 1 cannot be represented exactly, so they are rejected.
+    expect(timestampSchema.safeParse(2 ** 53).success).toBe(false)
+  })
+
+  it("validates URLs and emails without narrowing accepted values", () => {
+    const authorize = {
+      clientId: "caracara-cli",
+      state: "state",
+      codeChallenge: "a".repeat(43),
+      codeChallengeMethod: "S256",
+    }
+
+    for (const redirectUri of [
+      "http://127.0.0.1:43123/callback",
+      "http://localhost:43123/callback",
+      "http://[::1]:43123/callback",
+    ]) {
+      expect(
+        oauthAuthorizeRequestSchema.parse({ ...authorize, redirectUri })
+          .redirectUri
+      ).toBe(redirectUri)
+    }
+    for (const redirectUri of ["not a url", "", "/callback"]) {
+      expect(
+        oauthAuthorizeRequestSchema.safeParse({ ...authorize, redirectUri })
+          .success
+      ).toBe(false)
+    }
+
+    for (const email of ["a@b.co", "first.last+tag@example.com", null]) {
+      expect(
+        whoAmIResponseSchema.parse({ userId: "user_1", email }).email
+      ).toBe(email)
+    }
+    for (const email of ["a..b@example.com", "a@localhost", "not-an-email"]) {
+      expect(
+        whoAmIResponseSchema.safeParse({ userId: "user_1", email }).success
+      ).toBe(false)
+    }
+
+    expect(targetUrlSchema.parse("HTTPS://Example.COM")).toBe(
+      "https://example.com/"
+    )
+    for (const url of ["javascript:alert(1)", "ftp://example.com"]) {
+      expect(() => targetUrlSchema.parse(url)).toThrow("HTTP or HTTPS")
+    }
+  })
+
+  it("strips unknown keys from API payloads and keeps response shapes", () => {
+    const project = {
+      id: "project_1",
+      ownerUserId: "user_1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 2,
+    }
+
+    expect(
+      projectDetailResponseSchema.parse({
+        project: { ...project, _creationTime: 1, internal: true },
+      })
+    ).toEqual({ project })
+    expect(
+      cliConfigSchema.parse({
+        apiBaseUrl: "https://example.com",
+        accessToken: null,
+        expiresAt: null,
+        selectedProjectSlug: null,
+        userEmail: null,
+        legacyField: 1,
+      })
+    ).not.toHaveProperty("legacyField")
+
+    expect(
+      createRunResponseSchema.parse({
+        run: {
+          id: "run_1",
+          name: "brave-owl-20261026-120000",
+          status: "running",
+          mode: "all",
+          runnerType: "codex",
+          evidencePolicy: "failed_check_screenshot",
+          environment: "preview",
+          targetUrl: "https://Preview.example.com",
+          requestedScenarioSlug: null,
+          startedAt: 1,
+        },
+        evidenceUploadUrl: "https://upload.example.com/evidence",
+      })
+    ).toEqual({
+      run: {
+        id: "run_1",
+        name: "brave-owl-20261026-120000",
+        status: "running",
+        mode: "all",
+        runnerType: "codex",
+        evidencePolicy: "failed_check_screenshot",
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+        requestedScenarioSlug: null,
+        startedAt: 1,
+      },
+      evidenceUploadUrl: "https://upload.example.com/evidence",
+    })
+
+    expect(
+      apiErrorSchema.parse({
+        code: "validation_error",
+        message: "Invalid request payload.",
+        details: { reason: "x", nested: { ok: true } },
+      })
+    ).toEqual({
+      code: "validation_error",
+      message: "Invalid request payload.",
+      details: { reason: "x", nested: { ok: true } },
+    })
+    expect(
+      apiErrorSchema.safeParse({ code: "conflict", message: "x", details: [] })
+        .success
+    ).toBe(false)
+  })
+
+  it("enforces scenario execution collection limits", () => {
+    const result = {
+      scenarioId: "scenario_1",
+      scenarioSlug: "login",
+      scenarioName: "Login",
+      executionInstructions: "Sign in.",
+      evaluationChecks: [check],
+      sequenceIndex: 0,
+      runnerType: "codex",
+      startedAt: 1,
+    }
+
+    expect(
+      startScenarioExecutionRequestSchema.safeParse({ runId: "run_1", result })
+        .success
+    ).toBe(true)
+    for (const evaluationChecks of [
+      [],
+      Array.from({ length: 21 }, () => check),
+    ]) {
+      expect(
+        startScenarioExecutionRequestSchema.safeParse({
+          runId: "run_1",
+          result: { ...result, evaluationChecks },
+        }).success
+      ).toBe(false)
+    }
+
+    const submit = {
+      scenarioId: "scenario_1",
+      status: "completed",
+      checkResults: Array.from({ length: 21 }, () => ({
+        checkId: check.id,
+        verdict: "passed",
+        evidence: "Seen.",
+      })),
+      executionSummary: null,
+      failureDetail: null,
+      finishedAt: 2,
+    }
+    expect(
+      submitScenarioResultRequestSchema.safeParse({
+        runId: "run_1",
+        result: submit,
+      }).success
+    ).toBe(false)
+    expect(
+      submitScenarioResultRequestSchema.safeParse({
+        runId: "run_1",
+        result: { ...submit, checkResults: submit.checkResults.slice(0, 20) },
+      }).success
+    ).toBe(true)
   })
 })

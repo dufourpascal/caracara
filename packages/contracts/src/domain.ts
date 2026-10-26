@@ -50,7 +50,7 @@ export const targetUrlSchema = z
       url = new URL(value)
     } catch {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Target URL must be a valid URL.",
       })
       return
@@ -58,13 +58,13 @@ export const targetUrlSchema = z
 
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Target URL must use HTTP or HTTPS.",
       })
     }
     if (url.username !== "" || url.password !== "") {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Target URL must not contain credentials.",
       })
     }
@@ -107,7 +107,7 @@ export const projectInputSchema = z.object({
 })
 export const nullableStringSchema = z.string().max(20_000).nullable()
 export const evaluationCheckSchema = z.object({
-  id: z.string().uuid(),
+  id: z.guid(),
   name: z.string().min(1).max(120),
   expectation: z.string().min(1).max(2_000),
 })
@@ -126,7 +126,7 @@ export const checkVerdictSchema = z.enum([
 ])
 export const checkResultSchema = z
   .object({
-    checkId: z.string().uuid(),
+    checkId: z.guid(),
     verdict: checkVerdictSchema,
     evidence: z.string().min(1).max(2_000),
     blockedReason: blockedReasonSchema.nullable().optional(),
@@ -134,7 +134,7 @@ export const checkResultSchema = z
   .superRefine((result, context) => {
     if (result.verdict === "blocked" && !result.blockedReason) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Blocked checks require a structured reason.",
         path: ["blockedReason"],
       })
@@ -145,7 +145,7 @@ export const checkResultSchema = z
       result.blockedReason !== null
     ) {
       context.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Only blocked checks can include a blocked reason.",
         path: ["blockedReason"],
       })
@@ -191,7 +191,7 @@ export const suiteInputSchema = z.object({
   phaseIds: z
     .array(z.string().min(1))
     .refine((ids) => new Set(ids).size === ids.length, {
-      message: "Suite phase IDs must be unique.",
+      error: "Suite phase IDs must be unique.",
     }),
 })
 

@@ -1,3 +1,4 @@
+import { convexToJson } from "convex/values"
 import { describe, expect, it } from "vitest"
 
 import { parseSuiteInput } from "./suites"
@@ -28,5 +29,32 @@ describe("suite input validation", () => {
         phaseIds: ["phase-1", "phase-1"],
       })
     ).toThrow()
+  })
+
+  it("returns field-specific errors as serializable string arrays", () => {
+    let error: unknown
+    try {
+      parseSuiteInput({
+        name: " ",
+        slug: "s".repeat(121),
+        phaseIds: ["phase-1", "phase-1"],
+      })
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toMatchObject({
+      data: {
+        code: "validation_error",
+        message: "Check the highlighted suite fields.",
+      },
+    })
+    const { fieldErrors } = (error as { data: { fieldErrors: unknown } }).data
+    expect(fieldErrors).toEqual({
+      name: ["Suite name is required."],
+      slug: ["Slug must be 120 characters or fewer."],
+      phaseIds: ["Suite phase IDs must be unique."],
+    })
+    expect(convexToJson(fieldErrors as never)).toEqual(fieldErrors)
   })
 })

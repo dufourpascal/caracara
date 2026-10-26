@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values"
 import { projectInputSchema } from "@workspace/contracts"
+import { z } from "zod"
 
 import { mutation, query } from "./_generated/server"
 import {
@@ -24,7 +25,7 @@ export function parseProjectInput(input: {
     throw new ConvexError({
       code: "validation_error",
       message: "Check the highlighted project fields.",
-      fieldErrors: parsed.error.flatten().fieldErrors,
+      fieldErrors: z.flattenError(parsed.error).fieldErrors,
     })
   }
 

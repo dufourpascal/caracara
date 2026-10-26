@@ -30,28 +30,32 @@ describe("project input validation", () => {
       })
     ).toThrow()
 
+    let error: unknown
     try {
       parseProjectInput({
         name: "   ",
-        slug: "project",
+        slug: "s".repeat(121),
         description: "d".repeat(1_501),
         projectPrompt: "p".repeat(12_001),
       })
-    } catch (error) {
-      expect(error).toMatchObject({
-        data: {
-          code: "validation_error",
-          message: "Check the highlighted project fields.",
-          fieldErrors: {
-            name: ["Project name is required."],
-            description: ["Description must be 1,500 characters or fewer."],
-            projectPrompt: [
-              "Project prompt must be 12,000 characters or fewer.",
-            ],
-          },
-        },
-      })
+    } catch (caught) {
+      error = caught
     }
+
+    expect(error).toMatchObject({
+      data: {
+        code: "validation_error",
+        message: "Check the highlighted project fields.",
+      },
+    })
+    expect(
+      (error as { data: { fieldErrors: unknown } }).data.fieldErrors
+    ).toEqual({
+      name: ["Project name is required."],
+      slug: ["Slug must be 120 characters or fewer."],
+      description: ["Description must be 1,500 characters or fewer."],
+      projectPrompt: ["Project prompt must be 12,000 characters or fewer."],
+    })
   })
 })
 

@@ -47,8 +47,8 @@ const modelReasoningEffortSchema = z.enum([
 ])
 
 const localConfigSchema = z
-  .object({
-    apiBaseUrl: z.string().url().optional(),
+  .strictObject({
+    apiBaseUrl: z.url().optional(),
     selectedProjectSlug: slugSchema.nullable().optional(),
     runner: runnerTypeSchema.optional(),
     model: z.string().trim().min(1).optional(),
@@ -56,7 +56,6 @@ const localConfigSchema = z
     environments: z.record(environmentNameSchema, targetUrlSchema).optional(),
     defaultEnvironment: environmentNameSchema.optional(),
   })
-  .strict()
   .superRefine((config, ctx) => {
     if (
       config.defaultEnvironment &&
@@ -64,7 +63,7 @@ const localConfigSchema = z
         !Object.hasOwn(config.environments, config.defaultEnvironment))
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["defaultEnvironment"],
         message: `Default environment ${JSON.stringify(config.defaultEnvironment)} is not configured.`,
       })

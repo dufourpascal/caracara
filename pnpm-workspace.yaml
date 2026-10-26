@@ -1,3 +1,11 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# pnpm 11+ runs no dependency build scripts unless they are listed here, and
+# fails the install (strictDepBuilds) when an unlisted package has one.
+allowBuilds:
+  # The postinstall only validates the binary and swaps the JS bin shim for it.
+  # esbuild loads its native binary from the @esbuild/<platform> optional
+  # dependency without the script.
+  esbuild: false

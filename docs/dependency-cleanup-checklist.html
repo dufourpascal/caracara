@@ -55,7 +55,7 @@
   <li><input type="checkbox" id="p2-themes"><label for="p2-themes">Optional: internalize <code>next-themes</code> (~80 LOC)</label></li>
   <li><input type="checkbox" id="p2-testdeps"><label for="p2-testdeps">Move vitest, jsdom, testing-library from root into the workspaces using them</label></li>
   <li><input type="checkbox" id="p2-jsdom"><label for="p2-jsdom">Scope jsdom to the 2 component tests, default web tests to node</label></li>
-  <li><input type="checkbox" id="p2-pnpm"><label for="p2-pnpm">Bump <code>packageManager</code> to pnpm 10, add <code>catalog:</code> for shared versions, align Node minimum</label></li>
+  <li><input type="checkbox" id="p2-pnpm"><label for="p2-pnpm">Add <code>catalog:</code> in <code>pnpm-workspace.yaml</code> for shared versions, align Node minimum across manifests</label></li>
 </ul>
 
 <h2>Phase 3 · Long-term <small>product decisions</small></h2>
@@ -88,6 +88,7 @@
   });
   document.getElementById("reset").onclick = () => {
     boxes.forEach(b => b.checked = false);
+    for (const id in saved) delete saved[id];
     localStorage.removeItem(key);
     paint();
   };

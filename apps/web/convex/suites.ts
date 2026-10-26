@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values"
 import { suiteInputSchema } from "@workspace/contracts"
+import { z } from "zod"
 
 import type { Id } from "./_generated/dataModel"
 import type { QueryCtx, MutationCtx } from "./_generated/server"
@@ -29,7 +30,7 @@ export function parseSuiteInput(input: {
     throw new ConvexError({
       code: "validation_error",
       message: "Check the highlighted suite fields.",
-      fieldErrors: parsed.error.flatten().fieldErrors,
+      fieldErrors: z.flattenError(parsed.error).fieldErrors,
     })
   }
 

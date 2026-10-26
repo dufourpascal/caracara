@@ -10,6 +10,7 @@ import {
   projectInputSchema,
   type ProjectInput,
 } from "@workspace/contracts"
+import { z } from "zod"
 
 import { getErrorData, getErrorMessage } from "@/lib/errors"
 import { Button } from "@workspace/ui/components/button"
@@ -86,7 +87,7 @@ export function ProjectCreateForm({
 
         const parsed = projectInputSchema.safeParse(form)
         if (!parsed.success) {
-          const fieldErrors = parsed.error.flatten().fieldErrors
+          const fieldErrors = z.flattenError(parsed.error).fieldErrors
           setErrors({
             name: fieldErrors.name?.[0],
             slug: fieldErrors.slug?.[0],

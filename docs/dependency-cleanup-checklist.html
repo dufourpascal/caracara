@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dependency cleanup checklist</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1a1a1a; --muted: #666; --line: #ddd; --done: #2a7a3b; --bg: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e6e6e6; --muted: #9a9a9a; --line: #333; --done: #6fcf84; --bg: #121212; } }
+  body { font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.05rem; margin: 1.75rem 0 .5rem; display: flex; align-items: baseline; gap: .6rem; }
+  h2 small { color: var(--muted); font-weight: normal; font-size: .85rem; }
+  .sub { color: var(--muted); margin: 0 0 1rem; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { display: flex; gap: .6rem; align-items: baseline; padding: .3rem 0; border-top: 1px solid var(--line); }
+  li:last-child { border-bottom: 1px solid var(--line); }
+  li input { margin: 0; flex: none; }
+  li label { flex: 1; cursor: pointer; }
+  li input:checked + label { color: var(--muted); text-decoration: line-through; }
+  code { font-size: .9em; }
+  .note { color: var(--muted); font-size: .85rem; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: .5rem 0 1rem; }
+  .bar div { height: 100%; width: 0; background: var(--done); transition: width .2s; }
+  footer { margin-top: 2rem; color: var(--muted); font-size: .8rem; }
+  button { font: inherit; font-size: .8rem; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 4px; padding: .1rem .5rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Dependency cleanup</h1>
+<p class="sub">caracarascore · audit 2026-10-26 · ticks are saved in this browser</p>
+<div class="bar"><div id="progress"></div></div>
+
+<h2>Phase 1 · Near-term <small>no replacement code</small></h2>
+<ul>
+  <li><input type="checkbox" id="p1-shadcn"><label for="p1-shadcn">Remove <code>shadcn</code> from ui deps and drop the import in <code>packages/ui/src/styles/globals.css</code> <span class="note">· biggest tree: msw, MCP SDK, dotenvx, babel</span></label></li>
+  <li><input type="checkbox" id="p1-turbogen"><label for="p1-turbogen">Remove <code>@turbo/gen</code> from ui</label></li>
+  <li><input type="checkbox" id="p1-msw"><label for="p1-msw">Remove <code>msw</code> and <code>@testing-library/jest-dom</code> from root</label></li>
+  <li><input type="checkbox" id="p1-tseslint"><label for="p1-tseslint">Remove <code>@typescript-eslint/eslint-plugin</code> and <code>/parser</code> from eslint-config</label></li>
+  <li><input type="checkbox" id="p1-web"><label for="p1-web">Remove <code>unique-names-generator</code>, <code>react-resizable-panels</code> from web <span class="note">· zod is used in web, keep it</span></label></li>
+  <li><input type="checkbox" id="p1-ui"><label for="p1-ui">Remove <code>zod</code>, <code>next-themes</code>, <code>@types/node</code> from ui</label></li>
+  <li><input type="checkbox" id="p1-root"><label for="p1-root">Remove <code>@workspace/eslint-config</code> from root</label></li>
+  <li><input type="checkbox" id="p1-clerk"><label for="p1-clerk">Switch 2 imports to <code>@clerk/nextjs/server</code>, remove <code>@clerk/backend</code></label></li>
+  <li><input type="checkbox" id="p1-twanim"><label for="p1-twanim">Replace <code>tw-animate-css</code> with ~12 lines of tooltip fade CSS</label></li>
+  <li><input type="checkbox" id="p1-dead"><label for="p1-dead">Delete dead files: ui <code>separator.tsx</code>, root <code>.eslintrc.js</code></label></li>
+  <li><input type="checkbox" id="p1-verify"><label for="p1-verify">Verify: typecheck, test, build, eyeball tooltips and UI</label></li>
+</ul>
+
+<h2>Phase 2 · Mid-term <small>small edits or tiny helpers</small></h2>
+<ul>
+  <li><input type="checkbox" id="p2-radix"><label for="p2-radix">Narrow <code>radix-ui</code> umbrella to the 7 used <code>@radix-ui/react-*</code> packages</label></li>
+  <li><input type="checkbox" id="p2-names"><label for="p2-names">Internalize <code>unique-names-generator</code> in contracts with a curated adjectives JSON</label></li>
+  <li><input type="checkbox" id="p2-eslintreact"><label for="p2-eslintreact">Drop <code>eslint-plugin-react</code> <span class="note">· removes es-abstract chain, loses jsx-key</span></label></li>
+  <li><input type="checkbox" id="p2-onlywarn"><label for="p2-onlywarn">Drop <code>eslint-plugin-only-warn</code> <span class="note">· policy change, lint can fail</span></label></li>
+  <li><input type="checkbox" id="p2-themes"><label for="p2-themes">Optional: internalize <code>next-themes</code> (~80 LOC)</label></li>
+  <li><input type="checkbox" id="p2-testdeps"><label for="p2-testdeps">Move vitest, jsdom, testing-library from root into the workspaces using them</label></li>
+  <li><input type="checkbox" id="p2-jsdom"><label for="p2-jsdom">Scope jsdom to the 2 component tests, default web tests to node</label></li>
+  <li><input type="checkbox" id="p2-pnpm"><label for="p2-pnpm">Bump <code>packageManager</code> to pnpm 10, add <code>catalog:</code> for shared versions, align Node minimum</label></li>
+</ul>
+
+<h2>Phase 3 · Long-term <small>product decisions</small></h2>
+<ul>
+  <li><input type="checkbox" id="p3-xyflow"><label for="p3-xyflow">Replace <code>@xyflow/react</code> with in-house SVG graph (~300 LOC) <span class="note">· only if the graph stays read-only</span></label></li>
+  <li><input type="checkbox" id="p3-codex"><label for="p3-codex">Make the Codex binary external for the CLI <span class="note">· 424 MB per install today</span></label></li>
+  <li><input type="checkbox" id="p3-dnd"><label for="p3-dnd">Decide on <code>@dnd-kit</code> and <code>react-resizable-panels</code> <span class="note">· only with a UX redesign</span></label></li>
+</ul>
+
+<h2>Keep <small>decided, do not revisit</small></h2>
+<p class="note">next, react, convex, @clerk/nextjs, zod in contracts and CLI, tailwind-merge, clsx, cva, commander, lucide-react, vitest, eslint-config-prettier, turbo.</p>
+
+<footer><button id="reset">Reset ticks</button></footer>
+
+<script>
+  const key = "caracara-dep-cleanup";
+  const boxes = [...document.querySelectorAll("input[type=checkbox]")];
+  const saved = JSON.parse(localStorage.getItem(key) || "{}");
+  const paint = () => {
+    const done = boxes.filter(b => b.checked).length;
+    document.getElementById("progress").style.width = (100 * done / boxes.length) + "%";
+  };
+  boxes.forEach(b => {
+    b.checked = !!saved[b.id];
+    b.addEventListener("change", () => {
+      saved[b.id] = b.checked;
+      localStorage.setItem(key, JSON.stringify(saved));
+      paint();
+    });
+  });
+  document.getElementById("reset").onclick = () => {
+    boxes.forEach(b => b.checked = false);
+    localStorage.removeItem(key);
+    paint();
+  };
+  paint();
+</script>
+</body>
+</html>

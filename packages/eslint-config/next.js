@@ -12,6 +12,8 @@ import { config as baseConfig } from "./base.js"
 export const nextJsConfig = [
   ...baseConfig,
   {
+    // Browser globals belong to application code, not to Node config scripts.
+    files: ["**/*.{ts,tsx}"],
     languageOptions: {
       globals: {
         ...globals.serviceworker,

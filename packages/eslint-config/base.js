@@ -23,7 +23,7 @@ export const config = [
   },
   {
     // Build and helper scripts run under Node, not the browser.
-    files: ["**/*.{mjs,cjs}", "scripts/**/*.js"],
+    files: ["**/*.{mjs,cjs}"],
     languageOptions: {
       globals: {
         ...globals.node,

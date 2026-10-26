@@ -16,6 +16,7 @@ import {
   suiteSchema,
   targetUrlSchema,
 } from "./domain.js"
+import { maxUtf16Length, minUtf16Length } from "./string-length.js"
 
 export const apiErrorCodeSchema = z.enum([
   "unauthenticated",
@@ -41,9 +42,9 @@ export const authTokenResponseSchema = z.object({
 
 export const oauthAuthorizeRequestSchema = z.object({
   clientId: z.string().min(1),
-  redirectUri: z.string().url(),
+  redirectUri: z.url(),
   state: z.string().min(1),
-  codeChallenge: z.string().min(43).max(128),
+  codeChallenge: z.string().check(minUtf16Length(43), maxUtf16Length(128)),
   codeChallengeMethod: z.literal("S256"),
 })
 
@@ -51,16 +52,16 @@ export const oauthTokenRequestSchema = z.object({
   grantType: z.literal("authorization_code"),
   clientId: z.string().min(1),
   code: z.string().min(1),
-  codeVerifier: z.string().min(43).max(128),
-  redirectUri: z.string().url(),
+  codeVerifier: z.string().check(minUtf16Length(43), maxUtf16Length(128)),
+  redirectUri: z.url(),
 })
 
 export const cliConfigSchema = z.object({
-  apiBaseUrl: z.string().url(),
+  apiBaseUrl: z.url(),
   accessToken: z.string().min(1).nullable(),
   expiresAt: z.number().int().positive().nullable(),
   selectedProjectSlug: slugSchema.nullable(),
-  userEmail: z.string().email().nullable(),
+  userEmail: z.email().nullable(),
 })
 
 export const projectSummarySchema = projectSchema.pick({
@@ -137,13 +138,13 @@ export const singleScenarioResponseSchema = z.object({
 
 const addPhaseRequestSchema = z.object({
   operation: z.literal("addPhase"),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
 })
 
 const editPhaseRequestSchema = z.object({
   operation: z.literal("editPhase"),
   phaseId: z.string().min(1),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
 })
 
 const removePhaseRequestSchema = z.object({
@@ -154,14 +155,14 @@ const removePhaseRequestSchema = z.object({
 const scenarioDependencyIdsSchema = z
   .array(z.string().min(1))
   .refine((ids) => new Set(ids).size === ids.length, {
-    message: "Dependency IDs must be unique.",
+    error: "Dependency IDs must be unique.",
   })
 
 const createScenarioRequestSchema = z.object({
   operation: z.literal("createScenario"),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
   slug: slugSchema.optional(),
-  instructions: z.string().trim().min(1).max(20_000),
+  instructions: z.string().trim().min(1).check(maxUtf16Length(20_000)),
   phaseId: z.string().min(1).nullable().optional(),
   dependsOnScenarioIds: scenarioDependencyIdsSchema.default([]),
 })
@@ -169,10 +170,15 @@ const createScenarioRequestSchema = z.object({
 const updateScenarioRequestSchema = z.object({
   operation: z.literal("updateScenario"),
   scenarioId: z.string().min(1),
-  name: z.string().trim().min(1).max(120).optional(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)).optional(),
   slug: slugSchema.optional(),
   status: z.enum(["draft", "active"]).optional(),
-  instructions: z.string().trim().min(1).max(20_000).optional(),
+  instructions: z
+    .string()
+    .trim()
+    .min(1)
+    .check(maxUtf16Length(20_000))
+    .optional(),
   phaseId: z.string().min(1).nullable().optional(),
   dependsOnScenarioIds: scenarioDependencyIdsSchema.optional(),
 })
@@ -186,15 +192,15 @@ const addCheckRequestSchema = z.object({
 const removeCheckRequestSchema = z.object({
   operation: z.literal("removeCheck"),
   scenarioId: z.string().min(1),
-  checkId: z.string().uuid(),
+  checkId: z.guid(),
 })
 
 const updateCheckRequestSchema = z.object({
   operation: z.literal("updateCheck"),
   scenarioId: z.string().min(1),
-  checkId: z.string().uuid(),
-  name: z.string().trim().min(1).max(120).optional(),
-  expectation: z.string().trim().min(1).max(2_000).optional(),
+  checkId: z.guid(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)).optional(),
+  expectation: z.string().trim().min(1).check(maxUtf16Length(2_000)).optional(),
 })
 
 export const authoringRequestSchema = z
@@ -219,7 +225,7 @@ export const authoringRequestSchema = z
       value.dependsOnScenarioIds === undefined
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "updateScenario requires at least one change.",
       })
     }
@@ -230,7 +236,7 @@ export const authoringRequestSchema = z
       value.expectation === undefined
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "updateCheck requires a name or expectation.",
       })
     }
@@ -277,14 +283,14 @@ export const createRunRequestSchema = z
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
     requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
-    creationAttemptId: z.string().uuid().optional(),
+    creationAttemptId: z.guid().optional(),
     interruptedAt: z.number().int().positive().optional(),
   })
   .refine(
     (value) =>
       (value.environment === undefined) === (value.targetUrl === undefined),
     {
-      message: "Environment and target URL must be provided together.",
+      error: "Environment and target URL must be provided together.",
     }
   )
   .superRefine((value, ctx) => {
@@ -293,7 +299,7 @@ export const createRunRequestSchema = z
       value.creationAttemptId === undefined
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Interrupted run creation requires a creation attempt ID.",
         path: ["creationAttemptId"],
       })
@@ -312,7 +318,7 @@ export const createRunRequestSchema = z
 
     if (!isValid) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Run mode and requested target do not match.",
       })
     }
@@ -335,13 +341,13 @@ export const createRunResponseSchema = z.object({
     requestedSuitePhases: true,
     startedAt: true,
   }),
-  evidenceUploadUrl: z.string().url().optional(),
+  evidenceUploadUrl: z.url().optional(),
 })
 
 export const runEvidenceUploadResponseSchema = z.object({
   evidence: z.object({
     id: z.string().min(1),
-    checkId: z.string().uuid(),
+    checkId: z.guid(),
     contentType: z.literal("image/webp"),
     byteSize: z
       .number()
@@ -357,16 +363,21 @@ export const startScenarioExecutionRequestSchema = z.object({
   result: z.object({
     scenarioId: z.string().min(1),
     scenarioSlug: slugSchema,
-    scenarioName: z.string().min(1).max(120),
-    executionInstructions: z.string().min(1).max(20_000),
+    scenarioName: z.string().min(1).check(maxUtf16Length(120)),
+    executionInstructions: z.string().min(1).check(maxUtf16Length(20_000)),
     evaluationChecks: scenarioSchema.shape.evaluationChecks.min(1),
     phaseId: z.string().nullable().optional(),
-    phaseName: z.string().min(1).max(120).nullable().optional(),
+    phaseName: z
+      .string()
+      .min(1)
+      .check(maxUtf16Length(120))
+      .nullable()
+      .optional(),
     phaseOrder: z.number().int().positive().nullable().optional(),
     sequenceIndex: z.number().int().nonnegative(),
     runnerType: runnerTypeSchema,
     startedAt: z.number().int().positive(),
-    executionAttemptId: z.string().uuid().optional(),
+    executionAttemptId: z.guid().optional(),
   }),
 })
 
@@ -394,7 +405,7 @@ export const submitScenarioResultRequestSchema = z.object({
     executionSummary: nullableStringSchema,
     failureDetail: nullableStringSchema,
     finishedAt: z.number().int().positive(),
-    executionAttemptId: z.string().uuid().optional(),
+    executionAttemptId: z.guid().optional(),
   }),
 })
 
@@ -411,9 +422,9 @@ export const submitScenarioResultResponseSchema = z.object({
 export const finalizeRunRequestSchema = z.object({
   status: z.enum(["completed", "failed", "interrupted"]),
   finishedAt: z.number().int().positive(),
-  finalizationAttemptId: z.string().uuid().optional(),
+  finalizationAttemptId: z.guid().optional(),
   interruptedScenarioResultId: z.string().min(1).optional(),
-  interruptedScenarioAttemptId: z.string().uuid().optional(),
+  interruptedScenarioAttemptId: z.guid().optional(),
 })
 
 export const finalizeRunResponseSchema = z.object({
@@ -440,7 +451,7 @@ export const versionMismatchErrorSchema = apiErrorSchema.extend({
 
 export const whoAmIResponseSchema = z.object({
   userId: z.string().min(1),
-  email: z.string().email().nullable(),
+  email: z.email().nullable(),
 })
 
 export function parseApiError(input: unknown) {

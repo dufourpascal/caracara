@@ -42,6 +42,7 @@ import {
   projectInputSchema,
   suiteInputSchema,
 } from "@workspace/contracts"
+import { z } from "zod"
 
 import { Button } from "@workspace/ui/components/button"
 import { Badge } from "@workspace/ui/components/badge"
@@ -3479,7 +3480,7 @@ export function SuiteEditor({
             const parsed = suiteInputSchema.safeParse(form)
 
             if (!parsed.success) {
-              const flattened = parsed.error.flatten().fieldErrors
+              const flattened = z.flattenError(parsed.error).fieldErrors
               setFieldErrors({
                 name: flattened.name?.[0],
                 slug: flattened.slug?.[0],

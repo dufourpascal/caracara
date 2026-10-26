@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { fetchMutation, fetchQuery } from "convex/nextjs"
+import { authoringResponseSchema } from "@workspace/contracts"
 
 vi.mock("convex/nextjs", () => ({
   fetchMutation: vi.fn(),
@@ -11,7 +12,9 @@ import {
   authorProject,
   createRun,
   handleApiError,
+  parseJsonBody,
   requireCliVersion,
+  routeSchemas,
   startScenarioExecution,
   submitScenarioResult,
 } from "./api-route"
@@ -144,6 +147,145 @@ describe("api-route helpers", () => {
       expect(response.operation).toBe(body.operation)
     }
   )
+
+  it("defaults omitted createScenario dependencies and omits unchanged ones on update", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    vi.mocked(fetchMutation).mockResolvedValue({ id: "result-1" })
+
+    await authorProject({
+      token: "token",
+      projectSlug: "demo",
+      body: {
+        operation: "createScenario",
+        name: "Checkout",
+        instructions: "Complete checkout.",
+      },
+    })
+    await authorProject({
+      token: "token",
+      projectSlug: "demo",
+      body: {
+        operation: "updateScenario",
+        scenarioId: "scenario-2",
+        status: "active",
+      },
+    })
+
+    const [createArgs, updateArgs] = vi
+      .mocked(fetchMutation)
+      .mock.calls.map((call) => call[1])
+    expect(createArgs).toEqual({
+      projectId: "project-1",
+      name: "Checkout",
+      status: "draft",
+      instructions: "Complete checkout.",
+      evaluationChecks: [],
+      dependsOnScenarioIds: [],
+    })
+    expect(updateArgs).toEqual({
+      projectId: "project-1",
+      scenarioId: "scenario-2",
+      status: "active",
+    })
+    expect(updateArgs).not.toHaveProperty("dependsOnScenarioIds")
+  })
+
+  it("bounds request strings in UTF-16 code units like published CLIs", async () => {
+    // 60 emoji are 120 UTF-16 units but only 60 code points.
+    const atLimit = "😀".repeat(60)
+    const request = (name: string) =>
+      new Request("https://caracara.test/api", {
+        method: "POST",
+        body: JSON.stringify({ operation: "addPhase", name }),
+      })
+
+    await expect(
+      parseJsonBody(request(atLimit), routeSchemas.authoringRequestSchema)
+    ).resolves.toEqual({ operation: "addPhase", name: atLimit })
+
+    const error = await parseJsonBody(
+      request(`${atLimit}a`),
+      routeSchemas.authoringRequestSchema
+    ).catch((caught: unknown) => caught)
+    const response = handleApiError(error)
+    expect(response.status).toBe(400)
+    const body = await response.json()
+    expect(JSON.parse(body.details.reason)).toEqual([
+      expect.objectContaining({
+        code: "too_big",
+        maximum: 120,
+        path: ["name"],
+      }),
+    ])
+
+    // 21 emoji plus "a" is a 43-unit PKCE verifier, which Zod 3 accepted.
+    expect(
+      routeSchemas.oauthTokenRequestSchema.parse({
+        grantType: "authorization_code",
+        clientId: "caracara-cli",
+        code: "code",
+        codeVerifier: `${"😀".repeat(21)}a`,
+        redirectUri: "http://127.0.0.1:43123/callback",
+      }).codeVerifier
+    ).toHaveLength(43)
+  })
+
+  it("maps invalid request bodies to validation errors with issue details", async () => {
+    const error = await parseJsonBody(
+      new Request("https://caracara.test/api", {
+        method: "POST",
+        body: JSON.stringify({ mode: "all", runnerType: "codex" }),
+      }),
+      routeSchemas.createRunRequestSchema
+    ).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ApiRouteError)
+    const response = handleApiError(error)
+    expect(response.status).toBe(400)
+    const body = await response.json()
+    expect(body).toMatchObject({
+      code: "validation_error",
+      message: "Invalid request payload.",
+    })
+    expect(JSON.parse(body.details.reason)).toEqual([
+      expect.objectContaining({ code: "invalid_type", path: ["startedAt"] }),
+    ])
+
+    const malformed = await parseJsonBody(
+      new Request("https://caracara.test/api", { method: "POST", body: "{" }),
+      routeSchemas.createRunRequestSchema
+    ).catch((caught: unknown) => caught)
+    expect(handleApiError(malformed).status).toBe(400)
+  })
+
+  it("does not mistake response schema failures for structured API errors", async () => {
+    vi.stubEnv("NODE_ENV", "test")
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined)
+    const parsed = authoringResponseSchema.safeParse({
+      operation: "addPhase",
+      result: { id: "phase-1" },
+    })
+    expect(parsed.success).toBe(false)
+
+    const response = handleApiError(parsed.error)
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      code: "internal_error",
+      message: "Unexpected server error.",
+    })
+    consoleError.mockRestore()
+  })
 
   it("maps structured Convex-style error payloads to API responses", async () => {
     const response = handleApiError({

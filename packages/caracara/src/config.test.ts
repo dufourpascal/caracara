@@ -10,6 +10,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { ZodError } from "zod"
 
 import {
   DEFAULT_API_BASE_URL,
@@ -239,6 +240,114 @@ describe("config", () => {
     )
 
     await expect(readLocalConfig(dir)).rejects.toThrow("Unrecognized key")
+  })
+
+  it("rejects every unknown local config key even beside valid settings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-config-keys-"))
+    await mkdir(join(dir, ".caracara"), { recursive: true })
+    await writeFile(
+      join(dir, ".caracara", "config.json"),
+      JSON.stringify({
+        runner: "codex",
+        environments: { preview: "https://preview.example.com" },
+        defaultEnvironment: "preview",
+        apiBaseUrll: "https://typo.example.com",
+        targetUrl: "https://preview.example.com",
+      }),
+      "utf8"
+    )
+
+    const error = await readLocalConfig(dir).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ZodError)
+    expect((error as ZodError).issues).toEqual([
+      expect.objectContaining({
+        code: "unrecognized_keys",
+        keys: ["apiBaseUrll", "targetUrl"],
+        path: [],
+      }),
+    ])
+    await expect(
+      writeLocalConfig(
+        { runner: "codex", extra: true } as unknown as Parameters<
+          typeof writeLocalConfig
+        >[0],
+        dir
+      )
+    ).rejects.toThrow("Unrecognized key")
+  })
+
+  it("surfaces shared contract validation failures as ZodError", () => {
+    const error = (() => {
+      try {
+        return resolveConfig(
+          {
+            accessToken: null,
+            apiBaseUrl: DEFAULT_API_BASE_URL,
+            expiresAt: null,
+            selectedProjectSlug: null,
+            userEmail: null,
+          },
+          {},
+          { apiBaseUrl: "not a url" },
+          {}
+        )
+      } catch (caught) {
+        return caught
+      }
+    })()
+
+    expect(error).toBeInstanceOf(ZodError)
+    expect((error as ZodError).issues[0]?.path).toEqual(["apiBaseUrl"])
+  })
+
+  it("rejects environment names that are not slugs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-config-env-name-"))
+    await mkdir(join(dir, ".caracara"), { recursive: true })
+    await writeFile(
+      join(dir, ".caracara", "config.json"),
+      JSON.stringify({
+        environments: { "Preview Env": "https://example.com" },
+      }),
+      "utf8"
+    )
+
+    const error = await readLocalConfig(dir).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ZodError)
+    expect((error as ZodError).issues[0]?.path).toEqual([
+      "environments",
+      "Preview Env",
+    ])
+  })
+
+  it("rejects a JSON __proto__ environment name beside valid ones", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-config-env-proto-"))
+    await mkdir(join(dir, ".caracara"), { recursive: true })
+    const configPath = join(dir, ".caracara", "config.json")
+    // JSON.parse creates an own "__proto__" key; an object literal would set
+    // the prototype instead, so the fixture stays raw JSON.
+    const raw = `{"environments":{"preview":"https://preview.example.com","__proto__":"https://proto.example.com"},"defaultEnvironment":"preview"}\n`
+    expect(Object.hasOwn(JSON.parse(raw).environments, "__proto__")).toBe(true)
+    await writeFile(configPath, raw, "utf8")
+
+    const error = await readLocalConfig(dir).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ZodError)
+    expect((error as ZodError).issues).toEqual([
+      expect.objectContaining({
+        code: "invalid_key",
+        path: ["environments", "__proto__"],
+      }),
+    ])
+
+    await expect(
+      writeLocalConfig(
+        {
+          environments: JSON.parse(raw).environments,
+          defaultEnvironment: "preview",
+        },
+        dir
+      )
+    ).rejects.toBeInstanceOf(ZodError)
+    expect(await readFile(configPath, "utf8")).toBe(raw)
   })
 
   it("resolves the runner from overrides, env, local config, and defaults", () => {

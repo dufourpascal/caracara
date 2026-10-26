@@ -8,7 +8,7 @@ Unauthenticated users are shown a dedicated login page built with Clerk componen
 ### LAYOUT_02
 The authenticated application uses a single top navbar with fixed left and right anchors.
 
-The logo is placed on the far left of the navbar. The user avatar is placed on the far right. Between them, the navbar contains breadcrumb navigation in this exact structure when applicable: `logo / [project-slug] / [scenario | run] / [scenario-id | run-name]`. The breadcrumb length is dynamic and reflects the current route. When no scenario or run is selected, the breadcrumb stops at `... / scenarios` or `... / runs`. When the breadcrumb refers to a run, the human-readable run name should be the generated `unique-names-generator` adjective-bird label with the timestamp suffix rather than the raw run identifier.
+The logo is placed on the far left of the navbar. The user avatar is placed on the far right. Between them, the navbar contains breadcrumb navigation in this exact structure when applicable: `logo / [project-slug] / [scenario | run] / [scenario-id | run-name]`. The breadcrumb length is dynamic and reflects the current route. When no scenario or run is selected, the breadcrumb stops at `... / scenarios` or `... / runs`. When the breadcrumb refers to a run, the human-readable run name should be the generated adjective-bird label with the timestamp suffix rather than the raw run identifier.
 
 ### LAYOUT_03
 Clicking the project breadcrumb opens the project switcher.

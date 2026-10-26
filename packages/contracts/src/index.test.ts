@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { z, ZodError } from "zod"
 
+import adjectiveNames from "./adjectives-safe.json" with { type: "json" }
 import birdNames from "./birds-safe.json" with { type: "json" }
 
 import {
@@ -467,10 +468,22 @@ describe("contracts", () => {
       new Date("2026-03-07T14:25:30Z")
     ).split("-")
 
-    expect(adjective).toMatch(/^[a-z]+$/)
+    expect(adjectiveNames).toContain(adjective)
     expect(birdNames).toContain(bird)
     expect(datePart).toBe("20260307")
     expect(timePart).toBe("142530")
+  })
+
+  it("keeps the run name word lists kebab-safe and distinct", () => {
+    for (const list of [adjectiveNames, birdNames]) {
+      expect(list.length).toBeGreaterThan(0)
+      expect(new Set(list).size).toBe(list.length)
+      for (const word of list) {
+        expect(word).toMatch(/^[a-z]+$/)
+      }
+    }
+    const overlap = adjectiveNames.filter((word) => birdNames.includes(word))
+    expect(overlap).toEqual([])
   })
 
   it("checks cli version compatibility", () => {

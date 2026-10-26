@@ -1,5 +1,4 @@
-import { adjectives, uniqueNamesGenerator } from "unique-names-generator"
-
+import adjectives from "./adjectives-safe.json" with { type: "json" }
 import birds from "./birds-safe.json" with { type: "json" }
 
 export function normalizeSlug(value: string) {
@@ -43,13 +42,16 @@ export function formatRunTimestamp(date: Date) {
   return `${year}${month}${day}-${hours}${minutes}${seconds}`
 }
 
+function pickRandom(words: readonly string[]) {
+  const word = words[Math.floor(Math.random() * words.length)]
+  if (word === undefined) {
+    throw new Error("Run name word list is empty")
+  }
+  return word
+}
+
 export function formatRunName(date = new Date()) {
-  const base = uniqueNamesGenerator({
-    dictionaries: [adjectives, birds],
-    separator: "-",
-    style: "lowerCase",
-    length: 2,
-  })
+  const base = `${pickRandom(adjectives)}-${pickRandom(birds)}`
 
   return `${base}-${formatRunTimestamp(date)}`
 }

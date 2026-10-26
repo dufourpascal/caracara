@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url"
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const packageDir = resolve(currentDir, "..")
-const sourceFile = resolve(packageDir, "src/birds-safe.json")
-const destinationFile = resolve(packageDir, "dist/birds-safe.json")
+const assets = ["adjectives-safe.json", "birds-safe.json"]
 
-await mkdir(dirname(destinationFile), { recursive: true })
-await cp(sourceFile, destinationFile)
+await mkdir(resolve(packageDir, "dist"), { recursive: true })
+for (const asset of assets) {
+  await cp(resolve(packageDir, "src", asset), resolve(packageDir, "dist", asset))
+}

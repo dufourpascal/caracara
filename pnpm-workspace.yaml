@@ -9,3 +9,18 @@ allowBuilds:
   # esbuild loads its native binary from the @esbuild/<platform> optional
   # dependency without the script.
   esbuild: false
+
+# Versions shared by more than one workspace. Reference them as "catalog:".
+catalog:
+  "@tailwindcss/postcss": ^4.3.3
+  "@types/node": ^24.19.2
+  "@types/react": ^19.3.0
+  "@types/react-dom": ^19.3.0
+  eslint: ^9.39.5
+  lucide-react: ^1.61.0
+  react: ^19.3.1
+  react-dom: ^19.3.1
+  typescript: ^6.0.3
+  vite: ^8.3.5
+  vitest: ^5.0.5
+  zod: ^4.6.7

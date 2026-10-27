@@ -59,10 +59,23 @@ writeFileSync(
 const mode = process.env.FAKE_CODEX_MODE ?? "ok"
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n")
 if (mode === "hang") {
-  // Ignores SIGTERM like a stuck CLI; only SIGKILL ends it.
+  // Ignores SIGTERM like a stuck CLI; only SIGKILL ends it. The ready marker
+  // is written after the handler is installed so the test can wait for it.
   process.on("SIGTERM", () => {})
   emit({ type: "thread.started", thread_id: "thread_hang" })
+  writeFileSync(process.env.FAKE_CODEX_RECORD + ".ready", "")
   setInterval(() => {}, 1000)
+  return
+}
+if (mode === "wrapper") {
+  // Like npm's launcher script: a thin parent that dies on SIGTERM while
+  // its native child (hang mode, inherited stdout) ignores it.
+  const { spawn } = require("node:child_process")
+  const inner = spawn(process.execPath, [__filename, ...args], {
+    env: { ...process.env, FAKE_CODEX_MODE: "hang" },
+    stdio: "inherit",
+  })
+  inner.on("exit", (code) => process.exit(code ?? 1))
   return
 }
 if (mode === "exit") {
@@ -384,9 +397,31 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     const thread = createClient("hang").startThread(
       buildCodexThreadOptions({ cwd: "/tmp/project" })
     )
-    const started = Date.now()
     const run = thread.run("Hang.", { signal: controller.signal })
-    await delay(300)
+    const readyPath = `${recordPath}.ready`
+    while (!existsSync(readyPath)) {
+      await delay(20)
+    }
+    rmSync(readyPath, { force: true })
+    const started = Date.now()
+    controller.abort(new Error("interrupted by test"))
+
+    await expect(run).rejects.toThrow("interrupted by test")
+    expect(Date.now() - started).toBeLessThan(5_000)
+  })
+
+  it("kills the native child of a launcher script on abort", async () => {
+    const controller = new AbortController()
+    const thread = createClient("wrapper").startThread(
+      buildCodexThreadOptions({ cwd: "/tmp/project" })
+    )
+    const run = thread.run("Hang.", { signal: controller.signal })
+    const readyPath = `${recordPath}.ready`
+    while (!existsSync(readyPath)) {
+      await delay(20)
+    }
+    rmSync(readyPath, { force: true })
+    const started = Date.now()
     controller.abort(new Error("interrupted by test"))
 
     await expect(run).rejects.toThrow("interrupted by test")

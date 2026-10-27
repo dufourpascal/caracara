@@ -2,10 +2,11 @@
 // runtime. Argument construction, config serialization and JSONL event
 // handling follow @openai/codex-sdk 0.164.0 (Apache-2.0) for the subset of
 // options caracara uses.
-import { spawn } from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 import { accessSync, constants, statSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { setTimeout as delay } from "node:timers/promises"
 import { delimiter, join } from "node:path"
 import readline from "node:readline"
 
@@ -186,29 +187,40 @@ export function parseCodexVersion(output: string) {
   return /(\d+)\.(\d+)\.(\d+)/.exec(output)?.[0]
 }
 
+const VERSION_PROBE_TIMEOUT_MS = 10_000
+
 export async function getCodexVersion(
   executablePath: string
 ): Promise<string | undefined> {
-  return await new Promise((resolve) => {
-    let output = ""
-    let child
-    try {
-      child = spawn(executablePath, ["--version"], {
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 10_000,
-        killSignal: "SIGKILL",
-        windowsHide: true,
-      })
-    } catch {
-      resolve(undefined)
-      return
-    }
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8")
+  // Detached so a wrapper script's native child dies with it on timeout.
+  const detached = process.platform !== "win32"
+  let child: ChildProcess
+  try {
+    child = spawn(executablePath, ["--version"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      detached,
+      windowsHide: true,
     })
-    child.once("error", () => resolve(undefined))
-    child.once("close", () => resolve(parseCodexVersion(output)))
+  } catch {
+    return undefined
+  }
+  let output = ""
+  child.stdout?.on("data", (chunk: Buffer) => {
+    output += chunk.toString("utf8")
   })
+  child.on("error", () => undefined)
+  const closed = new Promise<void>((resolve) => {
+    child.once("close", () => resolve())
+  })
+  const timedOut = await Promise.race([
+    closed.then(() => false),
+    delay(VERSION_PROBE_TIMEOUT_MS).then(() => true),
+  ])
+  if (timedOut) {
+    await terminateChildProcess(child, detached, closed).catch(() => undefined)
+    return undefined
+  }
+  return parseCodexVersion(output)
 }
 
 function compareVersions(left: string, right: string) {
@@ -464,9 +476,15 @@ export class CodexThread {
       detached,
       windowsHide: true,
     })
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve())
+    })
+    // The close promise makes the helper kill the whole group even when the
+    // leader (npm's launcher script) has exited and its native child still
+    // holds stdout open.
     let terminating: Promise<void> | null = null
     const onAbort = () => {
-      terminating ??= terminateChildProcess(child, detached).catch(
+      terminating ??= terminateChildProcess(child, detached, closed).catch(
         () => undefined
       )
     }
@@ -557,10 +575,13 @@ export class CodexThread {
     } finally {
       signal?.removeEventListener("abort", onAbort)
       lines.close()
-      if (child.exitCode === null && child.signalCode === null) {
-        await (terminating ?? terminateChildProcess(child, detached)).catch(
-          () => undefined
-        )
+      if (
+        terminating ||
+        (child.exitCode === null && child.signalCode === null)
+      ) {
+        await (
+          terminating ?? terminateChildProcess(child, detached, closed)
+        ).catch(() => undefined)
       }
     }
   }

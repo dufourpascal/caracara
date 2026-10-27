@@ -23,6 +23,7 @@ import {
   type CodexThreadOptions,
   type CodexUsage,
 } from "./codex-exec.js"
+import { startCdpWindowProxy } from "./cdp-proxy.js"
 import type { ModelReasoningEffort } from "./config.js"
 import {
   buildWindowsTaskkillArgs,
@@ -665,6 +666,7 @@ function getChromeExecutablePath() {
 export function buildCodexChromeMcpArgs(input: {
   logFilePath: string
   wsEndpoint: string
+  workspaceRoot: string
 }) {
   return [
     "-y",
@@ -673,6 +675,10 @@ export function buildCodexChromeMcpArgs(input: {
     input.wsEndpoint,
     "--logFile",
     input.logFilePath,
+    // Codex does not send MCP roots, so without this chrome-devtools-mcp only
+    // lets file tools such as upload_file read from the OS temp directory.
+    "--workspace",
+    input.workspaceRoot,
   ]
 }
 
@@ -688,6 +694,7 @@ export function buildCodexClientOptions(input: {
   env: NodeJS.ProcessEnv
   logFilePath: string
   wsEndpoint: string
+  workspaceRoot: string
   modelReasoningEffort?: ModelReasoningEffort
 }): CodexClientOptions {
   return {
@@ -699,6 +706,7 @@ export function buildCodexClientOptions(input: {
           args: buildCodexChromeMcpArgs({
             logFilePath: input.logFilePath,
             wsEndpoint: input.wsEndpoint,
+            workspaceRoot: input.workspaceRoot,
           }),
           required: true,
           default_tools_approval_mode: "approve",
@@ -931,12 +939,19 @@ async function launchSharedChromium(input: {
       }),
       browserStartupError,
     ])
+    const proxy = await startCdpWindowProxy(`ws://127.0.0.1:${port}${wsPath}`)
 
     return {
-      wsEndpoint: `ws://127.0.0.1:${port}${wsPath}`,
+      wsEndpoint: proxy.wsEndpoint,
       chromeDevtoolsLogPath,
       async close() {
+        await proxy.close()
         await terminateBrowserProcess(browser)
+        if (process.env.CARACARA_KEEP_RUN_DIR === "1") {
+          // The profile holds the run's session cookies; delete it when done.
+          process.stderr.write(`Kept browser run directory: ${runDir}\n`)
+          return
+        }
         await rm(runDir, { recursive: true, force: true })
       },
     }
@@ -978,6 +993,7 @@ class CodexRunner implements RunnerAdapter {
           env: runnerEnv,
           logFilePath: sharedBrowser.chromeDevtoolsLogPath,
           wsEndpoint: sharedBrowser.wsEndpoint,
+          workspaceRoot: input.cwd,
           modelReasoningEffort: input.modelReasoningEffort,
         }),
         executablePath,
@@ -1158,6 +1174,7 @@ class ClaudeRunner implements RunnerAdapter {
                   args: buildCodexChromeMcpArgs({
                     logFilePath: sharedBrowser.chromeDevtoolsLogPath,
                     wsEndpoint: sharedBrowser.wsEndpoint,
+                    workspaceRoot: runInput.cwd,
                   }),
                 },
               },

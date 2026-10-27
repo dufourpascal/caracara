@@ -386,7 +386,9 @@ describe("SortableList", () => {
         />
       )
 
-      expect(getLiveRegion(container).textContent).toBe("Reorder cancelled.")
+      expect(getLiveRegion(container).textContent).toBe(
+        "Reorder cancelled because the list changed."
+      )
       expect(getRowWrapper("c").style.transform).toBe("")
 
       pressKey(getHandle("Alpha"), "Enter")
@@ -394,7 +396,39 @@ describe("SortableList", () => {
       expect(onReorder).not.toHaveBeenCalled()
     })
 
-    it("keeps the drag by id when other items change", () => {
+    it("cancels and keeps focus when the list is reordered underneath", () => {
+      const onReorder = vi.fn()
+      const { container, rerender } = render(<Harness onReorder={onReorder} />)
+      const handle = getHandle("Alpha")
+
+      handle.focus()
+      pressKey(handle, " ")
+      pressKey(handle, "ArrowDown")
+      rerender(
+        <Harness
+          items={[phases[2], phases[1], phases[0]] as Phase[]}
+          onReorder={onReorder}
+        />
+      )
+
+      expect(getOrder()).toEqual(["Charlie", "Bravo", "Alpha"])
+      expect(getLiveRegion(container).textContent).toBe(
+        "Reorder cancelled because the list changed."
+      )
+      expect(document.activeElement).toBe(handle)
+      expect(handle.getAttribute("aria-pressed")).toBeNull()
+      expect(getRowWrapper("b").style.transform).toBe("")
+
+      // The next key starts a fresh pickup from the new position.
+      pressKey(handle, " ")
+      expect(getLiveRegion(container).textContent).toBe(
+        "Picked up Alpha. Position 3 of 3."
+      )
+      pressKey(handle, "Escape")
+      expect(onReorder).not.toHaveBeenCalled()
+    })
+
+    it("cancels and keeps focus when another item is added", () => {
       const onReorder = vi.fn()
       const { rerender } = render(<Harness onReorder={onReorder} />)
       const handle = getHandle("Alpha")
@@ -409,11 +443,10 @@ describe("SortableList", () => {
         />
       )
       pressKey(handle, "Enter")
+      pressKey(handle, "Enter")
 
-      expect(onReorder).toHaveBeenCalledTimes(1)
-      expect(
-        onReorder.mock.calls[0]?.[0].map((item: Phase) => item.id)
-      ).toEqual(["z", "b", "a", "c"])
+      expect(document.activeElement).toBe(handle)
+      expect(onReorder).not.toHaveBeenCalled()
     })
   })
 
@@ -527,6 +560,65 @@ describe("SortableList", () => {
       expect(getRowWrapper("a").style.transform).toBe("")
     })
 
+    it("drops at the ends when the pointer overshoots the list", () => {
+      const onReorder = vi.fn()
+      render(<Harness onReorder={onReorder} />)
+
+      // Past the top edge by less than a row.
+      startPointerDrag(getHandle("Charlie"), 216)
+      fireEvent.pointerMove(getHandle("Charlie"), { clientX: 20, clientY: 60 })
+      fireEvent.pointerUp(getHandle("Charlie"), { clientX: 20, clientY: 60 })
+
+      // Past the bottom edge by less than a row.
+      startPointerDrag(getHandle("Alpha"), 120)
+      fireEvent.pointerMove(getHandle("Alpha"), { clientX: 20, clientY: 280 })
+      fireEvent.pointerUp(getHandle("Alpha"), { clientX: 20, clientY: 280 })
+
+      expect(
+        onReorder.mock.calls.map(([items]) =>
+          items.map((item: Phase) => item.id)
+        )
+      ).toEqual([
+        ["c", "a", "b"],
+        ["b", "c", "a"],
+      ])
+    })
+
+    it("drops through modest sideways drift", () => {
+      const onReorder = vi.fn()
+      render(<Harness onReorder={onReorder} />)
+      const handle = getHandle("Alpha")
+
+      startPointerDrag(handle, 120)
+      fireEvent.pointerMove(handle, { clientX: -40, clientY: 180 })
+      expect(getRowWrapper("b").style.transform).toBe("translateY(-48px)")
+      fireEvent.pointerUp(handle, { clientX: LIST_WIDTH + 40, clientY: 180 })
+
+      expect(
+        onReorder.mock.calls[0]?.[0].map((item: Phase) => item.id)
+      ).toEqual(["b", "a", "c"])
+    })
+
+    it("cancels when dropped well past the edges", () => {
+      const onReorder = vi.fn()
+      render(<Harness onReorder={onReorder} />)
+
+      for (const [clientX, clientY] of [
+        [LIST_WIDTH + 60, 180],
+        [-60, 180],
+        [20, 40],
+        [20, 300],
+      ] as const) {
+        startPointerDrag(getHandle("Bravo"), 168)
+        fireEvent.pointerMove(getHandle("Bravo"), { clientX, clientY })
+        expect(getRowWrapper("a").style.transform).toBe("")
+        expect(getRowWrapper("c").style.transform).toBe("")
+        fireEvent.pointerUp(getHandle("Bravo"), { clientX, clientY })
+      }
+
+      expect(onReorder).not.toHaveBeenCalled()
+    })
+
     it("cancels on Escape mid-drag", () => {
       const onReorder = vi.fn()
       const { container } = render(<Harness onReorder={onReorder} />)
@@ -542,6 +634,63 @@ describe("SortableList", () => {
         "Reorder cancelled. Alpha returned to position 1 of 3."
       )
       expect(document.body.style.userSelect).toBe("")
+    })
+
+    it("swallows the click from a release that comes after Escape", async () => {
+      const onRowClick = vi.fn()
+      render(<Harness onReorder={() => {}} onRowClick={onRowClick} />)
+      const handle = getHandle("Alpha")
+
+      startPointerDrag(handle, 120)
+      fireEvent.keyDown(window, { key: "Escape" })
+
+      // The user holds the button well past the cancel.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      // A keyboard click in the meantime is not part of the drag.
+      fireEvent.click(screen.getByTestId("row-b"), { detail: 0 })
+      expect(onRowClick).toHaveBeenCalledWith("b")
+
+      fireEvent.pointerUp(handle, { clientX: 20, clientY: 130, pointerId: 1 })
+      fireEvent.click(handle, { detail: 1 })
+      expect(onRowClick).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      fireEvent.click(handle, { detail: 1 })
+      expect(onRowClick).toHaveBeenLastCalledWith("a")
+    })
+
+    it("stops waiting for a missed release once a new press starts", () => {
+      const onRowClick = vi.fn()
+      render(<Harness onReorder={() => {}} onRowClick={onRowClick} />)
+
+      startPointerDrag(getHandle("Alpha"), 120)
+      // Released off-window: the page never sees the pointerup.
+      fireEvent.blur(window)
+
+      const handle = getHandle("Bravo")
+      fireEvent.pointerDown(handle, { button: 0, clientX: 20, clientY: 168 })
+      fireEvent.pointerUp(handle, { clientX: 20, clientY: 168 })
+      fireEvent.click(handle, { detail: 1 })
+
+      expect(onRowClick).toHaveBeenCalledWith("b")
+    })
+
+    it("does not wait for a release after pointercancel", async () => {
+      const onRowClick = vi.fn()
+      render(<Harness onReorder={() => {}} onRowClick={onRowClick} />)
+
+      startPointerDrag(getHandle("Alpha"), 120)
+      fireEvent.pointerCancel(getHandle("Alpha"), { pointerId: 1 })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      fireEvent.click(getHandle("Alpha"), { detail: 1 })
+
+      expect(onRowClick).toHaveBeenCalledWith("a")
     })
 
     it("cancels on pointercancel", () => {
@@ -587,6 +736,38 @@ describe("SortableList", () => {
       expect(document.body.style.userSelect).toBe("")
       fireEvent.pointerUp(window, { clientX: 20, clientY: 230 })
       expect(onReorder).not.toHaveBeenCalled()
+    })
+
+    it("cancels without saving when the list is reordered underneath", () => {
+      const onReorder = vi.fn()
+      const onRowClick = vi.fn()
+      const { container, rerender } = render(
+        <Harness onReorder={onReorder} onRowClick={onRowClick} />
+      )
+      const handle = getHandle("Alpha")
+
+      startPointerDrag(handle, 120)
+      fireEvent.pointerMove(handle, { clientX: 20, clientY: 180 })
+      rerender(
+        <Harness
+          items={[phases[2], phases[1], phases[0]] as Phase[]}
+          onReorder={onReorder}
+          onRowClick={onRowClick}
+        />
+      )
+
+      expect(getLiveRegion(container).textContent).toBe(
+        "Reorder cancelled because the list changed."
+      )
+      expect(screen.getByTestId("row-a").dataset.dragging).toBeUndefined()
+      expect(document.body.style.userSelect).toBe("")
+
+      fireEvent.pointerUp(handle, { clientX: 20, clientY: 180, pointerId: 1 })
+      fireEvent.click(handle, { detail: 1 })
+
+      expect(onReorder).not.toHaveBeenCalled()
+      expect(onRowClick).not.toHaveBeenCalled()
+      expect(getOrder()).toEqual(["Charlie", "Bravo", "Alpha"])
     })
 
     it("restores body styles and detaches listeners on unmount mid-drag", () => {
@@ -705,6 +886,153 @@ describe("SortableList", () => {
       expect(onReorder).toHaveBeenCalledTimes(1)
       expect(getOrder()).toEqual(["Bravo", "Alpha", "Charlie"])
       expect(document.activeElement).toBe(handle)
+    })
+
+    describe("overlapping drops", () => {
+      const first = [phases[1], phases[0], phases[2]] as Phase[]
+      const second = [phases[1], phases[2], phases[0]] as Phase[]
+
+      // Two quick drops: Alpha to position 2, then on to position 3, each
+      // awaiting its own mutation. Returns a rerender that plays the server.
+      function dropTwice() {
+        const mutations = [deferred(), deferred()]
+        let calls = 0
+        const onReorder = vi.fn<(items: Phase[]) => Promise<void>>(
+          () => mutations[calls++]!.promise
+        )
+        const { rerender } = render(<Harness onReorder={onReorder} />)
+        const handle = getHandle("Alpha")
+
+        handle.focus()
+        pressKey(handle, " ")
+        pressKey(handle, "ArrowDown")
+        pressKey(handle, " ")
+        pressKey(handle, " ")
+        pressKey(handle, "ArrowDown")
+        pressKey(handle, " ")
+
+        expect(
+          onReorder.mock.calls.map(([items]) => items.map((item) => item.id))
+        ).toEqual([
+          ["b", "a", "c"],
+          ["b", "c", "a"],
+        ])
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+
+        return {
+          mutations: mutations as [
+            ReturnType<typeof deferred>,
+            ReturnType<typeof deferred>,
+          ],
+          serve: (items: Phase[]) =>
+            rerender(<Harness items={items} onReorder={onReorder} />),
+        }
+      }
+
+      async function settle(
+        mutation: ReturnType<typeof deferred>,
+        error?: Error
+      ) {
+        await act(async () => {
+          if (error) {
+            mutation.reject(error)
+          } else {
+            mutation.resolve()
+          }
+          await mutation.promise.catch(() => {})
+        })
+      }
+
+      it("keeps the newer drop when the first one is confirmed", async () => {
+        const { mutations, serve } = dropTwice()
+
+        serve(first)
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+
+        await settle(mutations[0])
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+
+        serve(second)
+        await settle(mutations[1])
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+      })
+
+      it("falls back to the pending first drop when the latest fails", async () => {
+        const { mutations, serve } = dropTwice()
+
+        await settle(mutations[1], new Error("offline"))
+        expect(getOrder()).toEqual(["Bravo", "Alpha", "Charlie"])
+
+        serve(first)
+        await settle(mutations[0])
+        expect(getOrder()).toEqual(["Bravo", "Alpha", "Charlie"])
+      })
+
+      it("rolls back to the confirmed order when the latest fails", async () => {
+        const { mutations, serve } = dropTwice()
+
+        serve(first)
+        await settle(mutations[0])
+        await settle(mutations[1], new Error("offline"))
+
+        expect(getOrder()).toEqual(["Bravo", "Alpha", "Charlie"])
+      })
+
+      it("keeps the latest drop when the earlier one fails", async () => {
+        const { mutations, serve } = dropTwice()
+
+        await settle(mutations[0], new Error("offline"))
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+
+        serve(second)
+        await settle(mutations[1])
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+      })
+
+      it("rolls back to props when both fail", async () => {
+        const { mutations } = dropTwice()
+
+        await settle(mutations[0], new Error("offline"))
+        await settle(mutations[1], new Error("offline"))
+
+        expect(getOrder()).toEqual(["Alpha", "Bravo", "Charlie"])
+      })
+
+      it("follows props once both drops complete", async () => {
+        const { mutations, serve } = dropTwice()
+
+        serve(first)
+        serve(second)
+        await settle(mutations[0])
+        await settle(mutations[1])
+        expect(getOrder()).toEqual(["Bravo", "Charlie", "Alpha"])
+
+        serve([phases[2], phases[1], phases[0]] as Phase[])
+        expect(getOrder()).toEqual(["Charlie", "Bravo", "Alpha"])
+      })
+
+      it("yields to an unrelated server order while both are pending", async () => {
+        const { mutations, serve } = dropTwice()
+        const external = [phases[2], phases[0], phases[1]] as Phase[]
+
+        serve(external)
+        expect(getOrder()).toEqual(["Charlie", "Alpha", "Bravo"])
+
+        await settle(mutations[0])
+        await settle(mutations[1])
+        expect(getOrder()).toEqual(["Charlie", "Alpha", "Bravo"])
+      })
+
+      it("yields to a membership change while both are pending", async () => {
+        const { mutations, serve } = dropTwice()
+        const added = [...first, { id: "d", name: "Delta" }]
+
+        serve(added)
+        expect(getOrder()).toEqual(["Bravo", "Alpha", "Charlie", "Delta"])
+
+        await settle(mutations[1])
+        expect(getOrder()).toEqual(["Bravo", "Alpha", "Charlie", "Delta"])
+      })
     })
 
     it("does not update state when onReorder settles after unmount", async () => {

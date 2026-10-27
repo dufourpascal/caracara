@@ -35,10 +35,18 @@ type DragSession = {
     clientX: number
     clientY: number
     grabOffset: number
+    // The press is still down, so a click will follow its release.
+    held: boolean
+    id: number
     inside: boolean
     y: number
   } | null
   restore: () => void
+}
+
+type PendingCommit = {
+  ids: string[]
+  token: number
 }
 
 type PendingSettle = {
@@ -49,6 +57,8 @@ type PendingSettle = {
 
 // Pointer travel before a press on the handle turns into a drag.
 const ACTIVATION_DISTANCE = 4
+// How far a pointer may stray sideways past the list and still drop.
+const DROP_TOLERANCE_X = 48
 const SETTLE_DURATION = 150
 const TRANSITION_ATTRIBUTE = "data-sortable-transition"
 const ROW_TRANSITION_CLASSES =
@@ -214,18 +224,23 @@ export function SortableList<T extends SortableEntity>({
     mode: DragSession["mode"]
   } | null>(null)
   const [announcement, setAnnouncement] = React.useState("")
-  // Shows a committed order until the parent's items catch up or onReorder settles.
-  const [optimistic, setOptimistic] = React.useState<{
-    ids: string[]
-    token: number
-  } | null>(null)
+  // Committed orders whose onReorder has not settled, oldest first. The newest
+  // is shown until the parent's items catch up or every newer one settles.
+  const [pending, setPending] = React.useState<PendingCommit[]>([])
   const itemsKey = JSON.stringify(items.map((item) => item.id))
   const [previousItemsKey, setPreviousItemsKey] = React.useState(itemsKey)
 
   if (previousItemsKey !== itemsKey) {
+    const ids = items.map((item) => item.id)
+    // Items matching a pending order confirm it and supersede older ones, so
+    // later drops stay on screen. Any other order is news and wins outright.
+    const confirmed = pending.findIndex((commit) => sameIds(commit.ids, ids))
+
     setPreviousItemsKey(itemsKey)
-    setOptimistic(null)
+    setPending(confirmed === -1 ? [] : pending.slice(confirmed + 1))
   }
+
+  const optimistic = pending.at(-1)
 
   const displayItems = React.useMemo(() => {
     if (!optimistic) {
@@ -315,15 +330,17 @@ export function SortableList<T extends SortableEntity>({
     pointer.clientX = clientX
     pointer.clientY = clientY
     pointer.y = y
+    // Overshooting an edge by up to a row, or drifting off the narrow grip
+    // column, still drops; the target clamps to the first or last slot.
     pointer.inside =
-      clientX >= listRect.left &&
-      clientX <= listRect.right &&
-      clientY >= listRect.top &&
-      clientY <= listRect.bottom
+      clientX >= listRect.left - DROP_TOLERANCE_X &&
+      clientX <= listRect.right + DROP_TOLERANCE_X &&
+      clientY >= listRect.top - session.shift &&
+      clientY <= listRect.bottom + session.shift
 
     let target = session.origin
 
-    // Outside the list the preview falls back to the origin, matching the cancel on drop.
+    // Well outside the list the preview falls back to the origin, matching the cancel on drop.
     if (pointer.inside) {
       target = 0
 
@@ -339,18 +356,37 @@ export function SortableList<T extends SortableEntity>({
     setTarget(session, target)
   }
 
-  function swallowNextClick() {
+  // Eats the click that ends a drag. It follows the release, so a drag that
+  // ended while the pointer was still down waits for that pointer to lift.
+  function swallowNextClick(heldPointerId: number | null) {
     swallowCleanupRef.current?.()
 
+    let timer: number | undefined
+
     const swallow = (event: MouseEvent) => {
+      // Keyboard and programmatic clicks have detail 0 and never end a drag.
+      if (event.detail === 0) {
+        return
+      }
+
       event.preventDefault()
       event.stopPropagation()
       cleanup()
     }
-    const timer = window.setTimeout(() => cleanup(), 0)
+    const expire = () => {
+      window.removeEventListener("pointerup", onUp, true)
+      timer = window.setTimeout(() => cleanup(), 0)
+    }
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerId === heldPointerId) {
+        expire()
+      }
+    }
     const cleanup = () => {
       window.clearTimeout(timer)
       window.removeEventListener("click", swallow, true)
+      window.removeEventListener("pointerup", onUp, true)
+      window.removeEventListener("pointerdown", cleanup, true)
 
       if (swallowCleanupRef.current === cleanup) {
         swallowCleanupRef.current = null
@@ -358,6 +394,15 @@ export function SortableList<T extends SortableEntity>({
     }
 
     window.addEventListener("click", swallow, true)
+
+    if (heldPointerId === null) {
+      expire()
+    } else {
+      window.addEventListener("pointerup", onUp, true)
+      // A new press means the release was missed, say off-window: stand down.
+      window.addEventListener("pointerdown", cleanup, true)
+    }
+
     swallowCleanupRef.current = cleanup
   }
 
@@ -370,12 +415,12 @@ export function SortableList<T extends SortableEntity>({
     const token = commitTokenRef.current + 1
     const clear = () => {
       if (mountedRef.current) {
-        setOptimistic((value) => (value?.token === token ? null : value))
+        setPending((value) => value.filter((entry) => entry.token !== token))
       }
     }
 
     commitTokenRef.current = token
-    setOptimistic({ ids: nextIds, token })
+    setPending((value) => [...value, { ids: nextIds, token }])
 
     let result: void | Promise<void>
 
@@ -386,8 +431,9 @@ export function SortableList<T extends SortableEntity>({
       throw error
     }
 
-    // Callers that report failure through the promise get the props order back.
-    // A synchronous caller has already updated (or ignored) its items, which
+    // Once a commit settles it stops being shown: a failed latest drop falls
+    // back to the next pending order, or to props when none is left. A
+    // synchronous caller has already updated (or ignored) its items, which
     // land in the same render, so the optimistic order is not needed.
     if (isPromiseLike(result)) {
       result.then(clear, clear)
@@ -396,7 +442,8 @@ export function SortableList<T extends SortableEntity>({
     }
   }
 
-  function endDrag(outcome: "cancel" | "drop", restoreFocus = false) {
+  // "reset" cancels a drag whose list changed underneath it.
+  function endDrag(outcome: "cancel" | "drop" | "reset", restoreFocus = false) {
     const session = sessionRef.current
 
     if (!session) {
@@ -408,7 +455,7 @@ export function SortableList<T extends SortableEntity>({
 
     if (session.mode === "pointer") {
       pointerRef.current?.detach()
-      swallowNextClick()
+      swallowNextClick(session.pointer?.held ? session.pointer.id : null)
     }
 
     // Record where every row is drawn so the layout effect can ease it into place.
@@ -427,6 +474,11 @@ export function SortableList<T extends SortableEntity>({
     }
     setActive(null)
 
+    if (outcome === "reset") {
+      setAnnouncement("Reorder cancelled because the list changed.")
+      return
+    }
+
     const { ids, items: current } = getState()
     const origin = ids.indexOf(session.id)
     const label = getItemLabel(current[origin])
@@ -443,9 +495,8 @@ export function SortableList<T extends SortableEntity>({
       return
     }
 
-    const next = sameIds(session.ids, ids)
-      ? moveId(ids, session.origin, session.target)
-      : moveId(ids, origin, Math.min(session.target, ids.length - 1))
+    // The list cannot change under a live drag: the layout effect cancels it.
+    const next = moveId(ids, session.origin, session.target)
 
     if (sameIds(next, ids)) {
       setAnnouncement(
@@ -458,32 +509,6 @@ export function SortableList<T extends SortableEntity>({
       `${label} dropped at position ${next.indexOf(session.id) + 1} of ${ids.length}.`
     )
     commit(next, current)
-  }
-
-  function rebase(session: DragSession, ids: string[]) {
-    const preview = moveId(session.ids, session.origin, session.target)
-    const others = ids.filter((id) => id !== session.id)
-    const anchor = preview
-      .slice(0, preview.indexOf(session.id))
-      .reverse()
-      .find((id) => others.includes(id))
-
-    for (const row of rowsRef.current.values()) {
-      setTransition(row, false)
-      setTranslate(row, 0)
-    }
-
-    session.ids = ids
-    session.origin = ids.indexOf(session.id)
-    session.target = anchor === undefined ? 0 : others.indexOf(anchor) + 1
-    session.rects = measureRows(listRef.current, rowsRef.current, ids)
-    session.shift = getShift(session)
-
-    if (session.pointer) {
-      trackPointer(session, session.pointer.clientX, session.pointer.clientY)
-    } else {
-      applyPreview(session, rowsRef.current)
-    }
   }
 
   function handlePointerDown(
@@ -555,6 +580,8 @@ export function SortableList<T extends SortableEntity>({
         clientX: startX,
         clientY: startY,
         grabOffset: startY - listTop - (session.rects.get(id)?.top ?? 0),
+        held: true,
+        id: pointerId,
         inside: true,
         y: startY - listTop,
       }
@@ -594,6 +621,10 @@ export function SortableList<T extends SortableEntity>({
         return
       }
 
+      if (session.pointer) {
+        session.pointer.held = false
+      }
+
       trackPointer(session, upEvent.clientX, upEvent.clientY)
       endDrag(session.pointer?.inside ? "drop" : "cancel")
     }
@@ -603,7 +634,14 @@ export function SortableList<T extends SortableEntity>({
         return
       }
 
-      if (sessionRef.current?.mode === "pointer") {
+      const session = sessionRef.current
+
+      if (session?.mode === "pointer") {
+        // A cancelled pointer produces no click.
+        if (session.pointer && cancelEvent.type === "pointercancel") {
+          session.pointer.held = false
+        }
+
         endDrag("cancel")
       } else {
         detach()
@@ -694,7 +732,8 @@ export function SortableList<T extends SortableEntity>({
     }
   }
 
-  // Runs after every commit: track the latest props and keep an active drag consistent.
+  // Runs after every commit: track the latest props and drop a drag whose
+  // list changed underneath it, since its slots no longer mean anything.
   React.useLayoutEffect(() => {
     latestRef.current = { items: displayItems, onReorder }
 
@@ -705,11 +744,7 @@ export function SortableList<T extends SortableEntity>({
       return
     }
 
-    if (ids.includes(session.id)) {
-      rebase(session, ids)
-    } else {
-      endDrag("cancel")
-    }
+    endDrag("reset", session.mode === "keyboard")
   })
 
   // FLIP: ease rows from where they were drawn at drop or cancel into their slots.

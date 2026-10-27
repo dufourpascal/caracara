@@ -27,7 +27,7 @@ Check scenarios, suites, phases, runs, and a selected run (nested run-detail pan
 
 - [ ] Pointer: the drag starts from the grip only, after about 4px of movement. A plain click on the grip or row still selects the phase.
 - [ ] Rows shift smoothly (about 150ms). The target follows the pointer crossing a row's midpoint. The dropped row settles into its slot with no flicker and no extra shadow.
-- [ ] Dropping outside the list, pressing Escape, or a cancelled pointer returns the row to its slot without saving.
+- [ ] Dropping well outside the list, pressing Escape, or a cancelled pointer returns the row to its slot without saving. Overshooting the top or bottom by up to a row, or drifting up to 48px sideways, still drops at the nearest end. After Escape, keep the button held for a moment, then release over the grip: the row is not selected.
 - [ ] Releasing a drag does not also select the row underneath.
 - [ ] Keyboard: focus the grip, Space or Enter picks the row up, the arrow keys move it, Space or Enter drops, Escape cancels. Focus stays on the moved row's grip. These keys do not select the row.
 - [ ] A screen reader politely announces pickup, each move, the drop and a cancel.

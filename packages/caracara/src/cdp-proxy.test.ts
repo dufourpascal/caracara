@@ -142,24 +142,10 @@ describe("startCdpWindowProxy", () => {
     ])
   })
 
-  it("activates a page before its screenshot and hides the proxy's reply", async () => {
-    const browser = await startBrowser()
+  it("brings a page to the front before its screenshot and hides the proxy's reply", async () => {
+    const browser = await startBrowser({ handshakeDelayMs: 100 })
     const proxy = await startProxy(browser.endpoint)
     const { client, replies } = await connect(proxy.wsEndpoint)
-    await expect.poll(() => browser.sockets.length).toBe(1)
-
-    for (const [sessionId, targetId, type] of [
-      ["S1", "T1", "page"],
-      ["S2", "T2", "iframe"],
-    ]) {
-      browser.sockets[0]!.send(
-        JSON.stringify({
-          method: "Target.attachedToTarget",
-          params: { sessionId, targetInfo: { targetId, type } },
-        })
-      )
-    }
-    await expect.poll(() => replies.length).toBe(2)
 
     client.send(
       JSON.stringify({
@@ -169,22 +155,20 @@ describe("startCdpWindowProxy", () => {
         params: { format: "webp" },
       })
     )
-    client.send(
-      JSON.stringify({ id: 4, method: "Page.captureScreenshot", sessionId: "S2" })
-    )
-    await expect.poll(() => replies.length).toBe(4)
+    client.send(JSON.stringify({ id: 4, method: "Page.captureScreenshot" }))
+    await expect.poll(() => replies.length).toBe(2)
 
     expect(browser.received).toEqual([
-      { id: -1, method: "Target.activateTarget", params: { targetId: "T1" } },
+      { id: -1, method: "Page.bringToFront", sessionId: "S1" },
       {
         id: 3,
         method: "Page.captureScreenshot",
         sessionId: "S1",
         params: { format: "webp" },
       },
-      { id: 4, method: "Page.captureScreenshot", sessionId: "S2" },
+      { id: 4, method: "Page.captureScreenshot" },
     ])
-    expect(replies.slice(2)).toEqual([
+    expect(replies).toEqual([
       { id: 3, result: {} },
       { id: 4, result: {} },
     ])

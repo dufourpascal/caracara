@@ -54,8 +54,6 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
     perMessageDeflate: false,
   })
   const pending: { data: RawData; isBinary: boolean }[] = []
-  // Page sessions by sessionId, learned from the browser's attach events.
-  const pageTargets = new Map<string, string>()
   // Negative ids never collide with the client's, which count up from 1.
   let nextProxyId = -1
 
@@ -82,20 +80,19 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
 
     const text = rewriteCdpClientMessage(data.toString())
     const message = parseCdpMessage(text)
-    const targetId =
+    if (
       message?.method === "Page.captureScreenshot" &&
       typeof message.sessionId === "string"
-        ? pageTargets.get(message.sessionId)
-        : undefined
-    if (targetId) {
+    ) {
       // A popup from window.open or a target=_blank link still shares its
       // opener's window and hides it. Bring the page to the front first, so
-      // the screenshot gets a frame.
+      // the screenshot gets a frame. A popup hidden this way comes back with
+      // its own next screenshot.
       sendUpstream(
         JSON.stringify({
           id: nextProxyId--,
-          method: "Target.activateTarget",
-          params: { targetId },
+          method: "Page.bringToFront",
+          sessionId: message.sessionId,
         }),
         false
       )
@@ -108,18 +105,14 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
     }
   })
   upstream.on("message", (data, isBinary) => {
-    if (!isBinary) {
-      const text = data.toString()
-      if (text.startsWith('{"id":-')) {
-        // The reply to a proxy-sent command; the client never asked for it.
-        return
-      }
-      if (
-        text.includes('"Target.attachedToTarget"') ||
-        text.includes('"Target.detachedFromTarget"')
-      ) {
-        trackPageSession(text)
-      }
+    // Chromium writes the id first, so a reply to a proxy-sent command starts
+    // with a negative id. The client never asked for it.
+    if (
+      !isBinary &&
+      Buffer.isBuffer(data) &&
+      data.subarray(0, 7).toString() === '{"id":-'
+    ) {
+      return
     }
     if (client.readyState === WebSocket.OPEN) {
       client.send(data, { binary: isBinary })
@@ -129,34 +122,13 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
   client.on("error", closeBoth)
   upstream.on("close", closeBoth)
   upstream.on("error", closeBoth)
-
-  function trackPageSession(text: string) {
-    const message = parseCdpMessage(text)
-    const params = message?.params
-    if (typeof params?.sessionId !== "string") {
-      return
-    }
-    if (message?.method === "Target.detachedFromTarget") {
-      pageTargets.delete(params.sessionId)
-      return
-    }
-    const targetInfo = params.targetInfo as
-      | { targetId?: unknown; type?: unknown }
-      | undefined
-    if (
-      message?.method === "Target.attachedToTarget" &&
-      targetInfo?.type === "page" &&
-      typeof targetInfo.targetId === "string"
-    ) {
-      pageTargets.set(params.sessionId, targetInfo.targetId)
-    }
-  }
 }
 
 /**
  * Starts a loopback CDP proxy in front of a browser WebSocket endpoint. Frames
  * pass through unchanged except that Target.createTarget opens a new window
- * (see rewriteCdpClientMessage) and a screenshot first activates its page.
+ * (see rewriteCdpClientMessage) and a screenshot first brings its page to
+ * the front.
  *
  * Like Chromium itself, the proxy only accepts the browser's unguessable path
  * and refuses connections that carry an Origin, so a web page in the browser

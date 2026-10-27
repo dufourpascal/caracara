@@ -947,7 +947,8 @@ async function launchSharedChromium(input: {
       async close() {
         await proxy.close()
         await terminateBrowserProcess(browser)
-        if (process.env.CARACARA_KEEP_RUN_DIR) {
+        if (process.env.CARACARA_KEEP_RUN_DIR === "1") {
+          // The profile holds the run's session cookies; delete it when done.
           process.stderr.write(`Kept browser run directory: ${runDir}\n`)
           return
         }

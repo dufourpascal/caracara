@@ -18,10 +18,12 @@
   "dependencies": {
     "@workspace/contracts": "workspace:*",
     "commander": "^15.0.0",
+    "ws": "^8.21.0",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/ws": "^8.18.2",
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
     "eslint": "catalog:",

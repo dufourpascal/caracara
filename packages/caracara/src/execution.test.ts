@@ -220,6 +220,7 @@ describe("Codex configuration", () => {
         },
         logFilePath: "/tmp/chrome-devtools-mcp.log",
         wsEndpoint: "ws://127.0.0.1:9222/devtools/browser/test",
+        workspaceRoot: "/tmp/project",
       })
     ).toEqual({
       env: {
@@ -237,6 +238,8 @@ describe("Codex configuration", () => {
               "ws://127.0.0.1:9222/devtools/browser/test",
               "--logFile",
               "/tmp/chrome-devtools-mcp.log",
+              "--workspace",
+              "/tmp/project",
             ],
             required: true,
             default_tools_approval_mode: "approve",
@@ -254,6 +257,7 @@ describe("Codex configuration", () => {
       env: {},
       logFilePath: "/tmp/chrome-devtools-mcp.log",
       wsEndpoint: "ws://127.0.0.1:9222/devtools/browser/test",
+      workspaceRoot: "/tmp/project",
       modelReasoningEffort: "none",
     })
     const threadOptions = buildCodexThreadOptions({
@@ -272,6 +276,7 @@ describe("Codex configuration", () => {
       buildCodexChromeMcpArgs({
         wsEndpoint: "ws://127.0.0.1:9222/devtools/browser/test",
         logFilePath: "/tmp/chrome-devtools.log",
+        workspaceRoot: "/home/user/project",
       })
     ).toEqual([
       "-y",
@@ -280,6 +285,8 @@ describe("Codex configuration", () => {
       "ws://127.0.0.1:9222/devtools/browser/test",
       "--logFile",
       "/tmp/chrome-devtools.log",
+      "--workspace",
+      "/home/user/project",
     ])
   })
 

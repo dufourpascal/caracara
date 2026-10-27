@@ -52,8 +52,8 @@ type OrderedNode = {
   sortIndex: number
 }
 
-const NODE_WIDTH = 184
-const NODE_HEIGHT = 72
+export const NODE_WIDTH = 184
+export const NODE_HEIGHT = 72
 const HORIZONTAL_GAP = 64
 const VERTICAL_GAP = 104
 const PHASE_PADDING_X = 32

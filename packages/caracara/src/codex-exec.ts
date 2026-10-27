@@ -586,7 +586,9 @@ export class CodexThread {
       lines.close()
       // Keyed on "close", not the leader's exit: an exited launcher script
       // can leave its native child alive and holding the pipes.
-      if (!isClosed) {
+      // Also await an in-flight termination: the launcher's pipes can close
+      // while its child is still being escalated to SIGKILL.
+      if (terminating || !isClosed) {
         await (
           terminating ?? terminateChildProcess(child, detached, closed)
         ).catch(() => undefined)

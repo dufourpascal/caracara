@@ -125,6 +125,16 @@ let binDir: string
 let fakeCodexPath: string
 let recordPath: string
 
+async function waitForFile(path: string, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for ${path}`)
+    }
+    await delay(20)
+  }
+}
+
 function isProcessAlive(pid: number) {
   try {
     process.kill(pid, 0)
@@ -427,9 +437,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     )
     const run = thread.run("Hang.", { signal: controller.signal })
     const readyPath = `${recordPath}.ready`
-    while (!existsSync(readyPath)) {
-      await delay(20)
-    }
+    await waitForFile(readyPath)
     rmSync(readyPath, { force: true })
     const started = Date.now()
     controller.abort(new Error("interrupted by test"))
@@ -445,9 +453,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     )
     const run = thread.run("Hang.", { signal: controller.signal })
     const readyPath = `${recordPath}.ready`
-    while (!existsSync(readyPath)) {
-      await delay(20)
-    }
+    await waitForFile(readyPath)
     rmSync(readyPath, { force: true })
     const started = Date.now()
     controller.abort(new Error("interrupted by test"))
@@ -465,9 +471,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
 
     await expect(run).rejects.toThrow("model refused")
 
-    while (!existsSync(readyPath)) {
-      await delay(20)
-    }
+    await waitForFile(readyPath)
     const childPid = Number(readFileSync(readyPath, "utf8"))
     rmSync(readyPath, { force: true })
     expect(isProcessAlive(childPid)).toBe(false)

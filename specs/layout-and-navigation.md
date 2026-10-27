@@ -38,7 +38,7 @@ When the `Runs` segment is active, the left-side panel shows the list of runs. T
 ### LAYOUT_08
 Scenario graph mode keeps the scenario list on the left and shows the dependency graph on the right.
 
-When the scenario workspace is switched to `Graph` mode, the left-side scenario list remains visible, and the right-side main panel shows the scenario dependency graph. The graph is rendered with React Flow. Each node displays the scenario name, and directed edges represent scenario dependencies. In v1, the graph is read-only and does not support node selection or direct graph interaction beyond viewing.
+When the scenario workspace is switched to `Graph` mode, the left-side scenario list remains visible, and the right-side main panel shows the scenario dependency graph. The graph is rendered by an in-house SVG view (no third-party graph library). Each node displays the scenario name, and directed edges represent scenario dependencies. In v1, the graph is read-only and does not support node selection or direct graph interaction beyond viewing.
 
 ### LAYOUT_09
 Selecting a scenario opens the scenario editor in the main content panel.

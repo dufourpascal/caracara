@@ -1,105 +1,64 @@
 "use client"
 
-import "@xyflow/react/dist/style.css"
+import { useId, useMemo } from "react"
+import { AlertCircle, Maximize, Minus, Plus } from "lucide-react"
 
 import {
-  Background,
-  BackgroundVariant,
-  Controls,
-  Handle,
-  MarkerType,
-  Position,
-  ReactFlow,
-  type Edge,
-  type Node,
-  type NodeProps,
-} from "@xyflow/react"
-import { AlertCircle } from "lucide-react"
-import { useTheme } from "next-themes"
-
+  buildSmoothStepPath,
+  getEdgeEndpoints,
+  getScenarioGraphBounds,
+} from "@/lib/scenario-graph-geometry"
 import {
   buildScenarioGraphLayout,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  type ScenarioGraphLayoutPhaseNode,
+  type ScenarioGraphLayoutScenarioNode,
   type ScenarioGraphScenario,
 } from "@/lib/scenario-graph-layout"
+import { usePanZoom } from "@/lib/use-pan-zoom"
 import { Badge } from "@workspace/ui/components/badge"
-
-type PhaseGraphNodeData = {
-  name: string
-  order: number
-  scenarioCount: number
-  width: number
-  height: number
-}
-
-type ScenarioGraphNodeData = {
-  name: string
-  slug: string
-  isRoot: boolean
-}
-
-type PhaseGraphNodeType = Node<PhaseGraphNodeData, "phase">
-type ScenarioGraphNodeType = Node<ScenarioGraphNodeData, "scenario">
+import { Button } from "@workspace/ui/components/button"
 
 const EDGE_STROKE =
   "color-mix(in oklch, var(--foreground) 24%, var(--border) 76%)"
 const PHASE_EDGE_STROKE =
   "color-mix(in oklch, var(--foreground) 38%, var(--border) 62%)"
+const BACKGROUND_GAP = 24
+const BACKGROUND_DOT_SIZE = 1
 
-const nodeTypes = {
-  phase: PhaseGraphNode,
-  scenario: ScenarioGraphNode,
-}
-
-function PhaseGraphNode({ data }: NodeProps<PhaseGraphNodeType>) {
+function PhaseGraphNode({ node }: { node: ScenarioGraphLayoutPhaseNode }) {
   return (
-    <div
-      className="border border-border bg-muted/[0.16]"
-      style={{
-        height: data.height,
-        width: data.width,
-      }}
-    >
-      <Handle
-        className="pointer-events-none size-2 border-0 bg-transparent opacity-0"
-        isConnectable={false}
-        position={Position.Top}
-        type="target"
-      />
+    <div className="h-full border border-border bg-muted/[0.16]">
       <div className="flex items-center justify-between gap-3 border-b border-border bg-background/80 px-4 py-3">
         <div>
           <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-            Phase {data.order}
+            Phase {node.order}
           </p>
-          <p className="mt-1 text-sm font-medium text-foreground">{data.name}</p>
+          <p className="mt-1 text-sm font-medium text-foreground">
+            {node.name}
+          </p>
         </div>
         <Badge className="font-mono" variant="outline">
-          {data.scenarioCount}
+          {node.scenarioCount}
         </Badge>
       </div>
-      <Handle
-        className="pointer-events-none size-2 border-0 bg-transparent opacity-0"
-        isConnectable={false}
-        position={Position.Bottom}
-        type="source"
-      />
     </div>
   )
 }
 
-function ScenarioGraphNode({ data }: NodeProps<ScenarioGraphNodeType>) {
+function ScenarioGraphNode({
+  node,
+}: {
+  node: ScenarioGraphLayoutScenarioNode
+}) {
   return (
-    <div className="w-[11.5rem] border border-border bg-background px-3 py-2 text-left">
-      <Handle
-        className="pointer-events-none size-2 border-0 bg-transparent opacity-0"
-        isConnectable={false}
-        position={Position.Top}
-        type="target"
-      />
+    <div className="h-full overflow-hidden border border-border bg-background px-3 py-2 text-left">
       <div className="flex items-start justify-between gap-3">
-        <p className="max-w-32 text-[13px] leading-snug font-medium text-foreground">
-          {data.name}
+        <p className="line-clamp-2 max-w-32 text-[13px] leading-snug font-medium text-foreground">
+          {node.name}
         </p>
-        {data.isRoot ? (
+        {node.isRoot ? (
           <Badge
             className="shrink-0 px-1.5 py-0 text-[9px] font-normal tracking-[0.18em] uppercase"
             variant="outline"
@@ -109,15 +68,31 @@ function ScenarioGraphNode({ data }: NodeProps<ScenarioGraphNodeType>) {
         ) : null}
       </div>
       <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
-        {data.slug}
+        {node.slug}
       </p>
-      <Handle
-        className="pointer-events-none size-2 border-0 bg-transparent opacity-0"
-        isConnectable={false}
-        position={Position.Bottom}
-        type="source"
-      />
     </div>
+  )
+}
+
+function ArrowMarker({ color, id }: { color: string; id: string }) {
+  return (
+    <marker
+      id={id}
+      markerHeight="12.5"
+      markerUnits="strokeWidth"
+      markerWidth="12.5"
+      orient="auto-start-reverse"
+      refX="0"
+      refY="0"
+      viewBox="-10 -10 20 20"
+    >
+      <polyline
+        points="-5,-4 0,0 -5,4 -5,-4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ fill: color, stroke: color, strokeWidth: 1 }}
+      />
+    </marker>
   )
 }
 
@@ -126,53 +101,25 @@ export function ScenarioGraph({
 }: {
   scenarios: ScenarioGraphScenario[]
 }) {
-  const { resolvedTheme } = useTheme()
-  const layout = buildScenarioGraphLayout(scenarios)
-
-  const phaseNodes: PhaseGraphNodeType[] = layout.phaseNodes.map((node) => ({
-    id: node.id,
-    type: "phase",
-    position: node.position,
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-    data: {
-      name: node.name,
-      order: node.order,
-      scenarioCount: node.scenarioCount,
-      width: node.size.width,
-      height: node.size.height,
-    },
-  }))
-
-  const scenarioNodes: ScenarioGraphNodeType[] = layout.scenarioNodes.map((node) => ({
-    id: node.id,
-    type: "scenario",
-    position: node.position,
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-    data: {
-      name: node.name,
-      slug: node.slug,
-      isRoot: node.isRoot,
-    },
-  }))
-
-  const edges: Edge[] = layout.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    type: "smoothstep",
-    animated: false,
-    style: {
-      stroke: edge.kind === "phase" ? PHASE_EDGE_STROKE : EDGE_STROKE,
-      strokeDasharray: edge.kind === "phase" ? "8 6" : undefined,
-      strokeWidth: edge.kind === "phase" ? 1.25 : 1.5,
-    },
-    markerEnd: {
-      color: edge.kind === "phase" ? PHASE_EDGE_STROKE : EDGE_STROKE,
-      type: MarkerType.ArrowClosed,
-    },
-  }))
+  const layout = useMemo(() => buildScenarioGraphLayout(scenarios), [scenarios])
+  const bounds = useMemo(() => getScenarioGraphBounds(layout), [layout])
+  const {
+    canZoomIn,
+    canZoomOut,
+    fitView,
+    handlers,
+    size,
+    transform,
+    viewportRef,
+    zoomIn,
+    zoomOut,
+  } = usePanZoom(bounds)
+  const idPrefix = useId()
+  const patternId = `${idPrefix}-dots`
+  const markerId = `${idPrefix}-arrow`
+  const phaseMarkerId = `${idPrefix}-phase-arrow`
+  const scaledGap = BACKGROUND_GAP * transform.k
+  const dotRadius = (BACKGROUND_DOT_SIZE * transform.k) / 2
 
   return (
     <div className="flex h-full flex-col bg-muted/[0.08]">
@@ -186,42 +133,120 @@ export function ScenarioGraph({
           </span>
         </div>
       ) : null}
-      <div className="min-h-0 flex-1">
-        <ReactFlow
-          colorMode={resolvedTheme === "dark" ? "dark" : "light"}
-          defaultEdgeOptions={{
-            markerEnd: {
-              color: EDGE_STROKE,
-              type: MarkerType.ArrowClosed,
-            },
-            style: {
-              stroke: EDGE_STROKE,
-              strokeWidth: 1.5,
-            },
-            type: "smoothstep",
-          }}
-          edges={edges}
-          elementsSelectable={false}
-          fitView
-          fitViewOptions={{ padding: 0.18 }}
-          maxZoom={1.4}
-          minZoom={0.35}
-          nodes={[...phaseNodes, ...scenarioNodes]}
-          nodeTypes={nodeTypes}
-          nodesConnectable={false}
-          nodesDraggable={false}
-          panOnDrag
-          proOptions={{ hideAttribution: true }}
-          zoomOnDoubleClick={false}
+      <div
+        className="relative min-h-0 flex-1 overflow-hidden"
+        ref={viewportRef}
+      >
+        <svg
+          aria-label="Scenario dependency graph"
+          className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
+          role="group"
+          {...handlers}
         >
-          <Background
-            color="var(--color-border)"
-            gap={24}
-            size={1}
-            variant={BackgroundVariant.Dots}
-          />
-          <Controls position="bottom-left" showInteractive={false} />
-        </ReactFlow>
+          <defs>
+            <pattern
+              height={scaledGap}
+              id={patternId}
+              patternTransform={`translate(${-scaledGap / 2},${-scaledGap / 2})`}
+              patternUnits="userSpaceOnUse"
+              width={scaledGap}
+              x={transform.x % scaledGap}
+              y={transform.y % scaledGap}
+            >
+              <circle
+                cx={dotRadius}
+                cy={dotRadius}
+                r={dotRadius}
+                style={{ fill: "var(--color-border)" }}
+              />
+            </pattern>
+            <ArrowMarker color={EDGE_STROKE} id={markerId} />
+            <ArrowMarker color={PHASE_EDGE_STROKE} id={phaseMarkerId} />
+          </defs>
+          <rect fill={`url(#${patternId})`} height="100%" width="100%" />
+          {size ? (
+            <g
+              transform={`translate(${transform.x} ${transform.y}) scale(${transform.k})`}
+            >
+              {layout.edges.map((edge) => {
+                const endpoints = getEdgeEndpoints(edge, layout)
+
+                if (!endpoints) {
+                  return null
+                }
+
+                const isPhase = edge.kind === "phase"
+
+                return (
+                  <path
+                    d={buildSmoothStepPath(endpoints.source, endpoints.target)}
+                    data-edge-kind={edge.kind}
+                    fill="none"
+                    key={edge.id}
+                    markerEnd={`url(#${isPhase ? phaseMarkerId : markerId})`}
+                    style={{
+                      stroke: isPhase ? PHASE_EDGE_STROKE : EDGE_STROKE,
+                      strokeDasharray: isPhase ? "8 6" : undefined,
+                      strokeWidth: isPhase ? 1.25 : 1.5,
+                    }}
+                  />
+                )
+              })}
+              {layout.phaseNodes.map((node) => (
+                <foreignObject
+                  data-node-kind="phase"
+                  height={node.size.height}
+                  key={node.id}
+                  width={node.size.width}
+                  x={node.position.x}
+                  y={node.position.y}
+                >
+                  <PhaseGraphNode node={node} />
+                </foreignObject>
+              ))}
+              {layout.scenarioNodes.map((node) => (
+                <foreignObject
+                  data-node-kind="scenario"
+                  height={NODE_HEIGHT}
+                  key={node.id}
+                  width={NODE_WIDTH}
+                  x={node.position.x}
+                  y={node.position.y}
+                >
+                  <ScenarioGraphNode node={node} />
+                </foreignObject>
+              ))}
+            </g>
+          ) : null}
+        </svg>
+        <div className="absolute bottom-4 left-4 flex flex-col [&>button+button]:border-t-0">
+          <Button
+            aria-label="Zoom in"
+            disabled={!canZoomIn}
+            onClick={zoomIn}
+            size="icon-sm"
+            variant="outline"
+          >
+            <Plus />
+          </Button>
+          <Button
+            aria-label="Zoom out"
+            disabled={!canZoomOut}
+            onClick={zoomOut}
+            size="icon-sm"
+            variant="outline"
+          >
+            <Minus />
+          </Button>
+          <Button
+            aria-label="Fit view"
+            onClick={fitView}
+            size="icon-sm"
+            variant="outline"
+          >
+            <Maximize />
+          </Button>
+        </div>
       </div>
     </div>
   )

@@ -110,8 +110,8 @@ type DragState = {
 
 /**
  * Pan/zoom state for a measured viewport. The view is fitted to `bounds`
- * until the user pans or zooms; a change in viewport size or content bounds
- * discards the manual view and refits.
+ * until the user pans or zooms; a change in content bounds discards the
+ * manual view and refits, a viewport resize keeps it.
  */
 export function usePanZoom(bounds: GraphRect | null) {
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -119,14 +119,9 @@ export function usePanZoom(bounds: GraphRect | null) {
   const [manualView, setManualView] = useState<ManualView | null>(null)
   const dragRef = useRef<DragState | null>(null)
 
-  const fitKey = [
-    size?.width,
-    size?.height,
-    bounds?.x,
-    bounds?.y,
-    bounds?.width,
-    bounds?.height,
-  ].join(":")
+  // The manual view is keyed on the content bounds only: new content refits,
+  // but a viewport resize keeps the user's pan/zoom, as React Flow did.
+  const fitKey = [bounds?.x, bounds?.y, bounds?.width, bounds?.height].join(":")
   const fitTransform = computeFitTransform(bounds, size)
   const transform =
     manualView?.fitKey === fitKey ? manualView.transform : fitTransform
@@ -159,6 +154,10 @@ export function usePanZoom(bounds: GraphRect | null) {
 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
+
+      if (dragRef.current) {
+        return
+      }
 
       const { fitKey: currentFitKey, fitTransform: currentFit } =
         latestRef.current
@@ -221,6 +220,12 @@ export function usePanZoom(bounds: GraphRect | null) {
         return
       }
 
+      if (event.pointerType === "mouse" && event.buttons === 0) {
+        // The pointerup never reached us (window blur, context menu).
+        dragRef.current = null
+        return
+      }
+
       setTransform({
         x: drag.origin.x + event.clientX - drag.startX,
         y: drag.origin.y + event.clientY - drag.startY,
@@ -246,6 +251,7 @@ export function usePanZoom(bounds: GraphRect | null) {
     fitView: () => setManualView(null),
     handlers: {
       ...handlers,
+      onLostPointerCapture: handlers.onPointerUp,
       onPointerCancel: handlers.onPointerUp,
     },
     size,

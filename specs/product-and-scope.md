@@ -40,7 +40,7 @@ The hosted system stores and serves scenario definitions, but the actual executi
 
 The product supports multiple local agent runners.
 
-Caracara Score executes scenarios through supported local coding-agent backends, initially including the Codex SDK and Claude Code CLI, while keeping one consistent scenario model above both runners.
+Caracara Score executes scenarios through supported local coding-agent backends, initially including the Codex CLI and Claude Code CLI, while keeping one consistent scenario model above both runners.
 
 ### SCOPE_08
 

@@ -76,6 +76,16 @@ That starts both:
 - `web#dev` for Next.js
 - `web#convex:dev` for Convex
 
+## Install the CLI
+
+Build the `caracara` CLI from this checkout and install it globally:
+
+```bash
+pnpm install:cli
+```
+
+The script runs a frozen install, builds the CLI, and deploys its production files to `~/.local/share/caracara/cli/<commit>` (or `$XDG_DATA_HOME/caracara/cli/<commit>`) with a `BUILD-INFO.json`. It then points `caracara/cli/current` at that deployment and runs `npm install -g` on it. Pass `--target <dir>` to deploy into an empty directory instead (without updating `current`), or `--skip-global` to skip the global npm install. Codex runs need the Codex CLI installed separately; see [Codex model configuration](#codex-model-configuration).
+
 ## Local CLI secrets
 
 `caracara init` creates `.caracara/secrets.env` with owner-only permissions and adds it to `.caracara/.gitignore`. Put project-specific credentials there using names that start with `CARACARA_SECRET_`:
@@ -122,7 +132,7 @@ Set the Codex model and reasoning effort in `.caracara/config.json`:
 
 Both settings are optional. Without them, Codex uses its own configuration. You can also set them with `caracara init --model <model> --model-reasoning-effort <effort>`.
 
-Caracara runs Codex through `@openai/codex-sdk` and its bundled Codex runtime. Updating a globally installed `codex` does not update Caracara's runtime. The SDK uses the existing local Codex authentication and starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
+Caracara runs the Codex CLI installed on your machine: the `codex` executable on `PATH`, or the file named by `CARACARA_CODEX_PATH`. Install it with `npm install -g @openai/codex`; Caracara supports version 0.164.0 or newer and prints a warning for older versions. Updating `codex` updates the runtime Caracara uses. Codex uses your existing local Codex login, and Caracara starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
 
 When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
 

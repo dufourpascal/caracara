@@ -5,13 +5,6 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 
-import {
-  Codex,
-  type CodexOptions,
-  type SandboxMode,
-  type ThreadOptions,
-  type Usage,
-} from "@openai/codex-sdk"
 import { BLOCKED_REASONS } from "@workspace/contracts"
 import type {
   BlockedReason,
@@ -20,6 +13,16 @@ import type {
   RunnerType,
 } from "@workspace/contracts"
 
+import {
+  checkCodexVersion,
+  CodexClient,
+  getCodexVersion,
+  resolveCodexExecutable,
+  type CodexClientOptions,
+  type CodexSandboxMode,
+  type CodexThreadOptions,
+  type CodexUsage,
+} from "./codex-exec.js"
 import type { ModelReasoningEffort } from "./config.js"
 
 export type RunnerExecution = {
@@ -82,6 +85,8 @@ type RunnerStartInput = {
 
 export interface RunnerAdapter {
   type: RunnerType
+  /** Checks local prerequisites before the run is created on the server. */
+  preflight?(): Promise<void>
   startRun(input: RunnerStartInput): Promise<RunnerSession>
 }
 
@@ -230,7 +235,7 @@ const codexPricingPerMillionTokens: Record<
 }
 
 export function toCodexRunnerUsage(
-  usage: Usage | null,
+  usage: CodexUsage | null,
   model?: string
 ): RunnerUsage | undefined {
   if (!usage) {
@@ -629,7 +634,7 @@ function redactEvidenceDirectory(
   }
 }
 
-function getCodexSandboxMode(): SandboxMode {
+function getCodexSandboxMode(): CodexSandboxMode {
   const sandboxMode = process.env.CARACARA_CODEX_SANDBOX ?? defaultCodexSandbox
 
   if (
@@ -678,7 +683,7 @@ export function buildCodexClientOptions(input: {
   logFilePath: string
   wsEndpoint: string
   modelReasoningEffort?: ModelReasoningEffort
-}): CodexOptions {
+}): CodexClientOptions {
   return {
     env: compactEnvironment(input.env),
     config: {
@@ -707,7 +712,7 @@ export function buildCodexThreadOptions(input: {
   cwd: string
   model?: string
   modelReasoningEffort?: ModelReasoningEffort
-}): ThreadOptions {
+}): CodexThreadOptions {
   return {
     workingDirectory: input.cwd,
     skipGitRepoCheck: true,
@@ -1073,7 +1078,19 @@ async function launchSharedChromium(input: {
 class CodexRunner implements RunnerAdapter {
   readonly type = "codex" as const
 
+  async preflight() {
+    const executablePath = resolveCodexExecutable()
+    const versionWarning = checkCodexVersion(
+      await getCodexVersion(executablePath)
+    )
+    if (versionWarning) {
+      process.stderr.write(`Warning: ${versionWarning}\n`)
+    }
+  }
+
   async startRun(input: RunnerStartInput) {
+    // Resolve Codex before launching Chromium so a missing CLI fails fast.
+    const executablePath = resolveCodexExecutable()
     const sharedBrowser = await launchSharedChromium({
       cwd: input.cwd,
       initialUrl: input.targetUrl,
@@ -1081,16 +1098,17 @@ class CodexRunner implements RunnerAdapter {
     })
     const runnerEnv = { ...process.env, ...input.secrets }
     const secretNames = Object.keys(input.secrets)
-    let codex: Codex
+    let codex: CodexClient
     try {
-      codex = new Codex(
-        buildCodexClientOptions({
+      codex = new CodexClient({
+        ...buildCodexClientOptions({
           env: runnerEnv,
           logFilePath: sharedBrowser.chromeDevtoolsLogPath,
           wsEndpoint: sharedBrowser.wsEndpoint,
           modelReasoningEffort: input.modelReasoningEffort,
-        })
-      )
+        }),
+        executablePath,
+      })
     } catch (error) {
       await sharedBrowser.close().catch(() => undefined)
       throw error
@@ -1225,7 +1243,7 @@ class CodexRunner implements RunnerAdapter {
               usage = { ...usage, complete: false }
             }
             const message = (
-              error instanceof Error ? error.message : "Codex SDK failed."
+              error instanceof Error ? error.message : "Codex failed."
             )
               .split(evidenceDirectory)
               .join("[LOCAL_EVIDENCE_DIR]")
@@ -1382,6 +1400,6 @@ class ClaudeRunner implements RunnerAdapter {
   }
 }
 
-export function getRunnerAdapter(type: RunnerType) {
+export function getRunnerAdapter(type: RunnerType): RunnerAdapter {
   return type === "codex" ? new CodexRunner() : new ClaudeRunner()
 }

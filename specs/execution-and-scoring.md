@@ -34,9 +34,9 @@ A user may execute a specific scenario by slug through the CLI, and this mode ru
 
 Execution is performed through supported local agent runners.
 
-In v1, the system supports the Codex SDK and Claude Code CLI as local execution backends, while keeping the scenario model independent from any one runner.
+In v1, the system supports the Codex CLI and Claude Code CLI as local execution backends, while keeping the scenario model independent from any one runner.
 
-The local `.caracara/config.json` may pin the Codex model and reasoning effort for reproducible project runs. If either setting is absent, the Codex SDK resolves its own default.
+The local `.caracara/config.json` may pin the Codex model and reasoning effort for reproducible project runs. If either setting is absent, the Codex CLI resolves its own default.
 
 ### EXEC_06
 
@@ -50,7 +50,7 @@ Evaluation checks are executed in the same runner invocation as task instruction
 
 The runner receives the ordered authored checks and must return exactly one passed, failed, or blocked verdict with concrete browser evidence for every check. A blocked verdict includes one structured reason: `blocked_by_check`, `setup_incomplete`, `environment_failure`, or `tool_limit`. The runner retries only blocked checks once, using the current browser state, before returning their final verdicts. Historical `not_observed` verdicts remain readable for compatibility but are not emitted by current runners. It never returns a numeric score.
 
-For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same SDK thread if the screenshot is missing. A second miss is a runner failure.
+For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same Codex thread if the screenshot is missing. A second miss is a runner failure.
 
 ### EXEC_08
 

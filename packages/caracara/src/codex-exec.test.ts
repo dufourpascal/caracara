@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
@@ -78,6 +79,24 @@ if (mode === "wrapper") {
   inner.on("exit", (code) => process.exit(code ?? 1))
   return
 }
+if (mode === "orphaning-wrapper") {
+  // A launcher that exits right away, leaving a child that reports a failed
+  // turn and then hangs on the shared stdout.
+  const { spawn } = require("node:child_process")
+  spawn(process.execPath, [__filename, ...args], {
+    env: { ...process.env, FAKE_CODEX_MODE: "fail-then-hang" },
+    stdio: "inherit",
+  }).unref()
+  return
+}
+if (mode === "fail-then-hang") {
+  process.on("SIGTERM", () => {})
+  emit({ type: "thread.started", thread_id: "thread_orphan" })
+  emit({ type: "turn.failed", error: { message: "model refused" } })
+  writeFileSync(process.env.FAKE_CODEX_RECORD + ".ready", String(process.pid))
+  setInterval(() => {}, 1000)
+  return
+}
 if (mode === "exit") {
   process.stderr.write("codex exploded")
   process.exit(2)
@@ -105,6 +124,15 @@ let tempDir: string
 let binDir: string
 let fakeCodexPath: string
 let recordPath: string
+
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH"
+  }
+}
 
 function fakeEnv(mode = "ok"): NodeJS.ProcessEnv {
   return {
@@ -426,6 +454,23 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
 
     await expect(run).rejects.toThrow("interrupted by test")
     expect(Date.now() - started).toBeLessThan(5_000)
+  })
+
+  it("cleans up a surviving child when the launcher already exited", async () => {
+    const thread = createClient("orphaning-wrapper").startThread(
+      buildCodexThreadOptions({ cwd: "/tmp/project" })
+    )
+    const readyPath = `${recordPath}.ready`
+    const run = thread.run("Fail.")
+
+    await expect(run).rejects.toThrow("model refused")
+
+    while (!existsSync(readyPath)) {
+      await delay(20)
+    }
+    const childPid = Number(readFileSync(readyPath, "utf8"))
+    rmSync(readyPath, { force: true })
+    expect(isProcessAlive(childPid)).toBe(false)
   })
 
   it("rejects when the executable cannot be spawned", async () => {

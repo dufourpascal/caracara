@@ -212,10 +212,15 @@ export async function getCodexVersion(
   const closed = new Promise<void>((resolve) => {
     child.once("close", () => resolve())
   })
+  const timer = new AbortController()
   const timedOut = await Promise.race([
     closed.then(() => false),
-    delay(VERSION_PROBE_TIMEOUT_MS).then(() => true),
+    delay(VERSION_PROBE_TIMEOUT_MS, true, { signal: timer.signal }).catch(
+      () => false
+    ),
   ])
+  // Cancel the pending timer so a quick probe does not keep the CLI alive.
+  timer.abort()
   if (timedOut) {
     await terminateChildProcess(child, detached, closed).catch(() => undefined)
     return undefined
@@ -476,8 +481,12 @@ export class CodexThread {
       detached,
       windowsHide: true,
     })
+    let isClosed = false
     const closed = new Promise<void>((resolve) => {
-      child.once("close", () => resolve())
+      child.once("close", () => {
+        isClosed = true
+        resolve()
+      })
     })
     // The close promise makes the helper kill the whole group even when the
     // leader (npm's launcher script) has exited and its native child still
@@ -575,10 +584,9 @@ export class CodexThread {
     } finally {
       signal?.removeEventListener("abort", onAbort)
       lines.close()
-      if (
-        terminating ||
-        (child.exitCode === null && child.signalCode === null)
-      ) {
+      // Keyed on "close", not the leader's exit: an exited launcher script
+      // can leave its native child alive and holding the pipes.
+      if (!isClosed) {
         await (
           terminating ?? terminateChildProcess(child, detached, closed)
         ).catch(() => undefined)

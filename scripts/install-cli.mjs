@@ -174,7 +174,14 @@ try {
   if (existsSync(target)) {
     renameSync(target, previous)
   }
-  renameSync(staging, target)
+  try {
+    renameSync(staging, target)
+  } catch (error) {
+    if (existsSync(previous)) {
+      renameSync(previous, target)
+    }
+    throw error
+  }
   rmSync(previous, { recursive: true, force: true })
 } catch (error) {
   rmSync(staging, { recursive: true, force: true })

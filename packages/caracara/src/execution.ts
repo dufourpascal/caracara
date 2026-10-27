@@ -5,13 +5,6 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 
-import {
-  Codex,
-  type CodexOptions,
-  type SandboxMode,
-  type ThreadOptions,
-  type Usage,
-} from "@openai/codex-sdk"
 import { BLOCKED_REASONS } from "@workspace/contracts"
 import type {
   BlockedReason,
@@ -20,7 +13,23 @@ import type {
   RunnerType,
 } from "@workspace/contracts"
 
+import {
+  checkCodexVersion,
+  CodexClient,
+  getCodexVersion,
+  resolveCodexExecutable,
+  type CodexClientOptions,
+  type CodexSandboxMode,
+  type CodexThreadOptions,
+  type CodexUsage,
+} from "./codex-exec.js"
 import type { ModelReasoningEffort } from "./config.js"
+import {
+  buildWindowsTaskkillArgs,
+  terminateChildProcess,
+} from "./process-control.js"
+
+export { buildWindowsTaskkillArgs, terminateChildProcess }
 
 export type RunnerExecution = {
   executionSummary: string
@@ -82,6 +91,8 @@ type RunnerStartInput = {
 
 export interface RunnerAdapter {
   type: RunnerType
+  /** Checks local prerequisites before the run is created on the server. */
+  preflight?(): Promise<void>
   startRun(input: RunnerStartInput): Promise<RunnerSession>
 }
 
@@ -230,7 +241,7 @@ const codexPricingPerMillionTokens: Record<
 }
 
 export function toCodexRunnerUsage(
-  usage: Usage | null,
+  usage: CodexUsage | null,
   model?: string
 ): RunnerUsage | undefined {
   if (!usage) {
@@ -629,7 +640,7 @@ function redactEvidenceDirectory(
   }
 }
 
-function getCodexSandboxMode(): SandboxMode {
+function getCodexSandboxMode(): CodexSandboxMode {
   const sandboxMode = process.env.CARACARA_CODEX_SANDBOX ?? defaultCodexSandbox
 
   if (
@@ -678,7 +689,7 @@ export function buildCodexClientOptions(input: {
   logFilePath: string
   wsEndpoint: string
   modelReasoningEffort?: ModelReasoningEffort
-}): CodexOptions {
+}): CodexClientOptions {
   return {
     env: compactEnvironment(input.env),
     config: {
@@ -707,7 +718,7 @@ export function buildCodexThreadOptions(input: {
   cwd: string
   model?: string
   modelReasoningEffort?: ModelReasoningEffort
-}): ThreadOptions {
+}): CodexThreadOptions {
   return {
     workingDirectory: input.cwd,
     skipGitRepoCheck: true,
@@ -719,140 +730,6 @@ export function buildCodexThreadOptions(input: {
       input.modelReasoningEffort === "none"
         ? undefined
         : input.modelReasoningEffort,
-  }
-}
-
-function signalChildProcess(
-  child: ChildProcess,
-  signal: NodeJS.Signals,
-  detached: boolean
-) {
-  if (!child.pid) {
-    return
-  }
-  try {
-    if (detached && process.platform !== "win32") {
-      process.kill(-child.pid, signal)
-    } else {
-      child.kill(signal)
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-      throw error
-    }
-  }
-}
-
-function processGroupExists(pid: number) {
-  try {
-    process.kill(-pid, 0)
-    return true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-      return false
-    }
-    throw error
-  }
-}
-
-export function buildWindowsTaskkillArgs(pid: number) {
-  return ["/PID", String(pid), "/T", "/F"]
-}
-
-async function terminateWindowsProcessTree(child: ChildProcess) {
-  const pid = child.pid
-  if (!pid) {
-    return
-  }
-  await new Promise<void>((resolve, reject) => {
-    const taskkill = spawn(
-      "taskkill.exe",
-      buildWindowsTaskkillArgs(pid),
-      {
-        stdio: "ignore",
-        windowsHide: true,
-      }
-    )
-    taskkill.once("error", reject)
-    taskkill.once("close", (code) => {
-      if (
-        code === 0 ||
-        child.exitCode !== null ||
-        child.signalCode !== null
-      ) {
-        resolve()
-      } else {
-        reject(new Error(`taskkill exited with code ${code}.`))
-      }
-    })
-  })
-}
-
-async function waitForProcessGroupExit(pid: number) {
-  const deadline = Date.now() + 1_000
-  while (processGroupExists(pid) && Date.now() < deadline) {
-    await delay(10)
-  }
-  if (processGroupExists(pid)) {
-    throw new Error("Failed to terminate child process group.")
-  }
-}
-
-export async function terminateChildProcess(
-  child: ChildProcess,
-  detached = false,
-  closePromise?: Promise<void>
-) {
-  if (!child.pid) {
-    return
-  }
-  if (
-    !closePromise &&
-    (child.exitCode !== null || child.signalCode !== null)
-  ) {
-    return
-  }
-
-  const waitForClose =
-    closePromise ??
-    new Promise<void>((resolve) => {
-      child.once("close", () => resolve())
-    })
-  if (process.platform === "win32") {
-    await terminateWindowsProcessTree(child)
-    const closed = await Promise.race([
-      waitForClose.then(() => true),
-      delay(1_000).then(() => false),
-    ])
-    if (!closed) {
-      child.stdout?.destroy()
-      child.stderr?.destroy()
-      await waitForClose
-    }
-    return
-  }
-  signalChildProcess(child, "SIGTERM", detached)
-
-  const gracePeriod = delay(1_000)
-  const closedBeforeGrace = await Promise.race([
-    waitForClose.then(() => true),
-    gracePeriod.then(() => false),
-  ])
-  const hasRemainingProcessGroup =
-    detached && processGroupExists(child.pid)
-  if (closedBeforeGrace && !hasRemainingProcessGroup) {
-    return
-  }
-
-  await gracePeriod
-  signalChildProcess(child, "SIGKILL", detached)
-  child.stdout?.destroy()
-  child.stderr?.destroy()
-  if (!closedBeforeGrace) {
-    await waitForClose
-  }
-  if (detached) {
-    await waitForProcessGroupExit(child.pid)
   }
 }
 
@@ -1073,7 +950,20 @@ async function launchSharedChromium(input: {
 class CodexRunner implements RunnerAdapter {
   readonly type = "codex" as const
 
+  async preflight() {
+    const executablePath = resolveCodexExecutable()
+    const problem = checkCodexVersion(await getCodexVersion(executablePath))
+    if (problem?.severity === "error") {
+      throw new Error(problem.message)
+    }
+    if (problem) {
+      process.stderr.write(`Warning: ${problem.message}\n`)
+    }
+  }
+
   async startRun(input: RunnerStartInput) {
+    // Resolve Codex before launching Chromium so a missing CLI fails fast.
+    const executablePath = resolveCodexExecutable()
     const sharedBrowser = await launchSharedChromium({
       cwd: input.cwd,
       initialUrl: input.targetUrl,
@@ -1081,16 +971,17 @@ class CodexRunner implements RunnerAdapter {
     })
     const runnerEnv = { ...process.env, ...input.secrets }
     const secretNames = Object.keys(input.secrets)
-    let codex: Codex
+    let codex: CodexClient
     try {
-      codex = new Codex(
-        buildCodexClientOptions({
+      codex = new CodexClient({
+        ...buildCodexClientOptions({
           env: runnerEnv,
           logFilePath: sharedBrowser.chromeDevtoolsLogPath,
           wsEndpoint: sharedBrowser.wsEndpoint,
           modelReasoningEffort: input.modelReasoningEffort,
-        })
-      )
+        }),
+        executablePath,
+      })
     } catch (error) {
       await sharedBrowser.close().catch(() => undefined)
       throw error
@@ -1225,7 +1116,7 @@ class CodexRunner implements RunnerAdapter {
               usage = { ...usage, complete: false }
             }
             const message = (
-              error instanceof Error ? error.message : "Codex SDK failed."
+              error instanceof Error ? error.message : "Codex failed."
             )
               .split(evidenceDirectory)
               .join("[LOCAL_EVIDENCE_DIR]")
@@ -1382,6 +1273,6 @@ class ClaudeRunner implements RunnerAdapter {
   }
 }
 
-export function getRunnerAdapter(type: RunnerType) {
+export function getRunnerAdapter(type: RunnerType): RunnerAdapter {
   return type === "codex" ? new CodexRunner() : new ClaudeRunner()
 }

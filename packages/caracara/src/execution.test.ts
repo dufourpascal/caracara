@@ -157,7 +157,7 @@ describe("child command termination", () => {
   )
 })
 
-describe("Codex SDK configuration", () => {
+describe("Codex configuration", () => {
   afterEach(() => {
     vi.unstubAllEnvs()
   })

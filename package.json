@@ -6,6 +6,7 @@
     "build": "turbo build",
     "caracara": "node scripts/run-caracara.mjs",
     "caracara:build": "pnpm --filter @workspace/contracts build && pnpm --filter caracara build",
+    "install:cli": "node scripts/install-cli.mjs",
     "dev": "turbo run dev convex:dev --filter=web --parallel",
     "lint": "turbo lint",
     "test": "turbo test",

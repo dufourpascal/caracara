@@ -586,6 +586,7 @@ export async function runCommand(options: RunCommandOptions) {
 
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
+  await runner.preflight?.()
   const runSelection = resolveRunMode(options)
   const runStartedAt = Date.now()
   const creationAttemptId = crypto.randomUUID()

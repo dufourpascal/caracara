@@ -12,6 +12,7 @@ The UI must follow the generated shadcn setup instead of introducing a separate 
 
 - App preset: `radix-lyra`
 - Radix imports: use the individual `@radix-ui/react-*` packages (`import * as DialogPrimitive from "@radix-ui/react-dialog"`). The `radix-ui` umbrella is not a dependency; rewrite imports emitted by `shadcn add`.
+- `resizable` and `sortable-list` in `packages/ui` are in-house components with no third-party dependency. Do not re-add them with `shadcn add`, and do not reintroduce `react-resizable-panels` or `@dnd-kit/*`.
 - Base color: `neutral`
 - CSS variables: enabled
 - Icons: `lucide`

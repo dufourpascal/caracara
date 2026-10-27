@@ -9,6 +9,8 @@ import { tmpdir } from "node:os"
 import { delimiter, join } from "node:path"
 import readline from "node:readline"
 
+import { terminateChildProcess } from "./process-control.js"
+
 export const MINIMUM_CODEX_VERSION = "0.164.0"
 
 const INTERNAL_ORIGINATOR_ENV = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"
@@ -194,6 +196,7 @@ export async function getCodexVersion(
       child = spawn(executablePath, ["--version"], {
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 10_000,
+        killSignal: "SIGKILL",
         windowsHide: true,
       })
     } catch {
@@ -451,11 +454,23 @@ export class CodexThread {
       threadId: this.threadId,
       outputSchemaFile,
     })
+    signal?.throwIfAborted()
+    // Detached on POSIX so an abort kills the whole process group, including
+    // MCP servers Codex started. Abort handling is ours, not spawn's, so a
+    // child that ignores SIGTERM is escalated to SIGKILL.
+    const detached = process.platform !== "win32"
     const child = spawn(this.client.executablePath, args, {
       env: buildChildEnv(this.client.env),
-      signal,
+      detached,
       windowsHide: true,
     })
+    let terminating: Promise<void> | null = null
+    const onAbort = () => {
+      terminating ??= terminateChildProcess(child, detached).catch(
+        () => undefined
+      )
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
 
     const failures: { spawn?: Error } = {}
     // Stays attached for the child's whole life: an abort after this turn
@@ -483,6 +498,9 @@ export class CodexThread {
       input: child.stdout,
       crlfDelay: Infinity,
     })
+    // A destroyed pipe (after a kill) never emits "end", and readline's
+    // iterator would wait forever; end it once the child is gone.
+    void exit.then(() => lines.close())
     let finalResponse = ""
     let usage: CodexUsage | null = null
     let failure: string | null = null
@@ -522,6 +540,11 @@ export class CodexThread {
       if (failures.spawn) {
         throw failures.spawn
       }
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new Error("Codex turn aborted.")
+      }
       if (result.code !== 0 || result.signal) {
         const detail = result.signal
           ? `signal ${result.signal}`
@@ -532,9 +555,12 @@ export class CodexThread {
       }
       return { finalResponse, usage }
     } finally {
+      signal?.removeEventListener("abort", onAbort)
       lines.close()
       if (child.exitCode === null && child.signalCode === null) {
-        child.kill()
+        await (terminating ?? terminateChildProcess(child, detached)).catch(
+          () => undefined
+        )
       }
     }
   }

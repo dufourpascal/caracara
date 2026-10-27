@@ -8,6 +8,7 @@ import {
 } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { setTimeout as delay } from "node:timers/promises"
 import { delimiter, dirname, join } from "node:path"
 
 import {
@@ -57,6 +58,13 @@ writeFileSync(
 )
 const mode = process.env.FAKE_CODEX_MODE ?? "ok"
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n")
+if (mode === "hang") {
+  // Ignores SIGTERM like a stuck CLI; only SIGKILL ends it.
+  process.on("SIGTERM", () => {})
+  emit({ type: "thread.started", thread_id: "thread_hang" })
+  setInterval(() => {}, 1000)
+  return
+}
 if (mode === "exit") {
   process.stderr.write("codex exploded")
   process.exit(2)
@@ -369,6 +377,20 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     await expect(thread.run("Hi.")).rejects.toThrow(
       "Codex Exec exited with code 2: codex exploded"
     )
+  })
+
+  it("kills a Codex that ignores SIGTERM when the turn is aborted", async () => {
+    const controller = new AbortController()
+    const thread = createClient("hang").startThread(
+      buildCodexThreadOptions({ cwd: "/tmp/project" })
+    )
+    const started = Date.now()
+    const run = thread.run("Hang.", { signal: controller.signal })
+    await delay(300)
+    controller.abort(new Error("interrupted by test"))
+
+    await expect(run).rejects.toThrow("interrupted by test")
+    expect(Date.now() - started).toBeLessThan(5_000)
   })
 
   it("rejects when the executable cannot be spawned", async () => {

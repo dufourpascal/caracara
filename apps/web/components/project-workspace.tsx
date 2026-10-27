@@ -94,6 +94,7 @@ import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
 import { ScenarioGraph } from "@/components/scenario-graph"
 import { getErrorMessage } from "@/lib/errors"
+import { usePersistedPanelLayout } from "@/lib/panel-layout"
 import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
 type WorkspaceKind = "project" | "suites" | "scenarios" | "runs" | "phases"
@@ -883,8 +884,6 @@ function ScenarioResultValue({
   )
 }
 
-type PanelLayout = Record<string, number>
-
 function getPanelLayoutToken({
   projectSlug,
   workspace,
@@ -895,66 +894,6 @@ function getPanelLayoutToken({
   scope: string
 }) {
   return `project-workspace:${projectSlug}:${workspace}:${scope}`
-}
-
-export function readStoredPanelLayout(
-  storageKey: string,
-  panelIds: string[]
-): PanelLayout | undefined {
-  if (typeof window === "undefined") {
-    return undefined
-  }
-
-  try {
-    const storedValue = window.localStorage.getItem(storageKey)
-
-    if (!storedValue) {
-      return undefined
-    }
-
-    const parsedValue = JSON.parse(storedValue)
-
-    if (
-      !parsedValue ||
-      typeof parsedValue !== "object" ||
-      Array.isArray(parsedValue)
-    ) {
-      return undefined
-    }
-
-    const nextLayout: PanelLayout = {}
-    for (const panelId of panelIds) {
-      const storedSize = parsedValue[panelId]
-      if (typeof storedSize !== "number") {
-        return undefined
-      }
-      nextLayout[panelId] = storedSize
-    }
-
-    return nextLayout
-  } catch {
-    return undefined
-  }
-}
-
-function persistPanelLayout(storageKey: string, layout: PanelLayout) {
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(layout))
-  } catch {
-    // Ignore storage failures and fall back to default sizes.
-  }
-}
-
-function usePersistedPanelLayout(storageKey: string, panelIds: string[]) {
-  const [defaultLayout] = useState<PanelLayout | undefined>(() =>
-    readStoredPanelLayout(storageKey, panelIds)
-  )
-
-  return {
-    defaultLayout,
-    onLayoutChanged: (layout: PanelLayout) =>
-      persistPanelLayout(storageKey, layout),
-  }
 }
 
 export function ProjectWorkspace({
@@ -1229,7 +1168,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "scenarios",
       scope: "layout",
     }),
-    [scenarioListPanelId, scenarioDetailPanelId]
+    [scenarioListPanelId]
   )
   const suitePanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1237,7 +1176,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "suites",
       scope: "layout",
     }),
-    [suiteListPanelId, suiteDetailPanelId]
+    [suiteListPanelId]
   )
   const runPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1245,7 +1184,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "runs",
       scope: "layout",
     }),
-    [runListPanelId, runDetailPanelId]
+    [runListPanelId]
   )
   const runDetailPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -1253,7 +1192,7 @@ function AuthenticatedProjectWorkspace({
       workspace: "runs",
       scope: "detail-layout",
     }),
-    [runSummaryPanelId, runResultPanelId]
+    [runSummaryPanelId]
   )
   const hasTriggeredScenarioMetadataEnsure = useRef(false)
 
@@ -1601,6 +1540,7 @@ function AuthenticatedProjectWorkspace({
         <ResizablePanelGroup
           className="flex-1"
           defaultLayout={scenarioPanelLayout.defaultLayout}
+          key={scenarioPanelLayout.storageKey}
           onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
@@ -1951,6 +1891,7 @@ function AuthenticatedProjectWorkspace({
         <ResizablePanelGroup
           className="flex-1"
           defaultLayout={suitePanelLayout.defaultLayout}
+          key={suitePanelLayout.storageKey}
           onLayoutChanged={suitePanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
@@ -2074,6 +2015,7 @@ function AuthenticatedProjectWorkspace({
         <ResizablePanelGroup
           className="flex-1"
           defaultLayout={scenarioPanelLayout.defaultLayout}
+          key={`phases:${scenarioPanelLayout.storageKey}`}
           onLayoutChanged={scenarioPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
@@ -2224,6 +2166,7 @@ function AuthenticatedProjectWorkspace({
         <ResizablePanelGroup
           className="min-h-0 flex-1 overflow-hidden"
           defaultLayout={runPanelLayout.defaultLayout}
+          key={runPanelLayout.storageKey}
           onLayoutChanged={runPanelLayout.onLayoutChanged}
           orientation="horizontal"
         >
@@ -2419,6 +2362,7 @@ function AuthenticatedProjectWorkspace({
               <ResizablePanelGroup
                 className="h-full min-h-0 overflow-hidden"
                 defaultLayout={runDetailPanelLayout.defaultLayout}
+                key={runDetailPanelLayout.storageKey}
                 onLayoutChanged={runDetailPanelLayout.onLayoutChanged}
                 orientation="horizontal"
               >

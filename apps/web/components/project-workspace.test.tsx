@@ -18,37 +18,11 @@ import {
   RunEnvironmentFilter,
   ScenarioEditor,
   SuiteEditor,
-  readStoredPanelLayout,
 } from "./project-workspace"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }))
-
-describe("workspace panel layout", () => {
-  it("restores only complete stored layouts", () => {
-    const layouts: Record<string, string> = {
-      "complete-layout": JSON.stringify({ list: 25, detail: 75 }),
-      "incomplete-layout": JSON.stringify({ list: 25 }),
-    }
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: (key: string) => layouts[key] ?? null,
-      },
-    })
-
-    expect(
-      readStoredPanelLayout("complete-layout", ["list", "detail"])
-    ).toEqual({ list: 25, detail: 75 })
-    expect(
-      readStoredPanelLayout("incomplete-layout", ["list", "detail"])
-    ).toBeUndefined()
-    expect(
-      readStoredPanelLayout("missing-layout", ["list", "detail"])
-    ).toBeUndefined()
-  })
-})
 
 describe("run environment filter", () => {
   afterEach(cleanup)

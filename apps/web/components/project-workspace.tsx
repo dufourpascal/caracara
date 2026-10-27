@@ -1076,9 +1076,11 @@ function AuthenticatedProjectWorkspace({
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
   const runSortDirection = runSortAscending ? "asc" : "desc"
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO derive from props instead of syncing in an effect
     setRunEnvironment(normalizeRunEnvironmentFilter(initialRunEnvironment))
   }, [initialRunEnvironment])
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO derive from props instead of syncing in an effect
     setSelectedRunId(initialSelectedRunId)
     setSelectedRunScenarioSlug(initialSelectedRunScenarioSlug)
   }, [initialSelectedRunId, initialSelectedRunScenarioSlug])
@@ -1262,6 +1264,7 @@ function AuthenticatedProjectWorkspace({
 
     if (phases.length === 0) {
       if (selectedPhaseId !== null) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO derive selection instead of syncing in an effect
         setSelectedPhaseId(null)
       }
       return
@@ -1282,6 +1285,7 @@ function AuthenticatedProjectWorkspace({
 
     if (suites.length === 0) {
       if (selectedSuiteId !== null) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO derive selection instead of syncing in an effect
         setSelectedSuiteId(null)
       }
       return
@@ -1492,6 +1496,7 @@ function AuthenticatedProjectWorkspace({
                     const WorkspaceIcon = getWorkspaceIcon(workspace)
 
                     return (
+                      // eslint-disable-next-line react-hooks/static-components -- TODO hoist icon lookup out of render
                       <WorkspaceIcon
                         aria-hidden
                         className="size-3.5 shrink-0 text-muted-foreground"

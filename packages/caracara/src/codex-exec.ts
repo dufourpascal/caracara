@@ -101,6 +101,45 @@ function getPathValue(env: NodeJS.ProcessEnv) {
   return key ? env[key] : undefined
 }
 
+const WINDOWS_TARGET_TRIPLE: Record<string, string> = {
+  x64: "x86_64-pc-windows-msvc",
+  arm64: "aarch64-pc-windows-msvc",
+}
+
+/**
+ * `npm install -g @openai/codex` leaves a `codex.cmd` shim on Windows, which
+ * Node refuses to spawn without a shell. Find the native binary it wraps.
+ */
+function resolveWindowsShimBinary(shimDir: string) {
+  const triple = WINDOWS_TARGET_TRIPLE[process.arch]
+  if (!triple) {
+    return undefined
+  }
+  const platformPackage = `@openai/codex-win32-${process.arch}`
+  const roots = [
+    join(shimDir, "node_modules", platformPackage),
+    join(
+      shimDir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "node_modules",
+      platformPackage
+    ),
+  ]
+  for (const root of roots) {
+    for (const candidate of [
+      join(root, "vendor", triple, "bin", "codex.exe"),
+      join(root, "vendor", triple, "codex", "codex.exe"),
+    ]) {
+      if (isFile(candidate)) {
+        return candidate
+      }
+    }
+  }
+  return undefined
+}
+
 export function resolveCodexExecutable(env: NodeJS.ProcessEnv = process.env) {
   const override = env.CARACARA_CODEX_PATH
   if (override) {
@@ -120,9 +159,19 @@ export function resolveCodexExecutable(env: NodeJS.ProcessEnv = process.env) {
     }
     for (const name of names) {
       const candidate = join(dir, name)
-      if (isExecutableFile(candidate)) {
-        return candidate
+      if (!isExecutableFile(candidate)) {
+        continue
       }
+      if (name === "codex.cmd") {
+        const binary = resolveWindowsShimBinary(dir)
+        if (binary) {
+          return binary
+        }
+        throw new Error(
+          `Found ${candidate}, but not the codex.exe it wraps. Set CARACARA_CODEX_PATH to the Codex executable.`
+        )
+      }
+      return candidate
     }
   }
 
@@ -171,12 +220,25 @@ function compareVersions(left: string, right: string) {
   return 0
 }
 
-export function checkCodexVersion(version: string | undefined) {
+export type CodexVersionProblem = {
+  severity: "warning" | "error"
+  message: string
+}
+
+export function checkCodexVersion(
+  version: string | undefined
+): CodexVersionProblem | undefined {
   if (!version) {
-    return `Could not determine the Codex CLI version. Caracara requires ${MINIMUM_CODEX_VERSION} or newer.`
+    return {
+      severity: "warning",
+      message: `Could not determine the Codex CLI version. Caracara requires ${MINIMUM_CODEX_VERSION} or newer.`,
+    }
   }
   if (compareVersions(version, MINIMUM_CODEX_VERSION) < 0) {
-    return `Codex CLI ${version} is older than the supported minimum ${MINIMUM_CODEX_VERSION}. Update it with \`npm install -g @openai/codex\`.`
+    return {
+      severity: "error",
+      message: `Codex CLI ${version} is older than the supported minimum ${MINIMUM_CODEX_VERSION}. Update it with \`npm install -g @openai/codex\`.`,
+    }
   }
   return undefined
 }
@@ -281,7 +343,7 @@ export function buildCodexExecArgs(input: {
   outputSchemaFile?: string
 }) {
   const { thread } = input
-  const args = ["exec", "--experimental-json"]
+  const args = ["exec", "--json"]
   if (input.config) {
     for (const override of serializeConfigOverrides(input.config)) {
       args.push("--config", override)
@@ -396,8 +458,10 @@ export class CodexThread {
     })
 
     const failures: { spawn?: Error } = {}
-    child.once("error", (error) => {
-      failures.spawn = error
+    // Stays attached for the child's whole life: an abort after this turn
+    // has settled still emits "error", which must not be unhandled.
+    child.on("error", (error) => {
+      failures.spawn ??= error
     })
     const stderrChunks: Buffer[] = []
     child.stderr.on("data", (chunk: Buffer) => {
@@ -469,7 +533,6 @@ export class CodexThread {
       return { finalResponse, usage }
     } finally {
       lines.close()
-      child.removeAllListeners()
       if (child.exitCode === null && child.signalCode === null) {
         child.kill()
       }

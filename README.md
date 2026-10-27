@@ -84,7 +84,7 @@ Build the `caracara` CLI from this checkout and install it globally:
 pnpm install:cli
 ```
 
-The script runs a frozen install, builds the CLI, and deploys its production files to `~/.local/share/caracara/cli/<commit>` (or `$XDG_DATA_HOME/caracara/cli/<commit>`) with a `BUILD-INFO.json`. It then points `caracara/cli/current` at that deployment and runs `npm install -g` on it. Pass `--target <dir>` to deploy into an empty directory instead (without updating `current`), or `--skip-global` to skip the global npm install. Codex runs need the Codex CLI installed separately; see [Codex model configuration](#codex-model-configuration).
+The script runs a frozen install, builds the CLI, and deploys its production files to `~/.local/share/caracara/cli/<commit>` (or `$XDG_DATA_HOME/caracara/cli/<commit>`) with a `BUILD-INFO.json`. It then points `caracara/cli/current` at that deployment and runs `npm install -g` on it (npm resolves the symlink, so the global link follows the commit directory; `current` is a convenience pointer). Pass `--target <dir>` to deploy into an empty directory instead (without updating `current`), or `--skip-global` to skip the global npm install. Codex runs need the Codex CLI installed separately; see [Codex model configuration](#codex-model-configuration).
 
 ## Local CLI secrets
 

@@ -169,8 +169,13 @@ try {
       2
     )}\n`
   )
-  rmSync(target, { recursive: true, force: true })
+  // Swap so a reinstall of the same commit never leaves the live install missing.
+  const previous = `${target}.previous-${process.pid}`
+  if (existsSync(target)) {
+    renameSync(target, previous)
+  }
   renameSync(staging, target)
+  rmSync(previous, { recursive: true, force: true })
 } catch (error) {
   rmSync(staging, { recursive: true, force: true })
   throw error

@@ -1080,11 +1080,12 @@ class CodexRunner implements RunnerAdapter {
 
   async preflight() {
     const executablePath = resolveCodexExecutable()
-    const versionWarning = checkCodexVersion(
-      await getCodexVersion(executablePath)
-    )
-    if (versionWarning) {
-      process.stderr.write(`Warning: ${versionWarning}\n`)
+    const problem = checkCodexVersion(await getCodexVersion(executablePath))
+    if (problem?.severity === "error") {
+      throw new Error(problem.message)
+    }
+    if (problem) {
+      process.stderr.write(`Warning: ${problem.message}\n`)
     }
   }
 

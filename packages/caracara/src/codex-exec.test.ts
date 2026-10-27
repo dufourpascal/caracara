@@ -10,7 +10,16 @@ import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest"
 
 import {
   checkCodexVersion,
@@ -111,6 +120,15 @@ afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
+// The thread option assertions expect the default sandbox.
+beforeEach(() => {
+  vi.stubEnv("CARACARA_CODEX_SANDBOX", undefined)
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 describe.skipIf(process.platform === "win32")("resolveCodexExecutable", () => {
   it("prefers CARACARA_CODEX_PATH", () => {
     expect(
@@ -153,9 +171,15 @@ describe("Codex version checks", () => {
     expect(checkCodexVersion("0.164.0")).toBeUndefined()
     expect(checkCodexVersion("0.1000.0")).toBeUndefined()
     expect(checkCodexVersion("1.0.0")).toBeUndefined()
-    expect(checkCodexVersion("0.99.9")).toContain("older than")
-    expect(checkCodexVersion("0.163.12")).toContain("older than")
-    expect(checkCodexVersion(undefined)).toContain("Could not determine")
+    expect(checkCodexVersion("0.99.9")).toMatchObject({
+      severity: "error",
+      message: expect.stringContaining("older than"),
+    })
+    expect(checkCodexVersion("0.163.12")?.severity).toBe("error")
+    expect(checkCodexVersion(undefined)).toMatchObject({
+      severity: "warning",
+      message: expect.stringContaining("Could not determine"),
+    })
   })
 
   it.skipIf(process.platform === "win32")(
@@ -237,7 +261,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     const record = await readRecord()
     expect(record.args).toEqual([
       "exec",
-      "--experimental-json",
+      "--json",
       ...chromeConfigArgs,
       "--model",
       "gpt-5.6-luna",
@@ -286,7 +310,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     const record = await readRecord()
     expect(record.args).toEqual([
       "exec",
-      "--experimental-json",
+      "--json",
       ...chromeConfigArgs,
       "--config",
       'model_reasoning_effort="none"',

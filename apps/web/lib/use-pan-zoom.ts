@@ -220,8 +220,8 @@ export function usePanZoom(bounds: GraphRect | null) {
         return
       }
 
-      if (event.pointerType === "mouse" && event.buttons === 0) {
-        // The pointerup never reached us (window blur, context menu).
+      if (event.buttons === 0) {
+        // No button or contact is held: the pointerup never reached us.
         dragRef.current = null
         return
       }

@@ -78,7 +78,19 @@ describe("startCdpWindowProxy", () => {
       socket.on("message", (data) => {
         const message = JSON.parse(data.toString())
         received.push(message)
-        socket.send(JSON.stringify({ id: message.id, result: {} }))
+        // Answer the proxy's own commands with an error, as Chromium does for
+        // a session that isn't a page.
+        socket.send(
+          JSON.stringify(
+            message.id < 0
+              ? {
+                  id: message.id,
+                  error: { code: -32000, message: "Not a page" },
+                  sessionId: message.sessionId,
+                }
+              : { id: message.id, result: {} }
+          )
+        )
       })
     })
     const { port } = server.address() as AddressInfo

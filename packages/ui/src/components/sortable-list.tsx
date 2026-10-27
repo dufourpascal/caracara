@@ -46,6 +46,8 @@ type DragSession = {
 
 type PendingCommit = {
   ids: string[]
+  // onReorder has resolved or rejected; the order is no longer shown.
+  settled: boolean
   token: number
 }
 
@@ -86,6 +88,12 @@ function sameIds(left: string[], right: string[]) {
     left.length === right.length &&
     left.every((id, index) => id === right[index])
   )
+}
+
+// Settled commits are kept only while a newer one is in flight, so the
+// parent's items for them still read as a confirmation rather than news.
+function keepIfUnsettled(commits: PendingCommit[]) {
+  return commits.some((commit) => !commit.settled) ? commits : []
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -224,23 +232,27 @@ export function SortableList<T extends SortableEntity>({
     mode: DragSession["mode"]
   } | null>(null)
   const [announcement, setAnnouncement] = React.useState("")
-  // Committed orders whose onReorder has not settled, oldest first. The newest
-  // is shown until the parent's items catch up or every newer one settles.
+  // Committed orders not yet confirmed by items, oldest first. The newest
+  // unsettled one is shown until the parent's items catch up or it settles.
   const [pending, setPending] = React.useState<PendingCommit[]>([])
   const itemsKey = JSON.stringify(items.map((item) => item.id))
   const [previousItemsKey, setPreviousItemsKey] = React.useState(itemsKey)
 
   if (previousItemsKey !== itemsKey) {
     const ids = items.map((item) => item.id)
-    // Items matching a pending order confirm it and supersede older ones, so
-    // later drops stay on screen. Any other order is news and wins outright.
+    // Items matching a commit confirm it and supersede older ones, so later
+    // drops stay on screen. This holds for a settled commit too, since a
+    // parent may store its items in the same batch as its promise resolves.
+    // Any other order is news and wins outright.
     const confirmed = pending.findIndex((commit) => sameIds(commit.ids, ids))
 
     setPreviousItemsKey(itemsKey)
-    setPending(confirmed === -1 ? [] : pending.slice(confirmed + 1))
+    setPending(
+      confirmed === -1 ? [] : keepIfUnsettled(pending.slice(confirmed + 1))
+    )
   }
 
-  const optimistic = pending.at(-1)
+  const optimistic = pending.filter((commit) => !commit.settled).at(-1)
 
   const displayItems = React.useMemo(() => {
     if (!optimistic) {
@@ -413,21 +425,27 @@ export function SortableList<T extends SortableEntity>({
       return item ? [item] : []
     })
     const token = commitTokenRef.current + 1
-    const clear = () => {
+    const settle = () => {
       if (mountedRef.current) {
-        setPending((value) => value.filter((entry) => entry.token !== token))
+        setPending((value) =>
+          keepIfUnsettled(
+            value.map((entry) =>
+              entry.token === token ? { ...entry, settled: true } : entry
+            )
+          )
+        )
       }
     }
 
     commitTokenRef.current = token
-    setPending((value) => [...value, { ids: nextIds, token }])
+    setPending((value) => [...value, { ids: nextIds, settled: false, token }])
 
     let result: void | Promise<void>
 
     try {
       result = latestRef.current.onReorder(nextItems)
     } catch (error) {
-      clear()
+      settle()
       throw error
     }
 
@@ -436,9 +454,9 @@ export function SortableList<T extends SortableEntity>({
     // synchronous caller has already updated (or ignored) its items, which
     // land in the same render, so the optimistic order is not needed.
     if (isPromiseLike(result)) {
-      result.then(clear, clear)
+      result.then(settle, settle)
     } else {
-      clear()
+      settle()
     }
   }
 

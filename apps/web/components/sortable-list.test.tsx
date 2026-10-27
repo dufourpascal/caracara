@@ -1035,6 +1035,186 @@ describe("SortableList", () => {
       })
     })
 
+    // Mirrors the workspace fixture: the parent owns the order, awaits its
+    // mutation, then stores the saved items (or swallows the error) before its
+    // promise resolves, so the new items and the settled promise reach the list
+    // in one batch.
+    describe("with an async parent that saves after its mutation", () => {
+      type Outcome = "fail" | "save" | "swallow"
+
+      const first = ["Bravo", "Alpha", "Charlie"]
+      const second = ["Bravo", "Charlie", "Alpha"]
+
+      function AsyncParent({
+        mutations,
+        onMount,
+      }: {
+        mutations: Array<(outcome: Outcome) => void>
+        onMount: (setItems: (items: Phase[]) => void) => void
+      }) {
+        const [items, setItems] = React.useState(phases)
+
+        React.useEffect(() => onMount(setItems), [onMount])
+
+        return (
+          <Harness
+            items={items}
+            onReorder={async (next) => {
+              const outcome = await new Promise<Outcome>((resolve) => {
+                mutations.push(resolve)
+              })
+
+              if (outcome === "fail") {
+                throw new Error("offline")
+              }
+
+              if (outcome === "save") {
+                setItems(next)
+              }
+            }}
+          />
+        )
+      }
+
+      function dropTwice() {
+        const mutations: Array<(outcome: Outcome) => void> = []
+        let setParentItems: (items: Phase[]) => void = () => {}
+        render(
+          <AsyncParent
+            mutations={mutations}
+            onMount={(setItems) => {
+              setParentItems = setItems
+            }}
+          />
+        )
+        const handle = getHandle("Alpha")
+
+        handle.focus()
+        pressKey(handle, " ")
+        pressKey(handle, "ArrowDown")
+        pressKey(handle, " ")
+        pressKey(handle, " ")
+        pressKey(handle, "ArrowDown")
+        pressKey(handle, " ")
+
+        expect(mutations).toHaveLength(2)
+        expect(getOrder()).toEqual(second)
+
+        return {
+          // Settles a mutation and lets the parent's handler finish, all
+          // inside one act so React renders its updates as one batch.
+          finish: async (index: number, outcome: Outcome) => {
+            await act(async () => {
+              mutations[index]!(outcome)
+              await new Promise((resolve) => setTimeout(resolve, 0))
+            })
+          },
+          // An order from elsewhere, say another client.
+          serve: (items: Phase[]) => act(() => setParentItems(items)),
+        }
+      }
+
+      it("keeps the latest drop when the first is saved", async () => {
+        const { finish } = dropTwice()
+
+        await finish(0, "save")
+        expect(getOrder()).toEqual(second)
+
+        await finish(1, "save")
+        expect(getOrder()).toEqual(second)
+      })
+
+      it("keeps the latest drop when the first failure is swallowed", async () => {
+        const { finish } = dropTwice()
+
+        await finish(0, "swallow")
+        expect(getOrder()).toEqual(second)
+
+        await finish(1, "save")
+        expect(getOrder()).toEqual(second)
+      })
+
+      it("keeps the latest drop when the first one rejects", async () => {
+        const { finish } = dropTwice()
+
+        await finish(0, "fail")
+        expect(getOrder()).toEqual(second)
+
+        await finish(1, "save")
+        expect(getOrder()).toEqual(second)
+      })
+
+      it("rolls back to the saved first drop when the latest is swallowed", async () => {
+        const { finish } = dropTwice()
+
+        await finish(0, "save")
+        await finish(1, "swallow")
+
+        expect(getOrder()).toEqual(first)
+      })
+
+      it("rolls back to the saved first drop when the latest rejects", async () => {
+        const { finish } = dropTwice()
+
+        await finish(0, "save")
+        await finish(1, "fail")
+
+        expect(getOrder()).toEqual(first)
+      })
+
+      it("rolls back to the original order when both are swallowed", async () => {
+        const { finish } = dropTwice()
+
+        await finish(0, "swallow")
+        await finish(1, "swallow")
+
+        expect(getOrder()).toEqual(["Alpha", "Bravo", "Charlie"])
+      })
+
+      it("follows the parent after both drops are saved", async () => {
+        const { finish, serve } = dropTwice()
+
+        await finish(0, "save")
+        await finish(1, "save")
+        serve([phases[2], phases[1], phases[0]] as Phase[])
+
+        expect(getOrder()).toEqual(["Charlie", "Bravo", "Alpha"])
+      })
+
+      it("yields to an unrelated order while both are pending", async () => {
+        const { finish, serve } = dropTwice()
+
+        serve([phases[2], phases[0], phases[1]] as Phase[])
+        expect(getOrder()).toEqual(["Charlie", "Alpha", "Bravo"])
+
+        await finish(0, "swallow")
+        await finish(1, "swallow")
+        expect(getOrder()).toEqual(["Charlie", "Alpha", "Bravo"])
+      })
+
+      it("yields to a membership change while both are pending", async () => {
+        const { finish, serve } = dropTwice()
+
+        serve([...phases, { id: "d", name: "Delta" }])
+        expect(getOrder()).toEqual(["Alpha", "Bravo", "Charlie", "Delta"])
+
+        await finish(0, "swallow")
+        await finish(1, "swallow")
+        expect(getOrder()).toEqual(["Alpha", "Bravo", "Charlie", "Delta"])
+      })
+
+      it("yields to an unrelated order that lands after the first is saved", async () => {
+        const { finish, serve } = dropTwice()
+
+        await finish(0, "save")
+        serve([phases[2], phases[0], phases[1]] as Phase[])
+        expect(getOrder()).toEqual(["Charlie", "Alpha", "Bravo"])
+
+        await finish(1, "swallow")
+        expect(getOrder()).toEqual(["Charlie", "Alpha", "Bravo"])
+      })
+    })
+
     it("does not update state when onReorder settles after unmount", async () => {
       const pending = deferred()
       const consoleError = vi.spyOn(console, "error")

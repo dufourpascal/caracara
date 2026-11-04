@@ -26,6 +26,13 @@ export type RunCommandOptions = {
   suite?: string
   phase?: string
   throughPhase?: string
+  phases?: string
+  keepGoing?: boolean
+  json?: boolean
+  quiet?: boolean
+  plain?: boolean
+  heartbeat?: string
+  failOn?: string
 }
 
 export type ResultsCommandOptions = {

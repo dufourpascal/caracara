@@ -12,6 +12,7 @@ import {
   getRunCreationState,
   matchesScenarioExecutionAttempt,
   matchesTerminalRun,
+  parseRequestedPhaseOrders,
   parseRunEnvironment,
   removeRunEnvironmentName,
   validateRunResultsFilter,
@@ -51,6 +52,68 @@ describe("run environments", () => {
     expect(
       removeRunEnvironmentName(["preview", "production"], "preview")
     ).toEqual(["production"])
+  })
+})
+
+describe("multi-phase run targets", () => {
+  function validationMessage(
+    input: Parameters<typeof parseRequestedPhaseOrders>[0]
+  ) {
+    try {
+      parseRequestedPhaseOrders(input)
+    } catch (error) {
+      return (error as { data?: { code?: string; message?: string } }).data
+    }
+    return null
+  }
+
+  it("requires sorted unique phase orders only for phases runs", () => {
+    expect(
+      parseRequestedPhaseOrders({
+        mode: "phases",
+        requestedPhaseOrders: [1, 4],
+      })
+    ).toEqual([1, 4])
+    expect(parseRequestedPhaseOrders({ mode: "all" })).toBeNull()
+    expect(
+      parseRequestedPhaseOrders({ mode: "phase", requestedPhaseOrders: null })
+    ).toBeNull()
+
+    for (const input of [
+      { mode: "phases" },
+      { mode: "phases", requestedPhaseOrders: null },
+      { mode: "all", requestedPhaseOrders: [1, 2] },
+      { mode: "suite", requestedPhaseOrders: [1, 2] },
+    ]) {
+      expect(validationMessage(input)).toEqual({
+        code: "validation_error",
+        message: "Run mode and requested target do not match.",
+      })
+    }
+    for (const [requestedPhaseOrders, message] of [
+      [[2, 1], "Requested phase orders must be sorted and unique."],
+      [[1, 1], "Requested phase orders must be sorted and unique."],
+      [[1], "A phases run needs at least 2 phases."],
+      [
+        Array.from({ length: 101 }, (_, i) => i + 1),
+        "A phases run can include at most 100 phases.",
+      ],
+    ] as const) {
+      expect(
+        validationMessage({
+          mode: "phases",
+          requestedPhaseOrders: [...requestedPhaseOrders],
+        })
+      ).toEqual({ code: "validation_error", message })
+    }
+    for (const requestedPhaseOrders of [
+      [0, 1],
+      [1, 2.5],
+    ]) {
+      expect(
+        validationMessage({ mode: "phases", requestedPhaseOrders })
+      ).toMatchObject({ code: "validation_error" })
+    }
   })
 })
 

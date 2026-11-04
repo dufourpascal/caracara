@@ -3,6 +3,8 @@ import type { IncomingMessage } from "node:http"
 import type { AddressInfo } from "node:net"
 import { WebSocket, WebSocketServer, type RawData } from "ws"
 
+import { writeDiagnostic } from "./diagnostics.js"
+
 // Matches Puppeteer's client limit, so full-page screenshots still fit.
 const maxCdpPayloadBytes = 256 * 1024 * 1024
 
@@ -152,7 +154,7 @@ export async function startCdpWindowProxy(upstreamWsEndpoint: string) {
   // Keep a listener so a later accept failure cannot crash the run; the
   // affected connection fails and the MCP server reports it.
   server.on("error", (error) => {
-    process.stderr.write(`Chrome DevTools proxy error: ${error.message}\n`)
+    writeDiagnostic(`Chrome DevTools proxy error: ${error.message}\n`)
   })
 
   const { port } = server.address() as AddressInfo

@@ -117,10 +117,12 @@ export default defineSchema({
       v.literal("single"),
       v.literal("phase"),
       v.literal("through_phase"),
-      v.literal("suite")
+      v.literal("suite"),
+      v.literal("phases")
     ),
     requestedScenarioSlug: v.union(v.null(), v.string()),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedPhaseOrders: v.optional(v.union(v.null(), v.array(v.number()))),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     requestedSuiteName: v.optional(v.union(v.null(), v.string())),
     requestedSuitePhases: v.optional(

@@ -7,6 +7,7 @@ import {
   nullableStringSchema,
   phaseSchema,
   projectSchema,
+  requestedPhaseOrdersSchema,
   runModeSchema,
   runSchema,
   runnerTypeSchema,
@@ -282,6 +283,7 @@ export const createRunRequestSchema = z
     targetUrl: targetUrlSchema.optional(),
     requestedScenarioSlug: slugSchema.nullable().optional(),
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+    requestedPhaseOrders: requestedPhaseOrdersSchema.nullable().optional(),
     requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
     creationAttemptId: z.guid().optional(),
@@ -307,15 +309,21 @@ export const createRunRequestSchema = z
     }
     const hasScenario = value.requestedScenarioSlug != null
     const hasPhase = value.requestedPhaseOrder != null
+    const hasPhases = value.requestedPhaseOrders != null
     const hasSuite = value.requestedSuiteSlug != null
+    const targetCount = [hasScenario, hasPhase, hasPhases, hasSuite].filter(
+      Boolean
+    ).length
+    const hasModeTarget = {
+      all: true,
+      single: hasScenario,
+      phase: hasPhase,
+      through_phase: hasPhase,
+      suite: hasSuite,
+      phases: hasPhases,
+    }[value.mode]
     const isValid =
-      (value.mode === "all" && !hasScenario && !hasPhase && !hasSuite) ||
-      (value.mode === "single" && hasScenario && !hasPhase && !hasSuite) ||
-      ((value.mode === "phase" || value.mode === "through_phase") &&
-        !hasScenario &&
-        hasPhase &&
-        !hasSuite) ||
-      (value.mode === "suite" && !hasScenario && !hasPhase && hasSuite)
+      hasModeTarget && targetCount === (value.mode === "all" ? 0 : 1)
 
     if (!isValid) {
       ctx.addIssue({
@@ -337,6 +345,7 @@ export const createRunResponseSchema = z.object({
     targetUrl: true,
     requestedScenarioSlug: true,
     requestedPhaseOrder: true,
+    requestedPhaseOrders: true,
     requestedSuiteSlug: true,
     requestedSuiteName: true,
     requestedSuitePhases: true,

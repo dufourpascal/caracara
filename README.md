@@ -118,6 +118,24 @@ Run `caracara environments:list` to print every configured environment and mark 
 
 Each run stores the selected environment and normalized target URL so the web app can label and filter run history without changing older results when the local config changes. Runs created by older CLIs appear as `untracked`.
 
+## Running several phases and following a run
+
+`caracara run --phases 1-7,9,10` runs the listed phases, in project order, as one run. Ranges and single phase numbers can be mixed. It can't be combined with `--scenario`, `--suite`, `--phase` or `--through-phase`.
+
+When a run covers more than one phase, an execution error skips only the rest of that phase and the run continues with the next one. Pass `--no-keep-going` to stop the whole run instead, or `--keep-going` to continue in a single-phase run too. The run still stops when the browser session is gone, or when two phases in a row fail on their first scenario.
+
+In a terminal, `caracara run` keeps a status panel at the bottom with the current phase and scenario, elapsed time and ETA, check totals, tokens and the agent's current step. In CI, when output is redirected or piped (`> run.log`, `| tee run.log`), or with `--plain`, it prints timestamped lines instead, plus a heartbeat line every 5 minutes while a scenario runs (`--heartbeat 30s`, `--heartbeat 0` to turn it off). `--quiet` prints only a short summary; `--json` prints one JSON event per line (`run.started`, `phase.started`, `scenario.started`, `agent.action`, `scenario.finished`, `run.finished`).
+
+Every run ends with a summary: totals, a row per phase, the scenarios with failed or blocked checks, each failed or blocked check with its evidence, execution errors with a rerun command, tokens and a link to the run in the web app.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Every scenario ran. Failed checks are findings, not errors. |
+| 1 | The run stopped on a CLI, configuration or API error |
+| 2 | A scenario was recorded as a runner failure (including a result the API rejected) or was skipped |
+| 3 | `--fail-on failed`, `--fail-on blocked` or `--fail-on failed,blocked` matched a check |
+| 130 / 143 | Interrupted by SIGINT / SIGTERM |
+
 ## Codex model configuration
 
 Set the Codex model and reasoning effort in `.caracara/config.json`:

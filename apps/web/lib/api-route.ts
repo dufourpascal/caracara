@@ -446,6 +446,7 @@ export async function createRun(
       targetUrl: payload.targetUrl,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
+      requestedPhaseOrders: payload.requestedPhaseOrders ?? null,
       requestedSuiteSlug: payload.requestedSuiteSlug ?? null,
       startedAt: payload.startedAt,
       ...(payload.creationAttemptId

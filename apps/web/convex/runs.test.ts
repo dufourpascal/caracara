@@ -320,7 +320,12 @@ describe("run deletion helpers", () => {
 
     const result = await deleteRunAndResults(ctx, "run-1" as never)
 
-    expect(patches).toEqual([{ id: "operation-1", value: { runId: null } }])
+    expect(patches).toEqual([
+      {
+        id: "operation-1",
+        value: { runId: null, consumedAt: expect.any(Number) },
+      },
+    ])
 
     expect(result).toEqual({ deletedEvidenceCount: 2, deletedResultCount: 2 })
     expect(deletedStorageIds).toEqual(["storage-1", "storage-2"])

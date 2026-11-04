@@ -914,9 +914,12 @@ export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
       .collect(),
   ])
 
-  // Fixture operations outlive the run; they only lose the link to it.
+  // Fixture operations outlive the run; they lose the link but stay consumed.
   for (const operation of fixtureOperations) {
-    await ctx.db.patch(operation._id, { runId: null })
+    await ctx.db.patch(operation._id, {
+      runId: null,
+      consumedAt: operation.consumedAt ?? Date.now(),
+    })
   }
 
   for (const item of evidence) {
@@ -1085,6 +1088,7 @@ export async function deleteProjectCascade(
     fixtures,
     fixtureRequirements,
     fixtureOperations,
+    fixtureEnvironmentStates,
   ] = await Promise.all([
     getProjectDependencies(ctx, projectId),
     getProjectPhases(ctx, projectId),
@@ -1108,6 +1112,10 @@ export async function deleteProjectCascade(
         query.eq("projectId", projectId)
       )
       .collect(),
+    ctx.db
+      .query("fixtureEnvironmentStates")
+      .withIndex("by_project", (query) => query.eq("projectId", projectId))
+      .collect(),
   ])
 
   // Operations go first so deleting runs has no operations left to unlink.
@@ -1124,6 +1132,10 @@ export async function deleteProjectCascade(
 
   for (const requirement of fixtureRequirements) {
     await ctx.db.delete(requirement._id)
+  }
+
+  for (const state of fixtureEnvironmentStates) {
+    await ctx.db.delete(state._id)
   }
 
   for (const fixture of fixtures) {

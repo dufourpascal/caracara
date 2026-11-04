@@ -698,6 +698,36 @@ describe("fixture operations", () => {
   })
 })
 
+describe("fixture lease expiry", () => {
+  it("schedules an expiry that releases the lease for reactive views", async () => {
+    const { fake, ctx, createFixture, startOperation } = await setup()
+    const fixture = await createFixture()
+    const operation = await startOperation(fixture.id)
+
+    expect(fake.scheduled).toEqual([
+      expect.objectContaining({
+        at: operation.leaseExpiresAt + 1_000,
+        args: { operationId: operation.id },
+      }),
+    ])
+    const operationId = operation.id as Id<"fixtureOperations">
+    expect(await call(fixtures.expireOperation, ctx, { operationId })).toBe(false)
+    expect(fake.scheduled).toHaveLength(2)
+
+    vi.advanceTimersByTime(FIXTURE_OPERATION_LEASE_MS + 1_000)
+    expect(await call(fixtures.expireOperation, ctx, { operationId })).toBe(true)
+    const detail = await call(fixtures.getBySlugForProject, ctx, {
+      projectSlug: "demo",
+      fixtureSlug: fixture.slug,
+    })
+    expect(detail?.health.find((entry) => entry.environment === "preview")).toMatchObject({
+      status: "unknown",
+      operationId: operation.id,
+      busy: false,
+    })
+  })
+})
+
 describe("fixture health", () => {
   it("derives health per environment from operations and mutating runs", async () => {
     const { ctx, projectId, setupPhase, createFixture, verify, startOperation, createRun, finalize } =
@@ -888,6 +918,128 @@ describe("run creation with fixtures", () => {
     const reset = await startOperation(fixture.id, { kind: "reset", attemptId: uuid(10) })
     await expectError(createRun(entry(beforeReset.id)), "conflict", /maintained after/)
     expect(reset.status).toBe("running")
+  })
+
+  it("accepts only the verify that still decides the fixture's health", async () => {
+    const { ctx, projectId, createRun, fixture, verify, startOperation } =
+      await requiredSetup()
+    const entry = (operationId: string) => ({
+      fixturePreflight: [{ fixtureId: fixture.id, outcome: "healthy" as const, operationId }],
+    })
+
+    const superseded = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    await verify(fixture.id, "failed")
+    await expectError(createRun(entry(superseded.id)), "conflict", /maintained after/)
+
+    vi.advanceTimersByTime(1)
+    const beforeConverge = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    const converge = await startOperation(fixture.id, { kind: "converge", attemptId: uuid(20) })
+    await call(fixtures.finishOperation, ctx, {
+      projectId,
+      operationId: converge.id as Id<"fixtureOperations">,
+      attemptId: uuid(20),
+      status: "succeeded",
+      checkResults: [],
+      summary: null,
+    })
+    await expectError(createRun(entry(beforeConverge.id)), "conflict", /maintained after/)
+
+    vi.advanceTimersByTime(1)
+    const interruptedAfter = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    await startOperation(fixture.id, { attemptId: uuid(21), interruptedAt: Date.now() })
+    await expectError(createRun(entry(interruptedAfter.id)), "conflict", /maintained after/)
+  })
+
+  it("rejects a verify followed by a run that mutates the fixture", async () => {
+    const { ctx, projectId, createRun, fixture, verify, finalize, analysis } =
+      await requiredSetup()
+    const operation = await verify(fixture.id)
+    await call(fixtures.setRequirement, ctx, {
+      projectId,
+      fixtureId: fixture.id,
+      scenarioId: analysis,
+      access: "mutates",
+      mutationScope: "Adds results.",
+    })
+    vi.advanceTimersByTime(1)
+    const mutating = await createRun({
+      mode: "single",
+      requestedScenarioSlug: "analysis",
+      fixturePreflight: [{ fixtureId: fixture.id, outcome: "skipped", operationId: null }],
+    })
+    const entry = {
+      mode: "phase" as const,
+      requestedPhaseOrder: 1,
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "healthy" as const, operationId: operation.id },
+      ],
+    }
+
+    await expectError(createRun(entry), "conflict", /ran or is running/)
+    vi.advanceTimersByTime(1)
+    await finalize(mutating.id)
+    await expectError(createRun(entry), "conflict", /ran or is running/)
+  })
+
+  it("keeps mutation evidence and consumed verifies after run deletion", async () => {
+    const { ctx, fake, projectId, createRun, fixture, verify, finalize } =
+      await requiredSetup("mutates")
+    const health = async () =>
+      (await call(fixtures.getBySlugForProject, ctx, {
+        projectSlug: "demo",
+        fixtureSlug: fixture.slug,
+      }))!.health.find((entry) => entry.environment === "preview")
+
+    const used = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    const run = await createRun({
+      fixturePreflight: [{ fixtureId: fixture.id, outcome: "healthy", operationId: used.id }],
+    })
+    vi.advanceTimersByTime(1)
+    await finalize(run.id)
+    await call(runs.remove, ctx, { runId: run.id as Id<"runs"> })
+
+    expect(fake.rows("fixtureOperations")[0]).toMatchObject({
+      runId: null,
+      consumedAt: expect.any(Number),
+    })
+    expect(await health()).toMatchObject({ status: "unknown", operationId: used.id })
+    await expectError(
+      createRun({
+        fixturePreflight: [{ fixtureId: fixture.id, outcome: "healthy", operationId: used.id }],
+      }),
+      "conflict",
+      /already belongs to a run/
+    )
+
+    vi.advanceTimersByTime(1)
+    const beforeSkippedRun = await verify(fixture.id)
+    expect(await health()).toMatchObject({ status: "healthy" })
+    vi.advanceTimersByTime(1)
+    const skipped = await createRun({
+      fixturePreflight: [{ fixtureId: fixture.id, outcome: "skipped", operationId: null }],
+    })
+    vi.advanceTimersByTime(1)
+    await finalize(skipped.id)
+    await call(runs.remove, ctx, { runId: skipped.id as Id<"runs"> })
+
+    expect(fake.rows("runs")).toEqual([])
+    expect(await health()).toMatchObject({ status: "unknown" })
+    await expectError(
+      createRun({
+        fixturePreflight: [
+          { fixtureId: fixture.id, outcome: "healthy", operationId: beforeSkippedRun.id },
+        ],
+      }),
+      "conflict",
+      /ran or is running/
+    )
+
+    await call(fixtures.remove, ctx, { projectId, fixtureId: fixture.id })
+    expect(fake.rows("fixtureEnvironmentStates")).toEqual([])
   })
 
   it("rejects concurrent runs that share a mutated fixture in one environment", async () => {

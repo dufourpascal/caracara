@@ -12,6 +12,7 @@ import {
   assertNoConflictingFixtureRun,
   getFixtureRequirementIndex,
   getSingleRunScenarios,
+  recordFixtureMutations,
   requiredFixturesForScenarios,
   validateRunFixturePreflight,
 } from "./fixtures"
@@ -367,6 +368,7 @@ export const create = mutation({
           if (!interruptedRun) {
             throw new Error("Failed to interrupt recovered run")
           }
+          await recordFixtureMutations(ctx, interruptedRun, Date.now())
           return toRun(interruptedRun)
         }
         return toRun(existing)
@@ -463,13 +465,14 @@ export const create = mutation({
     })
 
     for (const operationId of fixturePreflight?.operationIds ?? []) {
-      await ctx.db.patch(operationId, { runId })
+      await ctx.db.patch(operationId, { runId, consumedAt: timestamp })
     }
 
     const run = await ctx.db.get(runId)
     if (!run) {
       throw new Error("Failed to create run")
     }
+    await recordFixtureMutations(ctx, run, timestamp)
 
     return toRun(run)
   },
@@ -839,6 +842,8 @@ export const finalize = mutation({
     if (!updatedRun) {
       throw new Error("Failed to finalize run")
     }
+    // The run may have changed mutated fixtures until now.
+    await recordFixtureMutations(ctx, updatedRun, Date.now())
 
     return {
       run: toRun(updatedRun),

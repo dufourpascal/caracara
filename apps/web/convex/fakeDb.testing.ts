@@ -132,6 +132,7 @@ class FakeQuery {
 export function createFakeCtx(options: { userId?: string | null } = {}) {
   const tables = new Map<string, Map<string, Row>>()
   let counter = 0
+  const scheduled: Array<{ at: number; fn: unknown; args: unknown }> = []
   let userId = options.userId === undefined ? "user-1" : options.userId
 
   const tableRows = (name: string) => {
@@ -200,6 +201,14 @@ export function createFakeCtx(options: { userId?: string | null } = {}) {
     storage: {
       async delete() {},
     },
+    scheduler: {
+      async runAt(at: number, fn: unknown, args: unknown) {
+        scheduled.push({ at, fn, args })
+      },
+      async runAfter(delay: number, fn: unknown, args: unknown) {
+        scheduled.push({ at: Date.now() + delay, fn, args })
+      },
+    },
   }
 
   return {
@@ -210,16 +219,21 @@ export function createFakeCtx(options: { userId?: string | null } = {}) {
     setUser(next: string | null) {
       userId = next
     },
+    scheduled,
   }
 }
 
 export type FakeCtx = ReturnType<typeof createFakeCtx>["ctx"]
 
 /** Calls a registered query or mutation handler directly against a fake ctx. */
-export async function call<Args extends DefaultFunctionArgs, Result>(
+export async function call<
+  Visibility extends "public" | "internal",
+  Args extends DefaultFunctionArgs,
+  Result,
+>(
   fn:
-    | RegisteredMutation<"public", Args, Result>
-    | RegisteredQuery<"public", Args, Result>,
+    | RegisteredMutation<Visibility, Args, Result>
+    | RegisteredQuery<Visibility, Args, Result>,
   ctx: FakeCtx,
   args: Args
 ): Promise<Awaited<Result>> {

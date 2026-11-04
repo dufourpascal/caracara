@@ -283,6 +283,8 @@ export default defineSchema({
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
     leaseExpiresAt: v.number(),
+    /** Set once the operation was linked to a run; it never satisfies another preflight. */
+    consumedAt: v.optional(v.number()),
   })
     .index("by_fixture_environment_started_at", [
       "fixtureId",
@@ -293,4 +295,14 @@ export default defineSchema({
     .index("by_project_started_at", ["projectId", "startedAt"])
     .index("by_project_status", ["projectId", "status"])
     .index("by_project_attempt", ["projectId", "attemptId"]),
+  /** Mutation evidence per fixture and environment that outlives runs. */
+  fixtureEnvironmentStates: defineTable({
+    projectId: v.id("projects"),
+    fixtureId: v.id("fixtures"),
+    environment: v.string(),
+    /** Latest server time a run that mutates the fixture started or finished. */
+    lastMutationAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_fixture_environment", ["fixtureId", "environment"]),
 })

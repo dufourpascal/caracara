@@ -25,8 +25,10 @@ import {
 } from "@workspace/contracts"
 import { z } from "zod"
 
+import { internal } from "./_generated/api"
 import type { Doc, Id } from "./_generated/dataModel"
 import {
+  internalMutation,
   mutation,
   query,
   type MutationCtx,
@@ -42,12 +44,8 @@ import {
 
 type Ctx = QueryCtx | MutationCtx
 
-/**
- * Runs record a client start time, so health derivation looks this far before
- * a verify for runs that were created (server time) after it.
- */
-const RUN_START_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000
 const RECENT_OPERATION_LIMIT = 20
+const LEASE_EXPIRY_GRACE_MS = 1_000
 const MAX_HEALTH_ENVIRONMENTS = 50
 
 const UUID_PATTERN =
@@ -276,7 +274,10 @@ function holdsFixture(
   )
 }
 
-/** True when a run that mutates the fixture may have run after `since`. */
+/**
+ * True when a run that mutates the fixture in this environment is running or
+ * started or finished after `since`. Evidence survives run deletion.
+ */
 async function hasMutatingRunSince(
   ctx: Ctx,
   args: {
@@ -286,18 +287,8 @@ async function hasMutatingRunSince(
     since: number
   }
 ) {
-  const mutates = (run: Doc<"runs">) =>
-    holdsFixture(run, args.fixtureId, (entry) => entry.access === "mutates")
-  const [recentRuns, runningRuns] = await Promise.all([
-    ctx.db
-      .query("runs")
-      .withIndex("by_project_environment_started_at", (query) =>
-        query
-          .eq("projectId", args.projectId)
-          .eq("environment", args.environment)
-          .gte("startedAt", args.since - RUN_START_CLOCK_SKEW_MS)
-      )
-      .collect(),
+  const [state, runningRuns] = await Promise.all([
+    getFixtureEnvironmentState(ctx, args.fixtureId, args.environment),
     ctx.db
       .query("runs")
       .withIndex("by_project_status", (query) =>
@@ -307,15 +298,101 @@ async function hasMutatingRunSince(
   ])
 
   return (
+    (state !== null && state.lastMutationAt >= args.since) ||
     runningRuns.some(
-      (run) => run.environment === args.environment && mutates(run)
-    ) ||
-    recentRuns.some(
       (run) =>
-        mutates(run) &&
-        (run._creationTime > args.since || run.updatedAt > args.since)
+        run.environment === args.environment &&
+        holdsFixture(
+          run,
+          args.fixtureId,
+          (entry) => entry.access === "mutates"
+        )
     )
   )
+}
+
+async function getFixtureEnvironmentState(
+  ctx: Ctx,
+  fixtureId: Id<"fixtures">,
+  environment: string
+) {
+  return await ctx.db
+    .query("fixtureEnvironmentStates")
+    .withIndex("by_fixture_environment", (query) =>
+      query.eq("fixtureId", fixtureId).eq("environment", environment)
+    )
+    .unique()
+}
+
+/**
+ * Records that a run mutating these fixtures started or finished now. Runs
+ * without an environment cannot be attributed and record nothing.
+ */
+export async function recordFixtureMutations(
+  ctx: MutationCtx,
+  run: Pick<Doc<"runs">, "projectId" | "environment" | "fixturePreflight">,
+  at: number
+) {
+  if (!run.environment) {
+    return
+  }
+
+  for (const entry of run.fixturePreflight ?? []) {
+    if (entry.access !== "mutates") {
+      continue
+    }
+    const fixtureId = ctx.db.normalizeId("fixtures", entry.fixtureId)
+    if (!fixtureId || !(await ctx.db.get(fixtureId))) {
+      continue
+    }
+    const state = await getFixtureEnvironmentState(
+      ctx,
+      fixtureId,
+      run.environment
+    )
+    if (state) {
+      await ctx.db.patch(state._id, {
+        lastMutationAt: Math.max(state.lastMutationAt, at),
+      })
+    } else {
+      await ctx.db.insert("fixtureEnvironmentStates", {
+        projectId: run.projectId,
+        fixtureId,
+        environment: run.environment,
+        lastMutationAt: at,
+      })
+    }
+  }
+}
+
+/**
+ * The latest finished operation for a fixture and environment, plus the
+ * operations still holding a lease that started after it. A running
+ * operation past its lease counts as interrupted.
+ */
+async function getLatestFixtureOperations(
+  ctx: Ctx,
+  fixtureId: Id<"fixtures">,
+  environment: string,
+  now: number
+) {
+  const active: Array<Doc<"fixtureOperations">> = []
+  const operations = ctx.db
+    .query("fixtureOperations")
+    .withIndex("by_fixture_environment_started_at", (query) =>
+      query.eq("fixtureId", fixtureId).eq("environment", environment)
+    )
+    .order("desc")
+
+  for await (const operation of operations) {
+    if (operation.status === "running" && operation.leaseExpiresAt > now) {
+      active.push(operation)
+      continue
+    }
+    return { latestFinished: operation, active }
+  }
+
+  return { latestFinished: null, active }
 }
 
 export async function deriveFixtureHealth(
@@ -333,24 +410,9 @@ export async function deriveFixtureHealth(
   const health: FixtureEnvironmentHealth[] = []
 
   for (const environment of environments) {
-    let busy = false
-    let decisive: Doc<"fixtureOperations"> | null = null
-    const operations = ctx.db
-      .query("fixtureOperations")
-      .withIndex("by_fixture_environment_started_at", (query) =>
-        query.eq("fixtureId", fixture._id).eq("environment", environment)
-      )
-      .order("desc")
-
-    for await (const operation of operations) {
-      if (operation.status === "running" && operation.leaseExpiresAt > now) {
-        busy = true
-        continue
-      }
-      // A running operation past its lease counts as interrupted.
-      decisive = operation
-      break
-    }
+    const { latestFinished: decisive, active } =
+      await getLatestFixtureOperations(ctx, fixture._id, environment, now)
+    const busy = active.length > 0
 
     if (!decisive) {
       health.push({
@@ -665,7 +727,7 @@ async function validatePreflightOperation(
   if (operation.status !== "succeeded" || operation.finishedAt === null) {
     validationError(`${label}: the preflight verify did not succeed.`)
   }
-  if (operation.runId !== null) {
+  if (operation.runId !== null || operation.consumedAt !== undefined) {
     conflict(`${label}: the preflight verify already belongs to a run; rerun.`)
   }
   if (args.now - operation.finishedAt > FIXTURE_PREFLIGHT_MAX_AGE_MS) {
@@ -675,17 +737,30 @@ async function validatePreflightOperation(
     conflict(`${label}: the fixture changed after it was verified; rerun.`)
   }
 
-  const later = await ctx.db
-    .query("fixtureOperations")
-    .withIndex("by_fixture_environment_started_at", (query) =>
-      query
-        .eq("fixtureId", args.fixture._id)
-        .eq("environment", operation.environment)
-        .gt("startedAt", operation.startedAt)
-    )
-    .collect()
-  if (later.some((candidate) => candidate.kind !== "verify")) {
+  // The verify must still decide the fixture's health in this environment.
+  const { latestFinished, active } = await getLatestFixtureOperations(
+    ctx,
+    args.fixture._id,
+    operation.environment,
+    args.now
+  )
+  if (
+    latestFinished?._id !== operation._id ||
+    active.some((candidate) => candidate.kind !== "verify")
+  ) {
     conflict(`${label}: the fixture was maintained after it was verified; rerun.`)
+  }
+  if (
+    await hasMutatingRunSince(ctx, {
+      projectId: args.projectId,
+      environment: operation.environment,
+      fixtureId: args.fixture._id,
+      since: operation.finishedAt,
+    })
+  ) {
+    conflict(
+      `${label}: a run that changes it ran or is running since it was verified; rerun.`
+    )
   }
 
   return operation
@@ -1122,6 +1197,15 @@ export const remove = mutation({
 
     for (const requirement of requirements) {
       await ctx.db.delete(requirement._id)
+    }
+    const states = await ctx.db
+      .query("fixtureEnvironmentStates")
+      .withIndex("by_fixture_environment", (query) =>
+        query.eq("fixtureId", fixture._id)
+      )
+      .collect()
+    for (const state of states) {
+      await ctx.db.delete(state._id)
     }
     // Operation history stays with its fixture slug and name snapshot.
     for (const operation of operations) {
@@ -1593,8 +1677,45 @@ export const startOperation = mutation({
     if (!operation) {
       throw new Error("Failed to start fixture operation")
     }
+    if (operation.status === "running") {
+      // Releases the lease in reactive views even if no client ever finishes it.
+      await ctx.scheduler.runAt(
+        operation.leaseExpiresAt + LEASE_EXPIRY_GRACE_MS,
+        internal.fixtures.expireOperation,
+        { operationId }
+      )
+    }
 
     return toFixtureOperation(operation)
+  },
+})
+
+/** Marks an operation interrupted once its lease has expired. */
+export const expireOperation = internalMutation({
+  args: { operationId: v.id("fixtureOperations") },
+  handler: async (ctx, args) => {
+    const operation = await ctx.db.get(args.operationId)
+    const now = Date.now()
+
+    if (!operation || operation.status !== "running") {
+      return false
+    }
+    if (operation.leaseExpiresAt > now) {
+      await ctx.scheduler.runAt(
+        operation.leaseExpiresAt + LEASE_EXPIRY_GRACE_MS,
+        internal.fixtures.expireOperation,
+        { operationId: operation._id }
+      )
+      return false
+    }
+
+    await ctx.db.patch(operation._id, {
+      status: "interrupted",
+      finishedAt: now,
+      summary:
+        operation.summary ?? "Lease expired before the operation finished.",
+    })
+    return true
   },
 })
 

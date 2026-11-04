@@ -285,7 +285,8 @@ describe("project deletion helpers", () => {
           if (
             table === "fixtures" ||
             table === "fixtureRequirements" ||
-            table === "fixtureOperations"
+            table === "fixtureOperations" ||
+            table === "fixtureEnvironmentStates"
           ) {
             return {
               withIndex(
@@ -308,7 +309,9 @@ describe("project deletion helpers", () => {
                     }
                     return table === "fixtures"
                       ? [{ _id: "fixture-1" }]
-                      : [{ _id: "requirement-1" }]
+                      : table === "fixtureEnvironmentStates"
+                        ? [{ _id: "state-1" }]
+                        : [{ _id: "requirement-1" }]
                   },
                 }
               },
@@ -349,6 +352,7 @@ describe("project deletion helpers", () => {
       "result-3",
       "run-2",
       "requirement-1",
+      "state-1",
       "fixture-1",
       "dependency-1",
       "dependency-2",

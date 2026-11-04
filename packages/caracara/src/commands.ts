@@ -556,18 +556,25 @@ export function resolveRunMode(options: RunCommandOptions) {
   }
 }
 
+type SuitePhaseSnapshot = { id: string; name: string; order: number }
+
+const suitePhaseKey = (phase: SuitePhaseSnapshot) =>
+  JSON.stringify([phase.id, phase.name, phase.order])
+
 // Suite runs snapshot their phases when the run is created, before the CLI
 // fetches the plan. Authoring stays open during runs, so refuse to execute a
-// plan whose suite phases changed in between instead of mislabeling the run.
+// plan whose suite phases (membership, names or order) changed in between
+// instead of labeling the run with phases it did not run.
 export function assertSuitePlanMatchesRun(args: {
   suiteSlug: string
-  runPhaseIds: string[]
-  planPhaseIds: string[]
+  runPhases: SuitePhaseSnapshot[]
+  planPhases: SuitePhaseSnapshot[]
 }) {
-  const runPhaseIds = new Set(args.runPhaseIds)
+  const runPhases = new Set(args.runPhases.map(suitePhaseKey))
+  const planPhases = new Set(args.planPhases.map(suitePhaseKey))
   if (
-    runPhaseIds.size !== new Set(args.planPhaseIds).size ||
-    args.planPhaseIds.some((phaseId) => !runPhaseIds.has(phaseId))
+    runPhases.size !== planPhases.size ||
+    [...planPhases].some((phase) => !runPhases.has(phase))
   ) {
     throw new Error(
       `Suite "${args.suiteSlug}" changed while the run was starting. Run it again.`
@@ -768,10 +775,8 @@ export async function runCommand(options: RunCommandOptions) {
           if (runSelection.mode === "suite" && createRunResponse) {
             assertSuitePlanMatchesRun({
               suiteSlug: runSelection.requestedSuiteSlug,
-              runPhaseIds: (
-                createRunResponse.run.requestedSuitePhases ?? []
-              ).map((phase) => phase.id),
-              planPhaseIds: response.phases.map((phase) => phase.id),
+              runPhases: createRunResponse.run.requestedSuitePhases ?? [],
+              planPhases: response.phases,
             })
           }
           const selectedPhases =

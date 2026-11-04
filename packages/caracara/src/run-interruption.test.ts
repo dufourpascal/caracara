@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
       id: "run-1",
       name: "steady-hawk-20260827-120000",
       evidencePolicy: "text_only",
+      requestedSuitePhases: [{ id: "phase-1", name: "Setup", order: 1 }],
     },
   }
 
@@ -804,6 +805,50 @@ describe("run interruption", () => {
     expect(process.exitCode).toBe(130)
     expect(stderr).toHaveBeenCalledWith(
       "Failed to finalize interrupted run: API unavailable\n"
+    )
+  })
+})
+
+describe("suite plan check during run start", () => {
+  it("interrupts the run when the suite changed after run creation", async () => {
+    mocks.fetchExecutionPlan.mockResolvedValueOnce({
+      ...mocks.executionPlan,
+      phases: [
+        ...mocks.executionPlan.phases,
+        { id: "phase-2", name: "Checkout", order: 2, scenarios: [] },
+      ],
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await expect(runCommand({ suite: "smoke" })).rejects.toThrow(
+      'Suite "smoke" changed while the run was starting. Run it again.'
+    )
+
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(mocks.startScenarioExecution).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).toHaveBeenCalledOnce()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+  })
+
+  it("runs the suite when its phases are unchanged", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Opened the application.",
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ suite: "smoke" })
+
+    expect(mocks.executeScenario).toHaveBeenCalledOnce()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "completed" }),
+      })
     )
   })
 })

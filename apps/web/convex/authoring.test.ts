@@ -65,7 +65,7 @@ describe("running-run guard", () => {
         "Scenario deletion"
       )
     ).rejects.toThrow(
-      "Scenario deletion is unavailable while run swift-heron-20260825-120000 is running."
+      "Scenario deletion is unavailable while run swift-heron-20260825-120000 is running. Finish or delete that run to continue."
     )
   })
 })

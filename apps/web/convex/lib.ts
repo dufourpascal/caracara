@@ -160,7 +160,7 @@ export async function assertNoRunningProjectRun(
   if (runningRun) {
     throw new ConvexError({
       code: "conflict",
-      message: `${action} is unavailable while run ${runningRun.name} is running.`,
+      message: `${action} is unavailable while run ${runningRun.name} is running. Finish or delete that run to continue.`,
     })
   }
 }

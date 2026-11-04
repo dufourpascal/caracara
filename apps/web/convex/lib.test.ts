@@ -37,45 +37,6 @@ describe("convex response mappers", () => {
     }
 
     expect(matchesTerminalScenarioResult(result, result)).toBe(true)
-    const usage = {
-      inputTokens: 10,
-      cachedInputTokens: 4,
-      cacheWriteInputTokens: 0,
-      outputTokens: 2,
-      reasoningOutputTokens: 0,
-      complete: true,
-    }
-    expect(
-      matchesTerminalScenarioResult(
-        { ...result, tokenUsage: usage },
-        { ...result, tokenUsage: { ...usage } }
-      )
-    ).toBe(true)
-    expect(
-      matchesTerminalScenarioResult(
-        { ...result, tokenUsage: usage },
-        { ...result, tokenUsage: { ...usage, outputTokens: 3 } }
-      )
-    ).toBe(false)
-    expect(
-      matchesTerminalScenarioResult({ ...result, tokenUsage: usage }, result)
-    ).toBe(false)
-    expect(
-      matchesTerminalScenarioResult(result, { ...result, tokenUsage: usage })
-    ).toBe(false)
-    const interrupted = { ...result, status: "interrupted", checkResults: [] }
-    expect(
-      matchesTerminalScenarioResult(
-        { ...interrupted, tokenUsage: usage },
-        interrupted
-      )
-    ).toBe(true)
-    expect(
-      matchesTerminalScenarioResult(
-        { ...interrupted, tokenUsage: usage },
-        { ...interrupted, tokenUsage: { ...usage, outputTokens: 3 } }
-      )
-    ).toBe(false)
     expect(
       matchesTerminalScenarioResult(result, {
         ...result,
@@ -456,6 +417,55 @@ describe("convex response mappers", () => {
 })
 
 describe("scenario token usage", () => {
+  it("treats token usage as part of an exact terminal result retry", () => {
+    const result = {
+      status: "completed",
+      checkResults: [{ checkId: "a", verdict: "passed", evidence: "Visible" }],
+      executionSummary: "Complete",
+      failureDetail: null,
+      finishedAt: 123,
+    }
+    const usage = {
+      inputTokens: 10,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 0,
+      outputTokens: 2,
+      reasoningOutputTokens: 0,
+      complete: true,
+    }
+    expect(
+      matchesTerminalScenarioResult(
+        { ...result, tokenUsage: usage },
+        { ...result, tokenUsage: { ...usage } }
+      )
+    ).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(
+        { ...result, tokenUsage: usage },
+        { ...result, tokenUsage: { ...usage, outputTokens: 3 } }
+      )
+    ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult({ ...result, tokenUsage: usage }, result)
+    ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult(result, { ...result, tokenUsage: usage })
+    ).toBe(false)
+    const interrupted = { ...result, status: "interrupted", checkResults: [] }
+    expect(
+      matchesTerminalScenarioResult(
+        { ...interrupted, tokenUsage: usage },
+        interrupted
+      )
+    ).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(
+        { ...interrupted, tokenUsage: usage },
+        { ...interrupted, tokenUsage: { ...usage, outputTokens: 3 } }
+      )
+    ).toBe(false)
+  })
+
   const usage = {
     inputTokens: 1_000,
     cachedInputTokens: 600,

@@ -965,7 +965,7 @@ describe("run failures", () => {
         (scenarioId) => ({
           scenarioId,
           status: "dependency_failed",
-          failureDetail: "Skipped because the runner could not start.",
+          failureDetail: "Dependency chain stopped after an earlier failure.",
         })
       ),
     ])

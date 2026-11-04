@@ -333,6 +333,26 @@ describe("convex response mappers", () => {
       { id: "phase-4", name: "Demo", order: 4 },
     ])
     expect(Number.isInteger(run.createdAt)).toBe(true)
+    expect(run.requestedPhaseOrders).toBeNull()
+    expect(
+      toRun({
+        _id: "run-id",
+        _creationTime: 1,
+        projectId: "project-id",
+        ownerUserId: "user-id",
+        name: "steady-hawk-20260308-120000",
+        status: "running",
+        mode: "phases",
+        requestedScenarioSlug: null,
+        requestedPhaseOrders: [1, 3],
+        runnerType: "codex",
+        passedCheckCount: 0,
+        totalCheckCount: 0,
+        startedAt: 1,
+        finishedAt: null,
+        updatedAt: 1,
+      } as never).requestedPhaseOrders
+    ).toEqual([1, 3])
     expect(result.submittedAt).toBe(2345)
     expect(Number.isInteger(result.submittedAt)).toBe(true)
     expect(result.status).toBe("completed")

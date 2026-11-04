@@ -388,6 +388,61 @@ describe("api-route helpers", () => {
     expect(fetchQuery).toHaveBeenCalledTimes(1)
   })
 
+  it("passes requested phase orders to the run creation mutation", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    vi.mocked(fetchMutation).mockResolvedValue({ id: "run-1" })
+
+    await createRun("token", {
+      projectSlug: "demo",
+      evidencePolicy: "text_only",
+      body: {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2, 5],
+        runnerType: "codex",
+        startedAt: 1,
+      },
+    })
+    await createRun("token", {
+      projectSlug: "demo",
+      evidencePolicy: "text_only",
+      body: { mode: "all", runnerType: "codex", startedAt: 1 },
+    })
+
+    expect(vi.mocked(fetchMutation).mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({
+        mode: "phases",
+        requestedPhaseOrders: [1, 2, 5],
+        requestedPhaseOrder: null,
+      }),
+      expect.objectContaining({ mode: "all", requestedPhaseOrders: null }),
+    ])
+  })
+
+  it("rejects unsorted requested phase orders before creating a run", async () => {
+    await expect(
+      createRun("token", {
+        projectSlug: "demo",
+        evidencePolicy: "text_only",
+        body: {
+          mode: "phases",
+          requestedPhaseOrders: [3, 1],
+          runnerType: "codex",
+          startedAt: 1,
+        },
+      })
+    ).rejects.toThrow(/sorted and unique/)
+    expect(fetchMutation).not.toHaveBeenCalled()
+  })
+
   it("maps stringified structured errors in messages to API responses", async () => {
     const response = handleApiError(
       new Error(

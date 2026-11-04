@@ -249,6 +249,7 @@ export function toRun(run: Doc<"runs">) {
     mode: run.mode,
     requestedScenarioSlug: run.requestedScenarioSlug,
     requestedPhaseOrder: run.requestedPhaseOrder ?? null,
+    requestedPhaseOrders: run.requestedPhaseOrders ?? null,
     requestedSuiteSlug: run.requestedSuiteSlug ?? null,
     requestedSuiteName: run.requestedSuiteName ?? null,
     requestedSuitePhases: run.requestedSuitePhases ?? [],

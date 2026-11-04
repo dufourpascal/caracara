@@ -36,6 +36,13 @@ export const evidencePolicySchema = z.enum([
   "failed_check_screenshot",
 ])
 
+export const fixtureAccessSchema = z.enum(["read", "mutates"])
+export const fixturePreflightOutcomeSchema = z.enum([
+  "healthy",
+  "repaired",
+  "skipped",
+])
+
 export const timestampSchema = z.number().int().nonnegative()
 export const slugSchema = z
   .string()
@@ -250,6 +257,16 @@ export const scenarioDependencySchema = z.object({
   createdAt: timestampSchema,
 })
 
+/** The fixture state a run started from, snapshotted at run creation. */
+export const fixturePreflightEntrySchema = z.object({
+  fixtureId: z.string().min(1),
+  fixtureSlug: slugSchema,
+  fixtureName: z.string().min(1).check(maxUtf16Length(120)),
+  access: fixtureAccessSchema,
+  outcome: fixturePreflightOutcomeSchema,
+  operationId: z.string().min(1).nullable(),
+})
+
 export const runSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -271,6 +288,7 @@ export const runSchema = z.object({
   evidencePolicy: evidencePolicySchema,
   environment: environmentNameSchema.nullable().optional(),
   targetUrl: targetUrlSchema.nullable().optional(),
+  fixturePreflight: z.array(fixturePreflightEntrySchema).optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),
@@ -302,6 +320,11 @@ export const scenarioResultSchema = z.object({
   submittedAt: timestampSchema,
 })
 
+export type FixtureAccess = z.infer<typeof fixtureAccessSchema>
+export type FixturePreflightOutcome = z.infer<
+  typeof fixturePreflightOutcomeSchema
+>
+export type FixturePreflightEntry = z.infer<typeof fixturePreflightEntrySchema>
 export type ScenarioStatus = z.infer<typeof scenarioStatusSchema>
 export type RunStatus = z.infer<typeof runStatusSchema>
 export type ScenarioResultStatus = z.infer<typeof scenarioResultStatusSchema>

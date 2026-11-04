@@ -1,5 +1,6 @@
 export * from "./api.js"
 export * from "./constants.js"
 export * from "./domain.js"
+export * from "./fixtures.js"
 export * from "./helpers.js"
 export * from "./version.js"

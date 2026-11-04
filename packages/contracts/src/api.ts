@@ -4,6 +4,8 @@ import { API_VERSION, MIN_SUPPORTED_CLI_VERSION } from "./constants.js"
 import {
   evaluationCheckSchema,
   environmentNameSchema,
+  fixtureAccessSchema,
+  fixturePreflightOutcomeSchema,
   nullableStringSchema,
   phaseSchema,
   projectSchema,
@@ -16,6 +18,18 @@ import {
   suiteSchema,
   targetUrlSchema,
 } from "./domain.js"
+import {
+  effectiveFixtureRequirementSchema,
+  fixtureDescriptionSchema,
+  fixtureDetailSchema,
+  fixtureDoneWhenSchema,
+  fixtureInstructionsSchema,
+  fixtureLocatorSchema,
+  fixtureMutationScopeSchema,
+  fixtureNameSchema,
+  fixtureProtectionSchema,
+  fixtureSchema,
+} from "./fixtures.js"
 import { maxUtf16Length, minUtf16Length } from "./string-length.js"
 
 export const apiErrorCodeSchema = z.enum([
@@ -90,6 +104,8 @@ export const orderedScenarioSchema = scenarioSchema
   })
   .extend({
     dependencyIds: z.array(z.string()),
+    /** Merged scenario and phase requirements. Servers before fixtures omit it. */
+    fixtureRequirements: z.array(effectiveFixtureRequirementSchema).default([]),
   })
 
 export const runnablePhaseSchema = phaseSchema
@@ -124,6 +140,8 @@ export const executionPlanResponseSchema = z.object({
   phases: z.array(runnablePhaseSchema),
   suite: suiteSchema.pick({ name: true, slug: true }).nullable().optional(),
   unassignedScenarioCount: z.number().int().nonnegative(),
+  /** Definitions of every fixture the plan's scenarios require. */
+  fixtures: z.array(fixtureSchema).default([]),
 })
 
 export const singleScenarioResponseSchema = z.object({
@@ -134,6 +152,7 @@ export const singleScenarioResponseSchema = z.object({
     projectPrompt: true,
   }),
   scenario: orderedScenarioSchema,
+  fixtures: z.array(fixtureSchema).default([]),
 })
 
 const addPhaseRequestSchema = z.object({
@@ -203,6 +222,102 @@ const updateCheckRequestSchema = z.object({
   expectation: z.string().trim().min(1).check(maxUtf16Length(2_000)).optional(),
 })
 
+const createFixtureRequestSchema = z.object({
+  operation: z.literal("createFixture"),
+  name: fixtureNameSchema,
+  slug: slugSchema.optional(),
+  description: fixtureDescriptionSchema.default(""),
+  locator: fixtureLocatorSchema.default(""),
+  protection: fixtureProtectionSchema.default(""),
+})
+
+const updateFixtureRequestSchema = z.object({
+  operation: z.literal("updateFixture"),
+  fixtureId: z.string().min(1),
+  name: fixtureNameSchema.optional(),
+  slug: slugSchema.optional(),
+  description: fixtureDescriptionSchema.optional(),
+  locator: fixtureLocatorSchema.optional(),
+  protection: fixtureProtectionSchema.optional(),
+  /** `null` removes the reset instructions. */
+  resetInstructions: fixtureInstructionsSchema.nullable().optional(),
+})
+
+const fixtureStepFieldsSchema = z.object({
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
+  instructions: fixtureInstructionsSchema,
+  doneWhen: fixtureDoneWhenSchema,
+})
+
+const addFixtureStepRequestSchema = fixtureStepFieldsSchema.extend({
+  operation: z.literal("addFixtureStep"),
+  fixtureId: z.string().min(1),
+})
+
+const updateFixtureStepRequestSchema = fixtureStepFieldsSchema
+  .partial()
+  .extend({
+    operation: z.literal("updateFixtureStep"),
+    fixtureId: z.string().min(1),
+    stepId: z.guid(),
+  })
+
+const removeFixtureStepRequestSchema = z.object({
+  operation: z.literal("removeFixtureStep"),
+  fixtureId: z.string().min(1),
+  stepId: z.guid(),
+})
+
+const addFixtureCheckRequestSchema = z.object({
+  operation: z.literal("addFixtureCheck"),
+  fixtureId: z.string().min(1),
+  check: evaluationCheckSchema,
+})
+
+const updateFixtureCheckRequestSchema = z.object({
+  operation: z.literal("updateFixtureCheck"),
+  fixtureId: z.string().min(1),
+  checkId: z.guid(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)).optional(),
+  expectation: z.string().trim().min(1).check(maxUtf16Length(2_000)).optional(),
+})
+
+const removeFixtureCheckRequestSchema = z.object({
+  operation: z.literal("removeFixtureCheck"),
+  fixtureId: z.string().min(1),
+  checkId: z.guid(),
+})
+
+const fixtureRequirementTargetSchema = z.object({
+  phaseId: z.string().min(1).optional(),
+  scenarioId: z.string().min(1).optional(),
+})
+
+const requireFixtureRequestSchema = fixtureRequirementTargetSchema.extend({
+  operation: z.literal("requireFixture"),
+  fixtureId: z.string().min(1),
+  access: fixtureAccessSchema.default("read"),
+  mutationScope: fixtureMutationScopeSchema.optional(),
+})
+
+const unrequireFixtureRequestSchema = fixtureRequirementTargetSchema.extend({
+  operation: z.literal("unrequireFixture"),
+  fixtureId: z.string().min(1),
+})
+
+export const FIXTURE_AUTHORING_OPERATIONS = [
+  "createFixture",
+  "updateFixture",
+  "addFixtureStep",
+  "updateFixtureStep",
+  "removeFixtureStep",
+  "addFixtureCheck",
+  "updateFixtureCheck",
+  "removeFixtureCheck",
+  "requireFixture",
+  "unrequireFixture",
+] as const
+
 export const authoringRequestSchema = z
   .discriminatedUnion("operation", [
     addPhaseRequestSchema,
@@ -213,8 +328,84 @@ export const authoringRequestSchema = z
     addCheckRequestSchema,
     removeCheckRequestSchema,
     updateCheckRequestSchema,
+    createFixtureRequestSchema,
+    updateFixtureRequestSchema,
+    addFixtureStepRequestSchema,
+    updateFixtureStepRequestSchema,
+    removeFixtureStepRequestSchema,
+    addFixtureCheckRequestSchema,
+    updateFixtureCheckRequestSchema,
+    removeFixtureCheckRequestSchema,
+    requireFixtureRequestSchema,
+    unrequireFixtureRequestSchema,
   ])
   .superRefine((value, ctx) => {
+    if (
+      value.operation === "updateFixture" &&
+      value.name === undefined &&
+      value.slug === undefined &&
+      value.description === undefined &&
+      value.locator === undefined &&
+      value.protection === undefined &&
+      value.resetInstructions === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "updateFixture requires at least one change.",
+      })
+    }
+
+    if (
+      value.operation === "updateFixtureStep" &&
+      value.name === undefined &&
+      value.instructions === undefined &&
+      value.doneWhen === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "updateFixtureStep requires a name, instructions or done-when.",
+      })
+    }
+
+    if (
+      value.operation === "updateFixtureCheck" &&
+      value.name === undefined &&
+      value.expectation === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "updateFixtureCheck requires a name or expectation.",
+      })
+    }
+
+    if (
+      (value.operation === "requireFixture" ||
+        value.operation === "unrequireFixture") &&
+      (value.phaseId === undefined) === (value.scenarioId === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Name exactly one phase or scenario.",
+      })
+    }
+
+    if (value.operation === "requireFixture") {
+      if (value.access === "mutates" && value.mutationScope === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "A mutating requirement needs a mutation scope.",
+          path: ["mutationScope"],
+        })
+      }
+      if (value.access === "read" && value.mutationScope !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Only a mutating requirement has a mutation scope.",
+          path: ["mutationScope"],
+        })
+      }
+    }
+
     if (
       value.operation === "updateScenario" &&
       value.name === undefined &&
@@ -267,10 +458,16 @@ const scenarioAuthoringResponseSchema = z.object({
   result: scenarioSchema,
 })
 
+const fixtureAuthoringResponseSchema = z.object({
+  operation: z.enum(FIXTURE_AUTHORING_OPERATIONS),
+  result: fixtureDetailSchema,
+})
+
 export const authoringResponseSchema = z.union([
   phaseAuthoringResponseSchema,
   removePhaseResponseSchema,
   scenarioAuthoringResponseSchema,
+  fixtureAuthoringResponseSchema,
 ])
 
 export const createRunRequestSchema = z
@@ -285,6 +482,20 @@ export const createRunRequestSchema = z
     startedAt: z.number().int().positive(),
     creationAttemptId: z.guid().optional(),
     interruptedAt: z.number().int().positive().optional(),
+    /**
+     * One entry per fixture the selection requires. Required by the server
+     * whenever the selection has fixture requirements.
+     */
+    fixturePreflight: z
+      .array(
+        z.object({
+          fixtureId: z.string().min(1),
+          outcome: fixturePreflightOutcomeSchema,
+          operationId: z.string().min(1).nullable(),
+        })
+      )
+      .max(100)
+      .optional(),
   })
   .refine(
     (value) =>
@@ -294,6 +505,26 @@ export const createRunRequestSchema = z
     }
   )
   .superRefine((value, ctx) => {
+    for (const [index, entry] of (value.fixturePreflight ?? []).entries()) {
+      if ((entry.outcome === "skipped") !== (entry.operationId === null)) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "Skipped fixtures have no operation; verified fixtures name their verify operation.",
+          path: ["fixturePreflight", index, "operationId"],
+        })
+      }
+    }
+    if (
+      new Set((value.fixturePreflight ?? []).map((entry) => entry.fixtureId))
+        .size !== (value.fixturePreflight ?? []).length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Each fixture appears once in the preflight.",
+        path: ["fixturePreflight"],
+      })
+    }
     if (
       value.interruptedAt !== undefined &&
       value.creationAttemptId === undefined
@@ -339,6 +570,7 @@ export const createRunResponseSchema = z.object({
     requestedSuiteSlug: true,
     requestedSuiteName: true,
     requestedSuitePhases: true,
+    fixturePreflight: true,
     startedAt: true,
   }),
   evidenceUploadUrl: z.url().optional(),

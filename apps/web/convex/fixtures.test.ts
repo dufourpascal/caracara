@@ -1083,30 +1083,33 @@ describe("run creation with fixtures", () => {
       /changed after it was loaded/
     )
 
-    // A verify that does not say which definition it ran cannot satisfy preflight.
+    // Health ignores a verify of the previous definition.
+    const detail = await call(fixtures.getBySlugForProject, ctx, {
+      projectSlug: "demo",
+      fixtureSlug: fixture.slug,
+    })
+    expect(
+      detail!.health.find((entry) => entry.environment === "preview")?.status
+    ).not.toBe("healthy")
     vi.advanceTimersByTime(1)
-    const attemptId = crypto.randomUUID()
-    const unversioned = await call(fixtures.startOperation, ctx, {
+    const stale = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    await call(fixtures.updateDetails, ctx, {
       projectId,
-      fixtureId: fixture.id as Id<"fixtures">,
-      kind: "verify",
-      executor: "hook",
-      environment: "preview",
-      targetUrl: "https://preview.example.com/",
-      attemptId,
+      fixtureId: fixture.id,
+      locator: "Moved again",
     })
-    await call(fixtures.finishOperation, ctx, {
-      projectId,
-      operationId: unversioned.id as Id<"fixtureOperations">,
-      attemptId,
-      status: "succeeded",
-      checkResults: [],
-      summary: null,
+    const afterEdit = await call(fixtures.getBySlugForProject, ctx, {
+      projectSlug: "demo",
+      fixtureSlug: fixture.slug,
     })
+    expect(
+      afterEdit!.health.find((entry) => entry.environment === "preview")
+    ).toMatchObject({ status: "unknown", operationId: stale.id })
     await expectError(
       createRun({
         fixturePreflight: [
-          { fixtureId: fixture.id, outcome: "healthy", operationId: unversioned.id },
+          { fixtureId: fixture.id, outcome: "healthy", operationId: stale.id },
         ],
       }),
       "conflict",

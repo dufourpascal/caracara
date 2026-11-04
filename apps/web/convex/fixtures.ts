@@ -431,6 +431,8 @@ export async function deriveFixtureHealth(
     } else if (
       decisive.kind === "verify" &&
       decisive.status === "succeeded" &&
+      // A verify of an older definition says nothing about the current one.
+      decisive.fixtureUpdatedAt === fixture.updatedAt &&
       !(await hasMutatingRunSince(ctx, {
         projectId: project._id,
         environment,
@@ -731,6 +733,11 @@ async function validatePreflightOperation(
   }
   if (args.now - operation.finishedAt > FIXTURE_PREFLIGHT_MAX_AGE_MS) {
     conflict(`${label}: the preflight verify is too old; rerun.`)
+  }
+  if (operation.fixtureUpdatedAt === undefined) {
+    conflict(
+      `${label}: the preflight verify did not record its fixture version; rerun.`
+    )
   }
   if (
     operation.startedAt < args.fixture.updatedAt ||
@@ -1586,7 +1593,7 @@ export const startOperation = mutation({
     targetUrl: v.string(),
     runId: v.optional(v.union(v.null(), v.id("runs"))),
     attemptId: v.string(),
-    fixtureUpdatedAt: v.optional(v.number()),
+    fixtureUpdatedAt: v.number(),
     interruptedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -1641,10 +1648,7 @@ export const startOperation = mutation({
     }
 
     if (args.interruptedAt === undefined) {
-      if (
-        args.fixtureUpdatedAt !== undefined &&
-        args.fixtureUpdatedAt !== fixture.updatedAt
-      ) {
+      if (args.fixtureUpdatedAt !== fixture.updatedAt) {
         conflict(
           `Fixture ${fixture.slug} changed after it was loaded; run the command again.`
         )
@@ -1709,9 +1713,7 @@ export const startOperation = mutation({
       checkResults: [],
       summary: null,
       attemptId: args.attemptId,
-      ...(args.fixtureUpdatedAt === undefined
-        ? {}
-        : { fixtureUpdatedAt: args.fixtureUpdatedAt }),
+      fixtureUpdatedAt: args.fixtureUpdatedAt,
       startedAt: now,
       finishedAt: args.interruptedAt === undefined ? null : now,
       leaseExpiresAt: now + FIXTURE_OPERATION_LEASE_MS,

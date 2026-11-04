@@ -209,7 +209,7 @@ export const startFixtureOperationRequestSchema = z.object({
    * server rejects the start if the fixture changed since, and preflight only
    * accepts verifies whose version matches the current definition.
    */
-  fixtureUpdatedAt: timestampSchema.optional(),
+  fixtureUpdatedAt: timestampSchema,
   /** Recovery after a lost start response: create or mark the attempt interrupted. */
   interruptedAt: z.number().int().positive().optional(),
 })

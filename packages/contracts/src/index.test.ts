@@ -1812,8 +1812,19 @@ describe("fixture contracts", () => {
         environment: "preview",
         targetUrl: "https://preview.example.com",
         attemptId: guid(2),
+        fixtureUpdatedAt: 2,
       }).targetUrl
     ).toBe("https://preview.example.com/")
+    expect(
+      startFixtureOperationRequestSchema.safeParse({
+        fixtureId: "f",
+        kind: "verify",
+        executor: "hook",
+        environment: "preview",
+        targetUrl: "https://preview.example.com",
+        attemptId: guid(2),
+      }).success
+    ).toBe(false)
     expect(
       finishFixtureOperationRequestSchema.safeParse({
         attemptId: guid(2),

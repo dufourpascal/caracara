@@ -589,6 +589,7 @@ describe("api-route helpers", () => {
           environment: "preview",
           targetUrl: "https://preview.example.com",
           attemptId: "00000000-0000-4000-8000-000000000001",
+          fixtureUpdatedAt: 1,
         },
       })
     ).resolves.toEqual({ operation })
@@ -602,6 +603,7 @@ describe("api-route helpers", () => {
         environment: "preview",
         targetUrl: "https://preview.example.com/",
         attemptId: "00000000-0000-4000-8000-000000000001",
+        fixtureUpdatedAt: 1,
       },
       { token: "token" }
     )

@@ -969,6 +969,55 @@ describe("run creation with fixtures", () => {
     ])
   })
 
+  it("accepts a verify while a newer verify is still running", async () => {
+    const { createRun, fixture, verify, startOperation } = await requiredSetup()
+    const first = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    const running = await startOperation(fixture.id)
+    expect(running.status).toBe("running")
+
+    const run = await createRun({
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "healthy", operationId: first.id },
+      ],
+    })
+    expect(run.fixturePreflight).toEqual([
+      expect.objectContaining({ operationId: first.id }),
+    ])
+  })
+
+  it("rejects a verify that overlapped the end of a mutating run", async () => {
+    const { ctx, createRun, fixture, startOperation, finishOperation, finalize } =
+      await requiredSetup("mutates")
+    const attemptId = crypto.randomUUID()
+    const overlapping = await startOperation(fixture.id, { attemptId })
+    vi.advanceTimersByTime(1)
+    const mutating = await createRun({
+      fixturePreflight: [{ fixtureId: fixture.id, outcome: "skipped", operationId: null }],
+    })
+    vi.advanceTimersByTime(1)
+    await finalize(mutating.id)
+    vi.advanceTimersByTime(1)
+    await finishOperation(overlapping, attemptId)
+
+    const detail = await call(fixtures.getBySlugForProject, ctx, {
+      projectSlug: "demo",
+      fixtureSlug: fixture.slug,
+    })
+    expect(
+      detail!.health.find((entry) => entry.environment === "preview")
+    ).toMatchObject({ status: "unknown", operationId: overlapping.id })
+    await expectError(
+      createRun({
+        fixturePreflight: [
+          { fixtureId: fixture.id, outcome: "healthy", operationId: overlapping.id },
+        ],
+      }),
+      "conflict",
+      /ran or is running/
+    )
+  })
+
   it("keeps mutation evidence when a running mutating run is deleted", async () => {
     const { ctx, createRun, fixture, verify } = await requiredSetup("mutates")
     const running = await createRun({

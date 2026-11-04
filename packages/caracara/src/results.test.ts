@@ -235,6 +235,29 @@ describe("run results report", () => {
     expect(readRunString({ model: "" }, "model")).toBeNull()
   })
 
+  it("includes the fixture preflight in JSON and text", () => {
+    const fixturePreflight = [
+      {
+        fixtureId: "fixture-1",
+        fixtureSlug: "demo-user",
+        fixtureName: "Demo user",
+        access: "read" as const,
+        outcome: "repaired" as const,
+        executor: "agent" as const,
+      },
+    ]
+    const report = buildRunResultsReport({
+      ...response,
+      run: { ...response.run, fixturePreflight },
+    })
+
+    expect(report.run.fixturePreflight).toEqual(fixturePreflight)
+    expect(buildRunResultsReport(response).run.fixturePreflight).toEqual([])
+    expect(formatRunResultsTable(report)).toContain(
+      "Fixtures  demo-user repaired (agent)"
+    )
+  })
+
   it("prints a compact table with the checks that did not pass", () => {
     expect(formatRunResultsTable(buildRunResultsReport(response)))
       .toMatchInlineSnapshot(`

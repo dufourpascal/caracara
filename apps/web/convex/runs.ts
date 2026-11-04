@@ -2,16 +2,20 @@ import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import {
   environmentNameSchema,
+  fixturePreflightEntrySchema,
+  type FixturePreflightEntry,
   LATEST_RUN_REFERENCE,
   requestedPhaseOrdersSchema,
   runEnvironmentSchema,
   runModelSchema,
   runReasoningEffortSchema,
 } from "@workspace/contracts"
+import { z } from "zod"
 
 import type { Id } from "./_generated/dataModel"
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
+import { fixturePreflightEntry } from "./schema"
 import {
   computeRunCheckCounts,
   createRunName,
@@ -517,6 +521,7 @@ export const create = mutation({
     startedAt: v.number(),
     creationAttemptId: v.optional(v.string()),
     interruptedAt: v.optional(v.number()),
+    fixturePreflight: v.optional(v.array(fixturePreflightEntry)),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -588,6 +593,7 @@ export const create = mutation({
       })
     }
     const environment = parseRunEnvironment(args)
+    const fixturePreflight = parseFixturePreflight(args.fixturePreflight)
     const timestamp = Date.now()
     if (environment) {
       const runEnvironmentNames = addRunEnvironmentName(
@@ -622,6 +628,7 @@ export const create = mutation({
       evidencePolicy: args.evidencePolicy ?? "text_only",
       ...(environment ?? {}),
       ...runModel,
+      ...(fixturePreflight ? { fixturePreflight } : {}),
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,
@@ -639,6 +646,26 @@ export const create = mutation({
     return toRun(run)
   },
 })
+
+/** Stores the preflight as the CLI reported it; only its shape is checked. */
+export function parseFixturePreflight(
+  entries: FixturePreflightEntry[] | undefined
+) {
+  if (entries === undefined) {
+    return undefined
+  }
+  const parsed = z
+    .array(fixturePreflightEntrySchema)
+    .max(100)
+    .safeParse(entries)
+  if (!parsed.success) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Fixture preflight is invalid.",
+    })
+  }
+  return parsed.data
+}
 
 export const submitScenarioResult = mutation({
   args: {

@@ -11,6 +11,7 @@ import {
   ApiRouteError,
   authorProject,
   createRun,
+  getFixtureList,
   getRunResults,
   handleApiError,
   parseJsonBody,
@@ -119,6 +120,59 @@ describe("api-route helpers", () => {
         expectation: "The final receipt is visible.",
       },
     ],
+    [
+      {
+        operation: "createFixture",
+        name: "Seeded account",
+        healthChecks: [{ name: "Exists", expectation: "It exists." }],
+      },
+      {
+        projectId: "project-1",
+        name: "Seeded account",
+        healthChecks: [{ name: "Exists", expectation: "It exists." }],
+      },
+    ],
+    [
+      { operation: "updateFixture", fixtureId: "fixture-1", locator: "Admin" },
+      { projectId: "project-1", fixtureId: "fixture-1", locator: "Admin" },
+    ],
+    [
+      {
+        operation: "requireFixture",
+        fixtureId: "fixture-1",
+        scenarioId: "scenario-2",
+        access: "mutates",
+        mutationScope: "Its cart",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        scenarioId: "scenario-2",
+        access: "mutates",
+        mutationScope: "Its cart",
+      },
+    ],
+    [
+      {
+        operation: "requireFixture",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+        access: "read",
+      },
+    ],
+    [
+      {
+        operation: "unrequireFixture",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+      },
+      { projectId: "project-1", fixtureId: "fixture-1", phaseId: "phase-1" },
+    ],
   ])(
     "dispatches the $operation authoring operation",
     async (body, mutationArgs) => {
@@ -148,6 +202,57 @@ describe("api-route helpers", () => {
       expect(response.operation).toBe(body.operation)
     }
   )
+
+  it("rejects fixture requirements without exactly one target or a needed scope", async () => {
+    for (const body of [
+      { operation: "requireFixture", fixtureId: "fixture-1" },
+      {
+        operation: "requireFixture",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+        access: "mutates",
+      },
+    ]) {
+      await expect(
+        authorProject({ token: "token", projectSlug: "demo", body })
+      ).rejects.toThrow()
+    }
+    expect(fetchMutation).not.toHaveBeenCalled()
+  })
+
+  it("lists project fixtures in the response contract", async () => {
+    const fixture = {
+      id: "fixture-1",
+      projectId: "project-1",
+      name: "Seeded account",
+      slug: "seeded-account",
+      description: "",
+      locator: "",
+      protection: "",
+      convergeSteps: [],
+      healthChecks: [],
+      requirements: [
+        {
+          phaseId: "phase-1",
+          scenarioId: null,
+          access: "read",
+          mutationScope: null,
+        },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    vi.mocked(fetchQuery).mockResolvedValue([fixture])
+
+    await expect(getFixtureList("token", "demo")).resolves.toEqual({
+      fixtures: [fixture],
+    })
+    expect(fetchQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      { projectSlug: "demo" },
+      { token: "token" }
+    )
+  })
 
   it("defaults omitted createScenario dependencies and omits unchanged ones on update", async () => {
     vi.mocked(fetchQuery).mockResolvedValue({
@@ -316,6 +421,14 @@ describe("api-route helpers", () => {
   })
 
   it("stores the CLI environment snapshot when creating a run", async () => {
+    const preflightEntry = {
+      fixtureId: "fixture-1",
+      fixtureSlug: "seeded-account",
+      fixtureName: "Seeded account",
+      access: "read",
+      outcome: "healthy",
+      executor: "agent",
+    }
     vi.mocked(fetchQuery).mockResolvedValue({
       id: "project-1",
       ownerUserId: "user-1",
@@ -341,6 +454,7 @@ describe("api-route helpers", () => {
         startedAt: 1,
         creationAttemptId: "00000000-0000-4000-8000-000000000001",
         interruptedAt: 2,
+        fixturePreflight: [preflightEntry],
       },
     })
 
@@ -353,6 +467,7 @@ describe("api-route helpers", () => {
         model: "gpt-6.1-sol",
         reasoningEffort: "high",
         interruptedAt: 2,
+        fixturePreflight: [preflightEntry],
       }),
       { token: "token" }
     )

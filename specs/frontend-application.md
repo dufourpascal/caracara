@@ -68,4 +68,10 @@ Scenario execution itself happens through the local CLI, so the web app's respon
 
 Suites have a dedicated project workspace.
 
-Each project has a `/projects/:projectSlug/suites` route, and the project dropdown order is Project, Suites, Phases, Scenarios, Runs. The established two-panel editor shows the suite registry and phase counts on the left, with name, slug, and one checkbox per ordered phase on the right. Labels use `Phase N: <phase name>`. Suite-targeted run history shows the snapshotted suite name, slug, and phase names and orders without adding a suite filter.
+Each project has a `/projects/:projectSlug/suites` route, and the project dropdown order is Project, Suites, Fixtures, Phases, Scenarios, Runs. The established two-panel editor shows the suite registry and phase counts on the left, with name, slug, and one checkbox per ordered phase on the right. Labels use `Phase N: <phase name>`. Suite-targeted run history shows the snapshotted suite name, slug, and phase names and orders without adding a suite filter.
+
+### FRONTEND_12
+
+Fixtures have a dedicated project workspace.
+
+`/projects/:projectSlug/fixtures` uses the two-panel layout: the fixture list with requirement counts on the left and an editor on the right with name, slug, description, "How to find it", "Rules for evaluation runs", converge steps and health checks (add, edit, remove), Save, Revert, and Delete with confirmation. Fields are disabled while a save is pending. "Used by" lists the requirements and adds or removes one immediately; a `mutates` requirement needs a scope. The run detail shows a Fixtures block with each preflight entry's fixture name, access, outcome, and executor when the run recorded a preflight.

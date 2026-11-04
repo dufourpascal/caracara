@@ -141,6 +141,7 @@ vi.mock("./execution.js", async (importOriginal) => ({
     type: "codex",
     startRun: vi.fn(async () => ({
       executeScenario: mocks.executeScenario,
+      runTask: vi.fn(),
       isHealthy: () => mocks.health.healthy,
       close: mocks.close,
     })),
@@ -483,7 +484,7 @@ describe("JSON output", () => {
 })
 
 describe("runs that end before any scenario", () => {
-  it("reports a created suite run whose plan cannot be loaded", async () => {
+  it("creates no suite run when its plan cannot be loaded", async () => {
     mocks.fetchExecutionPlan.mockRejectedValueOnce(new Error("plan exploded"))
     const stdout = output()
 
@@ -494,19 +495,12 @@ describe("runs that end before any scenario", () => {
       )
     ).rejects.toThrow("plan exploded")
 
-    expect(finalizedStatus()).toBe("interrupted")
-    const events = stdout
-      .text()
-      .trimEnd()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { type: string; exitCode?: number })
-    expect(events).toEqual([
-      expect.objectContaining({
-        type: "run.finished",
-        status: "interrupted",
-        exitCode: 1,
-      }),
-    ])
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteSlug: "smoke" })
+    )
+    expect(mocks.createRun).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).not.toHaveBeenCalled()
+    expect(stdout.text()).toBe("")
   })
 })
 
@@ -562,23 +556,18 @@ describe("runs that end during creation", () => {
     ).toHaveLength(0)
   })
 
-  it("reports a created suite run with no active scenarios", async () => {
+  it("creates no suite run when the suite has no active scenarios", async () => {
     mocks.fetchExecutionPlan.mockResolvedValueOnce({
       ...mocks.executionPlan,
       phases: [],
     })
-    const stdout = output()
 
-    await expect(
-      runCommand(
-        { suite: "smoke" },
-        { stdout: stdout.stream, stderr: output().stream, env: {} }
-      )
-    ).rejects.toThrow('Suite "smoke" has no active scenarios to run.')
+    await expect(run({ suite: "smoke" })).rejects.toThrow(
+      'Suite "smoke" has no active scenarios to run.'
+    )
 
-    expect(finalizedStatus()).toBe("interrupted")
-    expect(stdout.text()).toContain("━━ Run steady-hawk-20261104-120000")
-    expect(stdout.text()).toContain("Scenarios  0 completed")
+    expect(mocks.createRun).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).not.toHaveBeenCalled()
   })
 })
 

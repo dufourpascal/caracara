@@ -4,6 +4,7 @@ import { paginationOptsValidator } from "convex/server"
 import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
+import { attachFixtureRequirements, stripFixtureRequirements } from "./fixtures"
 import {
   assertNoRunningProjectRun,
   deleteDependenciesTouchingScenarioIds,
@@ -12,6 +13,7 @@ import {
   getExecutionPlan,
   getOrderedScenarios,
   getProjectDependencies,
+  getProjectFixtures,
   getProjectPhases,
   getProjectScenarios,
   getScenarioDependencyIds,
@@ -214,11 +216,13 @@ export const getBySlug = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const [scenario, dependencyIdsByScenario, phases] = await Promise.all([
-      getScenarioBySlug(ctx, project._id, args.scenarioSlug),
-      getScenarioDependencyIds(ctx, project._id),
-      getProjectPhases(ctx, project._id),
-    ])
+    const [scenario, dependencyIdsByScenario, phases, fixtures] =
+      await Promise.all([
+        getScenarioBySlug(ctx, project._id, args.scenarioSlug),
+        getScenarioDependencyIds(ctx, project._id),
+        getProjectPhases(ctx, project._id),
+        getProjectFixtures(ctx, project._id),
+      ])
 
     if (!scenario) {
       return null
@@ -232,10 +236,12 @@ export const getBySlug = query({
         (candidate) => candidate._id === (scenario.phaseId ?? null)
       ) ?? null
 
-    return {
-      ...toScenario(scenario, phase),
-      dependencyIds,
-    }
+    const withFixtures = attachFixtureRequirements(
+      [{ ...toScenario(scenario, phase), dependencyIds }],
+      fixtures
+    )
+
+    return { ...withFixtures.scenarios[0]!, fixtures: withFixtures.fixtures }
   },
 })
 
@@ -246,12 +252,20 @@ export const executionPlanForProject = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const [executionPlan, suite] = await Promise.all([
+    const [executionPlan, suite, projectFixtures] = await Promise.all([
       getExecutionPlan(ctx, project._id, { activeOnly: true }),
       args.suiteSlug
         ? getSuiteBySlug(ctx, project._id, args.suiteSlug)
         : Promise.resolve(null),
+      getProjectFixtures(ctx, project._id),
     ])
+    const selectedPhases = suite
+      ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
+      : executionPlan.phases
+    const { fixtures } = attachFixtureRequirements(
+      selectedPhases.flatMap((phase) => phase.scenarios),
+      projectFixtures
+    )
 
     return {
       projectPrompt: project.projectPrompt,
@@ -260,11 +274,14 @@ export const executionPlanForProject = query({
         name: project.name,
         slug: project.slug,
       },
-      phases: suite
-        ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
-        : executionPlan.phases,
+      phases: selectedPhases.map((phase) => ({
+        ...phase,
+        scenarios: attachFixtureRequirements(phase.scenarios, projectFixtures)
+          .scenarios,
+      })),
       suite: suite ? { name: suite.name, slug: suite.slug } : null,
       unassignedScenarioCount: executionPlan.unassignedScenarioCount,
+      fixtures,
     }
   },
 })
@@ -710,6 +727,7 @@ export const remove = mutation({
       await ctx.db.delete(dependency._id)
     }
 
+    await stripFixtureRequirements(ctx, project._id, scenario._id)
     await ctx.db.delete(scenario._id)
     await rebuildScenarioNavigationMetadata(ctx, project._id)
 

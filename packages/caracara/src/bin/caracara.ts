@@ -6,8 +6,10 @@ import {
   addCheckCommand,
   addPhaseCommand,
   cliVersion,
+  createFixtureCommand,
   createScenarioCommand,
   editPhaseCommand,
+  fixtureOperationCommand,
   initCommand,
   listEnvironmentsCommand,
   listProjectsCommand,
@@ -15,9 +17,12 @@ import {
   logoutCommand,
   removeCheckCommand,
   removePhaseCommand,
+  requireFixtureCommand,
   resultsCommand,
   runCommand,
+  unrequireFixtureCommand,
   updateCheckCommand,
+  updateFixtureCommand,
   updateScenarioCommand,
   whoamiCommand,
 } from "../commands.js"
@@ -141,6 +146,80 @@ program
   .option("--project <slug>")
   .action(updateCheckCommand)
 
+const fixtureFieldOptions = (command: Command) =>
+  command
+    .option("--slug <slug>")
+    .option("--description <text>")
+    .option("--locator <text>", "how to find the fixture in the application")
+    .option("--protection <text>", "extra rules for runs that use it")
+    .option(
+      "--steps-file <path>",
+      "JSON array of converge steps: { name, instructions, doneWhen }"
+    )
+    .option(
+      "--checks-file <path>",
+      "JSON array of health checks: { name, expectation }"
+    )
+    .option("--api-base-url <url>")
+    .option("--project <slug>")
+
+fixtureFieldOptions(
+  program.command("createFixture").requiredOption("--name <name>")
+).action(createFixtureCommand)
+
+fixtureFieldOptions(
+  program
+    .command("updateFixture")
+    .requiredOption("--fixture <slug>")
+    .option("--name <name>")
+).action(updateFixtureCommand)
+
+program
+  .command("requireFixture")
+  .description("make a phase or scenario depend on a fixture")
+  .requiredOption("--fixture <slug>")
+  .option("--phase <reference>", "phase ID, order, or exact name")
+  .option("--scenario <slug>")
+  .option("--access <access>", "read or mutates", "read")
+  .option("--mutation-scope <text>", "what a mutating scenario may change")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(requireFixtureCommand)
+
+program
+  .command("unrequireFixture")
+  .requiredOption("--fixture <slug>")
+  .option("--phase <reference>", "phase ID, order, or exact name")
+  .option("--scenario <slug>")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(unrequireFixtureCommand)
+
+const fixtureExitCodes = `
+Exit codes:
+  0    the fixture is healthy
+  1    a CLI, configuration or API error
+  4    the fixture is unhealthy
+  130  interrupted (SIGINT), 143 terminated (SIGTERM)`
+
+for (const operation of ["verify", "converge"] as const) {
+  program
+    .command(`fixtures:${operation}`)
+    .description(
+      operation === "verify"
+        ? "check a fixture with its verify hook or an inspect-only agent task"
+        : "create or repair a fixture with its converge hook or an agent task, then verify it"
+    )
+    .argument("<slug>", "fixture slug")
+    .option("--environment <name>")
+    .option("--api-base-url <url>")
+    .option("--project <slug>")
+    .addHelpText("after", fixtureExitCodes)
+    .action(async (slug: string, options) => {
+      await fixtureOperationCommand(operation, slug, options)
+    })
+}
+
 program
   .command("run")
   .option("--api-base-url <url>")
@@ -180,6 +259,10 @@ program
     "--fail-on <verdicts>",
     "exit with code 3 when checks have these verdicts: failed, blocked or failed,blocked"
   )
+  .option(
+    "--fixtures <mode>",
+    "before the run, check (default) the required fixtures, repair them, or skip the preflight"
+  )
   .addHelpText(
     "after",
     `
@@ -188,6 +271,7 @@ Exit codes:
   1    the run stopped on a CLI, configuration or API error
   2    a scenario was recorded as a runner failure or was skipped
   3    --fail-on matched a check verdict
+  4    a required fixture is unhealthy; no run was created
   130  interrupted (SIGINT), 143 terminated (SIGTERM)`
   )
   .action(async (options) => {

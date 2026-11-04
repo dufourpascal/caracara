@@ -259,6 +259,7 @@ export function toRun(run: Doc<"runs">) {
     targetUrl: run.targetUrl ?? null,
     model: run.model ?? null,
     reasoningEffort: run.reasoningEffort ?? null,
+    ...(run.fixturePreflight ? { fixturePreflight: run.fixturePreflight } : {}),
     passedCheckCount: run.passedCheckCount,
     totalCheckCount: run.totalCheckCount,
     passRate:
@@ -429,6 +430,13 @@ export async function getProjectPhases(ctx: Ctx, projectId: Id<"projects">) {
 export async function getProjectSuites(ctx: Ctx, projectId: Id<"projects">) {
   return await ctx.db
     .query("suites")
+    .withIndex("by_project", (query) => query.eq("projectId", projectId))
+    .collect()
+}
+
+export async function getProjectFixtures(ctx: Ctx, projectId: Id<"projects">) {
+  return await ctx.db
+    .query("fixtures")
     .withIndex("by_project", (query) => query.eq("projectId", projectId))
     .collect()
 }
@@ -1063,16 +1071,18 @@ export async function deleteProjectCascade(
   ctx: MutationCtx,
   projectId: Id<"projects">
 ) {
-  const [dependencies, phases, scenarios, suites, runs] = await Promise.all([
-    getProjectDependencies(ctx, projectId),
-    getProjectPhases(ctx, projectId),
-    getProjectScenarios(ctx, projectId),
-    getProjectSuites(ctx, projectId),
-    ctx.db
-      .query("runs")
-      .withIndex("by_project", (query) => query.eq("projectId", projectId))
-      .collect(),
-  ])
+  const [dependencies, phases, scenarios, suites, fixtures, runs] =
+    await Promise.all([
+      getProjectDependencies(ctx, projectId),
+      getProjectPhases(ctx, projectId),
+      getProjectScenarios(ctx, projectId),
+      getProjectSuites(ctx, projectId),
+      getProjectFixtures(ctx, projectId),
+      ctx.db
+        .query("runs")
+        .withIndex("by_project", (query) => query.eq("projectId", projectId))
+        .collect(),
+    ])
 
   let deletedResultCount = 0
 
@@ -1097,10 +1107,15 @@ export async function deleteProjectCascade(
     await ctx.db.delete(suite._id)
   }
 
+  for (const fixture of fixtures) {
+    await ctx.db.delete(fixture._id)
+  }
+
   await ctx.db.delete(projectId)
 
   return {
     deletedDependencyCount: dependencies.length,
+    deletedFixtureCount: fixtures.length,
     deletedPhaseCount: phases.length,
     deletedProjectId: projectId,
     deletedResultCount,

@@ -1,22 +1,29 @@
 import process from "node:process"
 import { spawn } from "node:child_process"
+import { readFile } from "node:fs/promises"
 
 import {
   CONVEX_TOKEN_TEMPLATE,
   API_NAMESPACE,
+  evaluationCheckSchema,
+  fixtureStepSchema,
   formatRunName,
   MAX_REQUESTED_PHASE_ORDERS,
   runModelSchema,
   type AuthoringRequest,
   type CheckResult,
+  type FixturePreflightEntry,
   type OrderedScenario,
   type RunnablePhase,
 } from "@workspace/contracts"
+import { z } from "zod"
 
 import {
   createRun,
   fetchExecutionPlan,
+  fetchFixtures,
   finalizeRun,
+  fetchProject,
   fetchProjects,
   fetchRunResults,
   fetchSingleScenario,
@@ -46,8 +53,19 @@ import { writeDiagnostic } from "./diagnostics.js"
 import {
   getRunnerAdapter,
   RunnerExecutionError,
+  type RunnerSession,
   type RunnerUsageReport,
 } from "./execution.js"
+import {
+  collectRequiredFixtures,
+  convergeFixture,
+  formatFixtureResult,
+  parseFixturePreflightMode,
+  readFixtureHooks,
+  runFixturePreflight,
+  verifyFixture,
+  type FixtureContext,
+} from "./fixtures.js"
 import {
   parseHeartbeat,
   resolveOutputMode,
@@ -75,7 +93,7 @@ import type {
 } from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.7.0"
+const CLI_VERSION = "0.8.0"
 
 function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
@@ -466,6 +484,310 @@ export async function updateCheckCommand(
   })
 }
 
+const fixtureStepsFileSchema = z.array(
+  fixtureStepSchema.extend({ id: z.guid().optional() })
+)
+const fixtureChecksFileSchema = z.array(
+  evaluationCheckSchema.extend({ id: z.guid().optional() })
+)
+
+async function readFixtureItemsFile<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  shape: string
+) {
+  let json: unknown
+  try {
+    json = JSON.parse(await readFile(path, "utf8"))
+  } catch (error) {
+    throw new Error(
+      `Could not read ${path}: ${error instanceof Error ? error.message : "invalid JSON"}`
+    )
+  }
+  const parsed = schema.safeParse(json)
+  if (!parsed.success) {
+    throw new Error(
+      `${path} must be a JSON array of ${shape}:\n${z.prettifyError(parsed.error)}`
+    )
+  }
+  return parsed.data
+}
+
+type FixtureFieldOptions = {
+  name?: string
+  slug?: string
+  description?: string
+  locator?: string
+  protection?: string
+  stepsFile?: string
+  checksFile?: string
+}
+
+async function readFixtureFields(options: FixtureFieldOptions) {
+  return {
+    ...(options.slug !== undefined ? { slug: options.slug } : {}),
+    ...(options.description !== undefined
+      ? { description: options.description }
+      : {}),
+    ...(options.locator !== undefined ? { locator: options.locator } : {}),
+    ...(options.protection !== undefined
+      ? { protection: options.protection }
+      : {}),
+    ...(options.stepsFile !== undefined
+      ? {
+          convergeSteps: await readFixtureItemsFile(
+            options.stepsFile,
+            fixtureStepsFileSchema,
+            "{ name, instructions, doneWhen } steps"
+          ),
+        }
+      : {}),
+    ...(options.checksFile !== undefined
+      ? {
+          healthChecks: await readFixtureItemsFile(
+            options.checksFile,
+            fixtureChecksFileSchema,
+            "{ name, expectation } checks"
+          ),
+        }
+      : {}),
+  }
+}
+
+async function resolveFixtureId(
+  context: Awaited<ReturnType<typeof getAuthoringContext>>,
+  reference: string
+) {
+  const { fixtures } = await fetchFixtures({ ...context, version: CLI_VERSION })
+  const fixture = fixtures.find(
+    (candidate) => candidate.slug === reference || candidate.id === reference
+  )
+  if (!fixture) {
+    throw new Error(
+      `Fixture ${JSON.stringify(reference)} was not found in project ${context.projectSlug}.`
+    )
+  }
+  return fixture.id
+}
+
+type FixtureTargetOptions = { phase?: string; scenario?: string }
+
+function assertFixtureTarget(options: FixtureTargetOptions) {
+  if ((options.phase === undefined) === (options.scenario === undefined)) {
+    throw new Error("Pass exactly one of --phase or --scenario.")
+  }
+}
+
+async function resolveFixtureTarget(
+  context: Awaited<ReturnType<typeof getAuthoringContext>>,
+  options: FixtureTargetOptions
+) {
+  return options.phase !== undefined
+    ? { phaseId: await resolvePhaseId(context, options.phase) }
+    : {
+        scenarioId: (
+          await fetchAuthoringScenario(context, options.scenario ?? "")
+        ).id,
+      }
+}
+
+export async function createFixtureCommand(
+  options: AuthoringCommandOptions & FixtureFieldOptions & { name: string }
+) {
+  const fields = await readFixtureFields(options)
+  const context = await getAuthoringContext(options)
+  await author(context, {
+    operation: "createFixture",
+    name: options.name,
+    ...fields,
+  })
+}
+
+export async function updateFixtureCommand(
+  options: AuthoringCommandOptions & FixtureFieldOptions & { fixture: string }
+) {
+  const fields = {
+    ...(options.name !== undefined ? { name: options.name } : {}),
+    ...(await readFixtureFields(options)),
+  }
+  if (Object.keys(fields).length === 0) {
+    throw new Error(
+      "Nothing to update. Pass --name, --slug, --description, --locator, --protection, --steps-file or --checks-file."
+    )
+  }
+  const context = await getAuthoringContext(options)
+  const fixtureId = await resolveFixtureId(context, options.fixture)
+  await author(context, { operation: "updateFixture", fixtureId, ...fields })
+}
+
+export async function requireFixtureCommand(
+  options: AuthoringCommandOptions &
+    FixtureTargetOptions & {
+      fixture: string
+      access?: string
+      mutationScope?: string
+    }
+) {
+  assertFixtureTarget(options)
+  const access = options.access ?? "read"
+  if (access !== "read" && access !== "mutates") {
+    throw new Error(`--access must be read or mutates, not "${access}".`)
+  }
+  if ((access === "mutates") !== (options.mutationScope !== undefined)) {
+    throw new Error(
+      access === "mutates"
+        ? "--access mutates needs --mutation-scope to say what may change."
+        : "--mutation-scope only applies with --access mutates."
+    )
+  }
+  const context = await getAuthoringContext(options)
+  const [fixtureId, target] = await Promise.all([
+    resolveFixtureId(context, options.fixture),
+    resolveFixtureTarget(context, options),
+  ])
+  await author(context, {
+    operation: "requireFixture",
+    fixtureId,
+    ...target,
+    access,
+    ...(options.mutationScope !== undefined
+      ? { mutationScope: options.mutationScope }
+      : {}),
+  })
+}
+
+export async function unrequireFixtureCommand(
+  options: AuthoringCommandOptions & FixtureTargetOptions & { fixture: string }
+) {
+  assertFixtureTarget(options)
+  const context = await getAuthoringContext(options)
+  const [fixtureId, target] = await Promise.all([
+    resolveFixtureId(context, options.fixture),
+    resolveFixtureTarget(context, options),
+  ])
+  await author(context, { operation: "unrequireFixture", fixtureId, ...target })
+}
+
+/**
+ * `fixtures:verify` and `fixtures:converge` (converge, then verify). Sets exit
+ * code 4 when the fixture is unhealthy afterwards.
+ */
+export async function fixtureOperationCommand(
+  operation: "verify" | "converge",
+  fixtureSlug: string,
+  options: AuthoringCommandOptions & { environment?: string }
+) {
+  const cwd = process.cwd()
+  const [config, secrets] = await Promise.all([
+    readResolvedConfig(
+      { apiBaseUrl: options.apiBaseUrl, selectedProjectSlug: options.project },
+      process.env
+    ),
+    readLocalSecrets(cwd),
+  ])
+  const accessToken = ensureAccessToken(config)
+  const projectSlug = config.selectedProjectSlug
+  if (!projectSlug) {
+    throw new Error(
+      "No project selected. Run `caracara init --project <slug>` or pass --project."
+    )
+  }
+  const environment = resolveEnvironment(
+    config,
+    options.environment,
+    process.env
+  )
+  const runModel = resolveRunModel(config, {})
+  const api = {
+    apiBaseUrl: config.apiBaseUrl,
+    accessToken,
+    version: CLI_VERSION,
+    projectSlug,
+  }
+  const [{ fixtures }, { project }, hookConfig] = await Promise.all([
+    fetchFixtures(api),
+    fetchProject(api),
+    readFixtureHooks(projectSlug, cwd),
+  ])
+  const fixture = fixtures.find((candidate) => candidate.slug === fixtureSlug)
+  if (!fixture) {
+    throw new Error(
+      `Fixture ${JSON.stringify(fixtureSlug)} was not found in project ${projectSlug}.`
+    )
+  }
+
+  const runner = getRunnerAdapter(config.runner)
+  const abortController = new AbortController()
+  let interruptedBy: "SIGINT" | "SIGTERM" | null = null
+  const interrupt = (signal: "SIGINT" | "SIGTERM") => {
+    interruptedBy ??= signal
+    abortController.abort(new Error(`Interrupted by ${signal}.`))
+  }
+  const onSigint = () => interrupt("SIGINT")
+  const onSigterm = () => interrupt("SIGTERM")
+  process.on("SIGINT", onSigint)
+  process.on("SIGTERM", onSigterm)
+  let session = null as RunnerSession | null
+  const context: FixtureContext = {
+    projectSlug,
+    environment,
+    projectPrompt: project.projectPrompt,
+    secrets,
+    hooks: hookConfig.hooks,
+    hookCwd: hookConfig.cwd,
+    agentCwd: cwd,
+    signal: abortController.signal,
+    getSession: async () => {
+      if (!session) {
+        await runner.preflight?.()
+        session = await runner.startRun({
+          cwd,
+          secrets,
+          targetUrl: environment.targetUrl,
+          model: runModel.model,
+          modelReasoningEffort: runModel.modelReasoningEffort,
+          signal: abortController.signal,
+        })
+      }
+      return session
+    },
+  }
+  let failure: unknown = null
+  try {
+    const result =
+      operation === "verify"
+        ? await verifyFixture(context, fixture)
+        : await convergeFixture(context, fixture)
+    const label = !result.ok
+      ? "unhealthy"
+      : operation === "verify"
+        ? "healthy"
+        : "repaired"
+    process.stdout.write(formatFixtureResult(fixture, label, result))
+    if (!result.ok) {
+      process.exitCode = 4
+    }
+  } catch (error) {
+    failure = error
+  }
+  // Keep handling signals until the browser session is closed.
+  try {
+    await session?.close()
+  } catch (error) {
+    failure ??= error
+  } finally {
+    process.off("SIGINT", onSigint)
+    process.off("SIGTERM", onSigterm)
+  }
+  if (interruptedBy) {
+    process.exitCode = interruptedBy === "SIGINT" ? 130 : 143
+    return
+  }
+  if (failure) {
+    throw failure
+  }
+}
+
 export async function initCommand(options: InitCommandOptions) {
   if (options.model !== undefined) {
     const parsed = runModelSchema.safeParse(options.model)
@@ -688,10 +1010,11 @@ type SuitePhaseSnapshot = { id: string; name: string; order: number }
 const suitePhaseKey = (phase: SuitePhaseSnapshot) =>
   JSON.stringify([phase.id, phase.name, phase.order])
 
-// Suite runs snapshot their phases when the run is created, before the CLI
-// fetches the plan. Authoring stays open during runs, so refuse to execute a
-// plan whose suite phases (membership, names or order) changed in between
-// instead of labeling the run with phases it did not run.
+// Suite runs snapshot their phases when the run is created, after the CLI
+// fetched the plan (for the fixture preflight). Authoring stays open during
+// runs, so refuse to execute a plan whose suite phases (membership, names or
+// order) changed in between instead of labeling the run with phases it did
+// not run.
 export function assertSuitePlanMatchesRun(args: {
   suiteSlug: string
   runPhases: SuitePhaseSnapshot[]
@@ -730,6 +1053,7 @@ export async function runCommand(
   })
   const heartbeatMs = parseHeartbeat(options.heartbeat)
   const failOn = parseFailOn(options.failOn)
+  const fixturesMode = parseFixturePreflightMode(options.fixtures)
   const runSelection = resolveRunMode(options)
   const selection = describeRunSelection(runSelection)
   const cwd = process.cwd()
@@ -770,6 +1094,7 @@ export async function runCommand(
   const runStartedAt = Date.now()
   const creationAttemptId = crypto.randomUUID()
   const finalizationAttemptId = crypto.randomUUID()
+  let fixturePreflight: FixturePreflightEntry[] | undefined
   let interruptedScenarioResultId: string | null = null
   let interruptedScenarioAttemptId: string | null = null
   const runAbortController = new AbortController()
@@ -832,6 +1157,7 @@ export async function runCommand(
         startedAt: runStartedAt,
         creationAttemptId,
         ...(interruptedAt === undefined ? {} : { interruptedAt }),
+        ...(fixturePreflight ? { fixturePreflight } : {}),
       },
       signal,
     })
@@ -899,6 +1225,7 @@ export async function runCommand(
             finishedAt,
             exitCode,
           },
+          fixturePreflight,
           queue: queue.map((item) => ({
             phase: item.phase
               ? {
@@ -928,24 +1255,9 @@ export async function runCommand(
     }
     setSignalExitCode()
   }
-  let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
-  if (runSelection.mode === "suite") {
-    listenForInterrupts()
-    try {
-      createRunResponse = await startRunWithRecovery()
-    } catch (error) {
-      stopListeningForInterrupts()
-      if (setSignalExitCode()) {
-        return
-      }
-      throw error
-    }
-    if (interruptedSignal) {
-      await finishSignalInterruption(createRunResponse.run.id)
-      reportRunEndedEarly(createRunResponse.run, signalExitCode())
-      return
-    }
-  }
+  // Listen before the plan is fetched so an interrupt during the fixture
+  // preflight ends the command (130/143) without creating a run.
+  listenForInterrupts()
   const executionSource = await (
     runSelection.mode === "single"
       ? fetchSingleScenario({
@@ -954,6 +1266,7 @@ export async function runCommand(
           version: CLI_VERSION,
           projectSlug,
           scenarioSlug: runSelection.requestedScenarioSlug,
+          signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
           return {
@@ -961,6 +1274,7 @@ export async function runCommand(
             phases: [] as RunnablePhase[],
             suite: null,
             unassignedScenarioCount: 0,
+            fixtures: response.fixtures,
             queue: [
               {
                 phase: null as RunnablePhase | null,
@@ -978,13 +1292,6 @@ export async function runCommand(
           signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
-          if (runSelection.mode === "suite" && createRunResponse) {
-            assertSuitePlanMatchesRun({
-              suiteSlug: runSelection.requestedSuiteSlug,
-              runPhases: createRunResponse.run.requestedSuitePhases ?? [],
-              planPhases: response.phases,
-            })
-          }
           const requestedOrders = runSelection.requestedPhaseOrders
           const selectedPhases =
             runSelection.mode === "phase"
@@ -1034,31 +1341,10 @@ export async function runCommand(
             ),
           }
         })
-  ).catch(async (error) => {
-    let finalizationError: unknown = null
-    try {
-      if (createRunResponse) {
-        await finalizeInterruptedRun(createRunResponse.run.id)
-      }
-    } catch (cleanupError) {
-      finalizationError = cleanupError
-    } finally {
-      stopListeningForInterrupts()
-    }
-    if (createRunResponse) {
-      reportRunEndedEarly(
-        createRunResponse.run,
-        interruptedSignal ? signalExitCode() : 1
-      )
-    }
+  ).catch((error) => {
+    stopListeningForInterrupts()
     if (setSignalExitCode()) {
-      if (finalizationError) {
-        reportInterruptedFinalizationError(finalizationError)
-      }
       return null
-    }
-    if (finalizationError) {
-      throw finalizationError
     }
     throw error
   })
@@ -1068,30 +1354,9 @@ export async function runCommand(
   }
 
   if (executionSource.queue.length === 0) {
-    let finalizationError: unknown = null
-    try {
-      if (createRunResponse) {
-        await finalizeInterruptedRun(createRunResponse.run.id)
-      }
-    } catch (error) {
-      finalizationError = error
-    } finally {
-      stopListeningForInterrupts()
-    }
-    if (createRunResponse) {
-      reportRunEndedEarly(
-        createRunResponse.run,
-        interruptedSignal ? signalExitCode() : 1
-      )
-    }
+    stopListeningForInterrupts()
     if (setSignalExitCode()) {
-      if (finalizationError) {
-        reportInterruptedFinalizationError(finalizationError)
-      }
       return
-    }
-    if (finalizationError) {
-      throw finalizationError
     }
     throw new Error(
       runSelection.mode === "phase"
@@ -1104,25 +1369,128 @@ export async function runCommand(
     )
   }
 
-  if (!createRunResponse) {
-    listenForInterrupts()
-    try {
-      createRunResponse = await startRunWithRecovery()
-    } catch (error) {
-      stopListeningForInterrupts()
-      if (setSignalExitCode()) {
+  // Fixture preflight may start the runner session; the run reuses it.
+  // Assigned in closures, so keep TypeScript from narrowing it to null.
+  let runSession = null as RunnerSession | null
+  const closeRunSessionEarly = async () => {
+    const session = runSession
+    runSession = null
+    await session?.close().catch(() => undefined)
+  }
+  const getRunSession = async () => {
+    // A session the preflight left broken (browser gone) is replaced.
+    if (runSession?.isHealthy?.() === false) {
+      await closeRunSessionEarly()
+    }
+    runSession ??= await runner.startRun({
+      cwd,
+      secrets,
+      targetUrl: environment.targetUrl,
+      model: runModel.model,
+      modelReasoningEffort: runModel.modelReasoningEffort,
+      signal: runAbortController.signal,
+    })
+    return runSession
+  }
+
+  let createRunResponse: Awaited<ReturnType<typeof startRun>>
+  try {
+    const requiredFixtures = collectRequiredFixtures(
+      executionSource.queue,
+      executionSource.fixtures
+    )
+    if (requiredFixtures.length > 0) {
+      const hookConfig =
+        fixturesMode === "skip"
+          ? { cwd, hooks: {} }
+          : await readFixtureHooks(projectSlug, cwd)
+      // Diagnostics go to stderr in --json and --quiet; --quiet shows problems only.
+      const fixtureLog =
+        outputMode === "json" || outputMode === "quiet" ? io.stderr : io.stdout
+      const preflight = await runFixturePreflight({
+        mode: fixturesMode,
+        required: requiredFixtures,
+        context: {
+          projectSlug,
+          environment,
+          projectPrompt: executionSource.project.projectPrompt,
+          secrets,
+          hooks: hookConfig.hooks,
+          hookCwd: hookConfig.cwd,
+          agentCwd: cwd,
+          signal: runAbortController.signal,
+          hookOutput: io.stderr,
+          getSession: getRunSession,
+        },
+        log: (text, problem) => {
+          if (outputMode !== "quiet" || problem) {
+            fixtureLog.write(text)
+          }
+        },
+      })
+      if (!preflight.healthy) {
+        await closeRunSessionEarly()
+        stopListeningForInterrupts()
+        if (setSignalExitCode()) {
+          return
+        }
+        io.stderr.write(
+          `Fixture preflight failed; no run was created.${fixturesMode === "check" ? " Repair with --fixtures repair, or run anyway with --fixtures skip." : ""}\n`
+        )
+        process.exitCode = 4
         return
       }
-      throw error
+      fixturePreflight = preflight.entries
     }
-    if (interruptedSignal) {
-      await finishSignalInterruption(createRunResponse.run.id)
+    runAbortController.signal.throwIfAborted()
+    createRunResponse = await startRunWithRecovery()
+  } catch (error) {
+    await closeRunSessionEarly()
+    stopListeningForInterrupts()
+    if (setSignalExitCode()) {
+      return
+    }
+    throw error
+  }
+  if (interruptedSignal) {
+    await closeRunSessionEarly()
+    await finishSignalInterruption(createRunResponse.run.id)
+    reportRunEndedEarly(
+      createRunResponse.run,
+      signalExitCode(),
+      executionSource.queue
+    )
+    return
+  }
+  if (runSelection.mode === "suite") {
+    // The plan was fetched before the run snapshotted its suite phases.
+    try {
+      assertSuitePlanMatchesRun({
+        suiteSlug: runSelection.requestedSuiteSlug,
+        runPhases: createRunResponse.run.requestedSuitePhases ?? [],
+        planPhases: executionSource.phases,
+      })
+    } catch (error) {
+      await closeRunSessionEarly()
+      let finalizationError: unknown = null
+      try {
+        await finalizeInterruptedRun(createRunResponse.run.id)
+      } catch (cleanupError) {
+        finalizationError = cleanupError
+      } finally {
+        stopListeningForInterrupts()
+      }
       reportRunEndedEarly(
         createRunResponse.run,
-        signalExitCode(),
-        executionSource.queue
+        interruptedSignal ? signalExitCode() : 1
       )
-      return
+      if (setSignalExitCode()) {
+        if (finalizationError) {
+          reportInterruptedFinalizationError(finalizationError)
+        }
+        return
+      }
+      throw finalizationError ?? error
     }
   }
 
@@ -1221,7 +1589,6 @@ export async function runCommand(
   let closeError: unknown = null
   let finalizationError: unknown = null
   let runError: unknown = null
-  let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
   let activeScenarioIndex: number | null = null
   let activeScenarioUsage: RunnerUsageReport | null = null
@@ -1356,23 +1723,17 @@ export async function runCommand(
         const firstInPhase = executedInCurrentPhase === 0
         executedInCurrentPhase += 1
         try {
-          runSession ??= await runner.startRun({
-            cwd,
-            secrets,
-            targetUrl: environment.targetUrl,
-            model: runModel.model,
-            modelReasoningEffort: runModel.modelReasoningEffort,
-            signal: runAbortController.signal,
-          })
+          const session = await getRunSession()
           runAbortController.signal.throwIfAborted()
 
           activeScenarioUsage = { complete: false }
-          const execution = await runSession.executeScenario({
+          const execution = await session.executeScenario({
             cwd,
             environment: environment.name,
             targetUrl: environment.targetUrl,
             projectPrompt: executionSource.project.projectPrompt,
             scenario: item.scenario,
+            fixtures: executionSource.fixtures,
             signal: runAbortController.signal,
             onActivity: (activity) => progress.activity(activity),
           })
@@ -1643,6 +2004,7 @@ export async function runCommand(
           finishedAt: finalFinishedAt ?? Date.now(),
           exitCode,
         },
+        fixturePreflight,
         queue: queuePhases.map((phase) => ({ phase })),
         scenarios: scenarioReports,
       })

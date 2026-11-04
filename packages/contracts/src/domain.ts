@@ -327,6 +327,67 @@ export const requestedPhaseOrdersSchema = z
     { error: "Requested phase orders must be sorted and unique." }
   )
 
+export const fixtureAccessSchema = z.enum(["read", "mutates"])
+export const fixtureStepSchema = z.object({
+  id: z.guid(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
+  instructions: z.string().trim().min(1).check(maxUtf16Length(20_000)),
+  doneWhen: z.string().trim().min(1).check(maxUtf16Length(2_000)),
+})
+/** A phase or scenario that relies on a fixture. Exactly one target is set. */
+export const fixtureRequirementSchema = z
+  .object({
+    phaseId: z.string().min(1).nullable(),
+    scenarioId: z.string().min(1).nullable(),
+    access: fixtureAccessSchema,
+    mutationScope: z
+      .string()
+      .trim()
+      .min(1)
+      .check(maxUtf16Length(500))
+      .nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.phaseId === null) === (value.scenarioId === null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A requirement targets exactly one phase or scenario.",
+      })
+    }
+    if ((value.access === "mutates") !== (value.mutationScope !== null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A mutating requirement needs a scope; a read one has none.",
+        path: ["mutationScope"],
+      })
+    }
+  })
+export const fixtureSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
+  slug: slugSchema,
+  description: z.string().check(maxUtf16Length(1_500)),
+  /** How to find the fixture in the application. */
+  locator: z.string().check(maxUtf16Length(2_000)),
+  /** Extra rules for evaluation runs that use the fixture. */
+  protection: z.string().check(maxUtf16Length(4_000)),
+  convergeSteps: z.array(fixtureStepSchema).max(20),
+  healthChecks: z.array(evaluationCheckSchema).max(20),
+  requirements: z.array(fixtureRequirementSchema),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+})
+/** What a run reported about each fixture it required, before it started. */
+export const fixturePreflightEntrySchema = z.object({
+  fixtureId: z.string().min(1),
+  fixtureSlug: slugSchema,
+  fixtureName: z.string().min(1).check(maxUtf16Length(120)),
+  access: fixtureAccessSchema,
+  outcome: z.enum(["healthy", "repaired", "skipped"]),
+  executor: z.enum(["hook", "agent"]).nullable(),
+})
+
 export const runSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -354,6 +415,7 @@ export const runSchema = z.object({
   targetUrl: targetUrlSchema.nullable().optional(),
   model: z.string().min(1).nullable().optional(),
   reasoningEffort: z.string().min(1).nullable().optional(),
+  fixturePreflight: z.array(fixturePreflightEntrySchema).optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),
@@ -386,6 +448,11 @@ export const scenarioResultSchema = z.object({
   submittedAt: timestampSchema,
 })
 
+export type FixtureAccess = z.infer<typeof fixtureAccessSchema>
+export type FixtureStep = z.infer<typeof fixtureStepSchema>
+export type FixtureRequirement = z.infer<typeof fixtureRequirementSchema>
+export type Fixture = z.infer<typeof fixtureSchema>
+export type FixturePreflightEntry = z.infer<typeof fixturePreflightEntrySchema>
 export type ScenarioStatus = z.infer<typeof scenarioStatusSchema>
 export type RunStatus = z.infer<typeof runStatusSchema>
 export type ScenarioResultStatus = z.infer<typeof scenarioResultStatusSchema>

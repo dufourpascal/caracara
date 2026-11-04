@@ -102,7 +102,9 @@ import { CLI_VERSION } from "./version.js"
 
 const CLIENT_ID = "caracara-cli"
 
-export function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
+export function ensureAccessToken(
+  config: Awaited<ReturnType<typeof readConfig>>
+) {
   if (!config.accessToken) {
     throw new Error("Not logged in. Run `caracara login` first.")
   }
@@ -860,8 +862,11 @@ export async function runCommand(
     const message = error instanceof Error ? error.message : "Unknown error"
     writeDiagnostic(`Failed to finalize interrupted run: ${message}\n`)
   }
-  // One runner session serves preflight agent operations, the run, and
-  // post-run maintenance, so the run's model override applies to all three.
+  // One runner session (one browser, with its cookies and login) serves
+  // preflight agent operations, the scenarios, and post-run maintenance. It
+  // stays open from preflight until post-run maintenance is done; when the
+  // run ends with a broken session, maintenance starts a fresh one. Every
+  // session starts with the run's model settings.
   const sessions = createLazyRunnerSession(() =>
     runner.startRun({
       cwd,
@@ -1468,241 +1473,71 @@ export async function runCommand(
   let activeScenarioAttemptId: string | null = null
   let lastPhaseId: string | null = null
   let exitCode = 0
+  // Set once the run is finalized: the shared session then stays open for
+  // post-run fixture maintenance.
+  let maintainFixtures = false
 
   try {
-    progress.runStarted({
-      runId,
-      runName: createRunResponse.run.name,
-      runUrl: buildRunUrl(config.apiBaseUrl, projectSlug, runId),
-      startedAt: runStartedAt,
-      environment: environment.name,
-      targetUrl: environment.targetUrl,
-      runnerType,
-      model: runModel.model ?? null,
-      modelReasoningEffort: runModel.modelReasoningEffort ?? null,
-      suite: executionSource.suite
-        ? {
-            name: executionSource.suite.name,
-            slug: executionSource.suite.slug,
-          }
-        : null,
-      selection,
-      scenarioCount: queue.length,
-      phaseCount: phaseIds.length,
-      keepGoing,
-      liveActivity: runnerType === "codex",
-    })
-
     try {
-      runAbortController.signal.throwIfAborted()
-      for (const [sequenceIndex, item] of queue.entries()) {
+      progress.runStarted({
+        runId,
+        runName: createRunResponse.run.name,
+        runUrl: buildRunUrl(config.apiBaseUrl, projectSlug, runId),
+        startedAt: runStartedAt,
+        environment: environment.name,
+        targetUrl: environment.targetUrl,
+        runnerType,
+        model: runModel.model ?? null,
+        modelReasoningEffort: runModel.modelReasoningEffort ?? null,
+        suite: executionSource.suite
+          ? {
+              name: executionSource.suite.name,
+              slug: executionSource.suite.slug,
+            }
+          : null,
+        selection,
+        scenarioCount: queue.length,
+        phaseCount: phaseIds.length,
+        keepGoing,
+        liveActivity: runnerType === "codex",
+      })
+
+      try {
         runAbortController.signal.throwIfAborted()
-        const startedAt = Date.now()
-        const scenarioSnapshot = buildScenarioSnapshot({
-          phase: item.phase,
-          scenario: item.scenario,
-          sequenceIndex,
-          startedAt,
-        })
-
-        if (item.phase && item.phase.id !== lastPhaseId) {
-          lastPhaseId = item.phase.id
-          executedInCurrentPhase = 0
-          progress.phaseStarted({
-            order: item.phase.order,
-            name: item.phase.name,
-            index: phaseIds.indexOf(item.phase.id) + 1,
-            scenarioCount: queue.filter(
-              (entry) => entry.phase?.id === item.phase?.id
-            ).length,
-          })
-        }
-
-        progress.scenarioStarted({
-          index: sequenceIndex + 1,
-          slug: item.scenario.slug,
-          phaseOrder: item.phase?.order ?? null,
-        })
-
-        activeScenario = scenarioSnapshot
-        activeScenarioIndex = sequenceIndex
-        activeScenarioUsage = null
-        activeScenarioAttemptId = crypto.randomUUID()
-        const startedScenario = await startScenarioExecution({
-          apiBaseUrl: config.apiBaseUrl,
-          accessToken,
-          version: CLI_VERSION,
-          projectSlug,
-          runId,
-          payload: {
-            runId,
-            result: {
-              ...scenarioSnapshot,
-              executionAttemptId: activeScenarioAttemptId,
-            },
-          },
-          signal: runAbortController.signal,
-        })
-        activeScenarioResultId = startedScenario.result.id
-        runAbortController.signal.throwIfAborted()
-
-        const failedDependencySlug = item.scenario.dependencyIds
-          .map((dependencyId) => unfinishedScenarioSlugs.get(dependencyId))
-          .find((slug) => slug !== undefined)
-        const skipDetail = stopRemaining
-          ? "Dependency chain stopped after an earlier failure."
-          : failedDependencySlug !== undefined
-            ? `Skipped because dependency ${failedDependencySlug} did not complete.`
-            : null
-        if (skipDetail) {
-          await submitScenarioResult({
-            apiBaseUrl: config.apiBaseUrl,
-            accessToken,
-            version: CLI_VERSION,
-            projectSlug,
-            runId,
-            payload: {
-              runId,
-              result: {
-                scenarioId: scenarioSnapshot.scenarioId,
-                status: "dependency_failed",
-                checkResults: [],
-                executionSummary: null,
-                failureDetail: skipDetail,
-                finishedAt: Date.now(),
-                ...(activeScenarioAttemptId
-                  ? { executionAttemptId: activeScenarioAttemptId }
-                  : {}),
-              },
-            },
-            signal: runAbortController.signal,
-          })
+        for (const [sequenceIndex, item] of queue.entries()) {
           runAbortController.signal.throwIfAborted()
-          unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
-          activeScenario = null
-          activeScenarioIndex = null
-          activeScenarioResultId = null
-          activeScenarioAttemptId = null
-          recordScenario({
-            sequenceIndex,
-            status: "dependency_failed",
-            startedAt,
-            failureDetail: skipDetail,
-          })
-          continue
-        }
-
-        const firstInPhase = executedInCurrentPhase === 0
-        executedInCurrentPhase += 1
-        try {
-          runSession = await sessions.get()
-          runAbortController.signal.throwIfAborted()
-
-          const fixtures = resolveProtectedFixtures(
-            item.scenario.fixtureRequirements,
-            executionSource.fixtures
-          )
-          executedScenarios.push(item.scenario)
-          activeScenarioUsage = { complete: false }
-          const execution = await runSession.executeScenario({
-            cwd,
-            environment: environment.name,
-            targetUrl: environment.targetUrl,
-            projectPrompt: executionSource.project.projectPrompt,
+          const startedAt = Date.now()
+          const scenarioSnapshot = buildScenarioSnapshot({
+            phase: item.phase,
             scenario: item.scenario,
-            fixtures,
-            signal: runAbortController.signal,
-            onActivity: (activity) => progress.activity(activity),
-          })
-          activeScenarioUsage = execution.usage ?? { complete: false }
-
-          if (
-            createRunResponse.run.evidencePolicy === "failed_check_screenshot"
-          ) {
-            if (!createRunResponse.evidenceUploadUrl) {
-              throw new Error("Screenshot evidence upload is not configured.")
-            }
-            const screenshots = execution.screenshotEvidence ?? []
-            for (const screenshot of screenshots) {
-              await uploadRunEvidence({
-                uploadUrl: createRunResponse.evidenceUploadUrl,
-                accessToken,
-                runId,
-                scenarioResultId: startedScenario.result.id,
-                checkId: screenshot.checkId,
-                sha256: screenshot.sha256,
-                bytes: screenshot.bytes,
-                signal: runAbortController.signal,
-              })
-            }
-          }
-          const finishedAt = Date.now()
-
-          await submitScenarioResult({
-            apiBaseUrl: config.apiBaseUrl,
-            accessToken,
-            version: CLI_VERSION,
-            projectSlug,
-            runId,
-            payload: {
-              runId,
-              result: {
-                scenarioId: scenarioSnapshot.scenarioId,
-                status: "completed",
-                checkResults: execution.checkResults,
-                executionSummary: execution.executionSummary,
-                failureDetail: null,
-                finishedAt,
-                ...(activeScenarioAttemptId
-                  ? { executionAttemptId: activeScenarioAttemptId }
-                  : {}),
-                ...toTokenUsageField(activeScenarioUsage),
-              },
-            },
-            signal: runAbortController.signal,
-          })
-          runAbortController.signal.throwIfAborted()
-          activeScenario = null
-          activeScenarioIndex = null
-          activeScenarioResultId = null
-          activeScenarioAttemptId = null
-          // A completed scenario shows the run is not broken as a whole.
-          consecutiveFirstScenarioFailures = 0
-          consecutiveRunnerFailures = 0
-          recordScenario({
             sequenceIndex,
-            status: "completed",
             startedAt,
-            checkResults: execution.checkResults,
-            usage: activeScenarioUsage,
           })
+
+          if (item.phase && item.phase.id !== lastPhaseId) {
+            lastPhaseId = item.phase.id
+            executedInCurrentPhase = 0
+            progress.phaseStarted({
+              order: item.phase.order,
+              name: item.phase.name,
+              index: phaseIds.indexOf(item.phase.id) + 1,
+              scenarioCount: queue.filter(
+                (entry) => entry.phase?.id === item.phase?.id
+              ).length,
+            })
+          }
+
+          progress.scenarioStarted({
+            index: sequenceIndex + 1,
+            slug: item.scenario.slug,
+            phaseOrder: item.phase?.order ?? null,
+          })
+
+          activeScenario = scenarioSnapshot
+          activeScenarioIndex = sequenceIndex
           activeScenarioUsage = null
-        } catch (error) {
-          if (error instanceof RunnerExecutionError) {
-            activeScenarioUsage = error.usage
-          }
-          if (runAbortController.signal.aborted) {
-            throw error
-          }
-          runFailed = true
-          unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
-          if (item.phase && firstInPhase) {
-            consecutiveFirstScenarioFailures += 1
-          }
-          consecutiveRunnerFailures += 1
-          const sessionBroken =
-            runSession === null || runSession.isHealthy?.() === false
-          if (
-            !keepGoing ||
-            sessionBroken ||
-            consecutiveFirstScenarioFailures >= 2 ||
-            consecutiveRunnerFailures >= 3
-          ) {
-            stopRemaining = true
-          }
-          const failureDetail =
-            error instanceof Error ? error.message : "Runner failed"
-          await submitScenarioResult({
+          activeScenarioAttemptId = crypto.randomUUID()
+          const startedScenario = await startScenarioExecution({
             apiBaseUrl: config.apiBaseUrl,
             accessToken,
             version: CLI_VERSION,
@@ -1711,221 +1546,424 @@ export async function runCommand(
             payload: {
               runId,
               result: {
-                scenarioId: scenarioSnapshot.scenarioId,
-                status: "runner_failed",
-                checkResults: [],
-                executionSummary: null,
-                failureDetail,
-                finishedAt: Date.now(),
-                ...(activeScenarioAttemptId
-                  ? { executionAttemptId: activeScenarioAttemptId }
-                  : {}),
-                // No usage report yet means the runner never ran: nothing used.
-                ...toTokenUsageField(activeScenarioUsage ?? { complete: true }),
+                ...scenarioSnapshot,
+                executionAttemptId: activeScenarioAttemptId,
               },
             },
             signal: runAbortController.signal,
           })
+          activeScenarioResultId = startedScenario.result.id
           runAbortController.signal.throwIfAborted()
-          activeScenario = null
-          activeScenarioIndex = null
-          activeScenarioResultId = null
-          activeScenarioAttemptId = null
-          recordScenario({
-            sequenceIndex,
-            status: "runner_failed",
-            startedAt,
-            usage: activeScenarioUsage,
-            failureDetail,
-          })
-          activeScenarioUsage = null
-        }
-      }
-      runAbortController.signal.throwIfAborted()
-      finalRunStatus = runFailed ? "failed" : "completed"
-      finalFinishedAt = Date.now()
-    } catch (error) {
-      runError = error
-      if (activeScenario) {
-        interruptedScenarioResultId = activeScenarioResultId
-        interruptedScenarioAttemptId = activeScenarioAttemptId
-        const failureDetail = interruptedSignal
-          ? `Execution interrupted by ${interruptedSignal}.`
-          : error instanceof Error
-            ? error.message
-            : "Execution interrupted"
-        try {
-          await submitScenarioResult({
-            apiBaseUrl: config.apiBaseUrl,
-            accessToken,
-            version: CLI_VERSION,
-            projectSlug,
-            runId,
-            payload: {
-              runId,
-              result: {
-                scenarioId: activeScenario.scenarioId,
-                status: "interrupted",
-                checkResults: [],
-                executionSummary: null,
-                failureDetail,
-                finishedAt: Date.now(),
-                ...(activeScenarioAttemptId
-                  ? { executionAttemptId: activeScenarioAttemptId }
-                  : {}),
-                // No usage report yet means the runner never ran: nothing used.
-                ...toTokenUsageField(activeScenarioUsage ?? { complete: true }),
-              },
-            },
-            signal: AbortSignal.timeout(10_000),
-          })
-        } catch {
-          // Preserve the original interruption error from the run loop.
-        }
-        if (activeScenarioIndex !== null) {
-          recordScenario({
-            sequenceIndex: activeScenarioIndex,
-            status: "interrupted",
-            startedAt: activeScenario.startedAt,
-            usage: activeScenarioUsage,
-            failureDetail,
-          })
-        }
-        activeScenario = null
-        activeScenarioIndex = null
-        activeScenarioResultId = null
-        activeScenarioAttemptId = null
-        activeScenarioUsage = null
-      }
-      finalRunStatus = "interrupted"
-      finalFinishedAt = Date.now()
-    } finally {
-      try {
-        await sessions.close()
-      } catch (error) {
-        closeError = error
-      }
 
-      if (interruptedSignal) {
-        finalRunStatus = "interrupted"
-        finalFinishedAt = Date.now()
-      }
-
-      try {
-        if (finalRunStatus && finalFinishedAt !== null) {
-          try {
-            await finalizeRun({
+          const failedDependencySlug = item.scenario.dependencyIds
+            .map((dependencyId) => unfinishedScenarioSlugs.get(dependencyId))
+            .find((slug) => slug !== undefined)
+          const skipDetail = stopRemaining
+            ? "Dependency chain stopped after an earlier failure."
+            : failedDependencySlug !== undefined
+              ? `Skipped because dependency ${failedDependencySlug} did not complete.`
+              : null
+          if (skipDetail) {
+            await submitScenarioResult({
               apiBaseUrl: config.apiBaseUrl,
               accessToken,
               version: CLI_VERSION,
               projectSlug,
               runId,
               payload: {
-                status: finalRunStatus,
-                finishedAt: finalFinishedAt,
-                finalizationAttemptId,
-                ...(interruptedScenarioResultId
-                  ? { interruptedScenarioResultId }
-                  : {}),
-                ...(interruptedScenarioAttemptId
-                  ? { interruptedScenarioAttemptId }
-                  : {}),
+                runId,
+                result: {
+                  scenarioId: scenarioSnapshot.scenarioId,
+                  status: "dependency_failed",
+                  checkResults: [],
+                  executionSummary: null,
+                  failureDetail: skipDetail,
+                  finishedAt: Date.now(),
+                  ...(activeScenarioAttemptId
+                    ? { executionAttemptId: activeScenarioAttemptId }
+                    : {}),
+                },
               },
               signal: runAbortController.signal,
             })
-            if (interruptedSignal && finalRunStatus !== "interrupted") {
-              await finalizeInterruptedRun(runId)
-            }
-          } catch (error) {
-            if (!interruptedSignal) {
-              finalizationError = error
-            } else {
-              try {
-                await finalizeInterruptedRun(
+            runAbortController.signal.throwIfAborted()
+            unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
+            activeScenario = null
+            activeScenarioIndex = null
+            activeScenarioResultId = null
+            activeScenarioAttemptId = null
+            recordScenario({
+              sequenceIndex,
+              status: "dependency_failed",
+              startedAt,
+              failureDetail: skipDetail,
+            })
+            continue
+          }
+
+          const firstInPhase = executedInCurrentPhase === 0
+          executedInCurrentPhase += 1
+          try {
+            runSession = await sessions.get()
+            runAbortController.signal.throwIfAborted()
+
+            const fixtures = resolveProtectedFixtures(
+              item.scenario.fixtureRequirements,
+              executionSource.fixtures
+            )
+            executedScenarios.push(item.scenario)
+            activeScenarioUsage = { complete: false }
+            const execution = await runSession.executeScenario({
+              cwd,
+              environment: environment.name,
+              targetUrl: environment.targetUrl,
+              projectPrompt: executionSource.project.projectPrompt,
+              scenario: item.scenario,
+              fixtures,
+              signal: runAbortController.signal,
+              onActivity: (activity) => progress.activity(activity),
+            })
+            activeScenarioUsage = execution.usage ?? { complete: false }
+
+            if (
+              createRunResponse.run.evidencePolicy === "failed_check_screenshot"
+            ) {
+              if (!createRunResponse.evidenceUploadUrl) {
+                throw new Error("Screenshot evidence upload is not configured.")
+              }
+              const screenshots = execution.screenshotEvidence ?? []
+              for (const screenshot of screenshots) {
+                await uploadRunEvidence({
+                  uploadUrl: createRunResponse.evidenceUploadUrl,
+                  accessToken,
                   runId,
-                  finalRunStatus === "interrupted" ? finalFinishedAt : undefined
-                )
-              } catch (correctionError) {
-                finalizationError = correctionError
+                  scenarioResultId: startedScenario.result.id,
+                  checkId: screenshot.checkId,
+                  sha256: screenshot.sha256,
+                  bytes: screenshot.bytes,
+                  signal: runAbortController.signal,
+                })
+              }
+            }
+            const finishedAt = Date.now()
+
+            await submitScenarioResult({
+              apiBaseUrl: config.apiBaseUrl,
+              accessToken,
+              version: CLI_VERSION,
+              projectSlug,
+              runId,
+              payload: {
+                runId,
+                result: {
+                  scenarioId: scenarioSnapshot.scenarioId,
+                  status: "completed",
+                  checkResults: execution.checkResults,
+                  executionSummary: execution.executionSummary,
+                  failureDetail: null,
+                  finishedAt,
+                  ...(activeScenarioAttemptId
+                    ? { executionAttemptId: activeScenarioAttemptId }
+                    : {}),
+                  ...toTokenUsageField(activeScenarioUsage),
+                },
+              },
+              signal: runAbortController.signal,
+            })
+            runAbortController.signal.throwIfAborted()
+            activeScenario = null
+            activeScenarioIndex = null
+            activeScenarioResultId = null
+            activeScenarioAttemptId = null
+            // A completed scenario shows the run is not broken as a whole.
+            consecutiveFirstScenarioFailures = 0
+            consecutiveRunnerFailures = 0
+            recordScenario({
+              sequenceIndex,
+              status: "completed",
+              startedAt,
+              checkResults: execution.checkResults,
+              usage: activeScenarioUsage,
+            })
+            activeScenarioUsage = null
+          } catch (error) {
+            if (error instanceof RunnerExecutionError) {
+              activeScenarioUsage = error.usage
+            }
+            if (runAbortController.signal.aborted) {
+              throw error
+            }
+            runFailed = true
+            unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
+            if (item.phase && firstInPhase) {
+              consecutiveFirstScenarioFailures += 1
+            }
+            consecutiveRunnerFailures += 1
+            const sessionBroken =
+              runSession === null || runSession.isHealthy?.() === false
+            if (
+              !keepGoing ||
+              sessionBroken ||
+              consecutiveFirstScenarioFailures >= 2 ||
+              consecutiveRunnerFailures >= 3
+            ) {
+              stopRemaining = true
+            }
+            const failureDetail =
+              error instanceof Error ? error.message : "Runner failed"
+            await submitScenarioResult({
+              apiBaseUrl: config.apiBaseUrl,
+              accessToken,
+              version: CLI_VERSION,
+              projectSlug,
+              runId,
+              payload: {
+                runId,
+                result: {
+                  scenarioId: scenarioSnapshot.scenarioId,
+                  status: "runner_failed",
+                  checkResults: [],
+                  executionSummary: null,
+                  failureDetail,
+                  finishedAt: Date.now(),
+                  ...(activeScenarioAttemptId
+                    ? { executionAttemptId: activeScenarioAttemptId }
+                    : {}),
+                  // No usage report yet means the runner never ran: nothing used.
+                  ...toTokenUsageField(
+                    activeScenarioUsage ?? { complete: true }
+                  ),
+                },
+              },
+              signal: runAbortController.signal,
+            })
+            runAbortController.signal.throwIfAborted()
+            activeScenario = null
+            activeScenarioIndex = null
+            activeScenarioResultId = null
+            activeScenarioAttemptId = null
+            recordScenario({
+              sequenceIndex,
+              status: "runner_failed",
+              startedAt,
+              usage: activeScenarioUsage,
+              failureDetail,
+            })
+            activeScenarioUsage = null
+          }
+        }
+        runAbortController.signal.throwIfAborted()
+        finalRunStatus = runFailed ? "failed" : "completed"
+        finalFinishedAt = Date.now()
+      } catch (error) {
+        runError = error
+        if (activeScenario) {
+          interruptedScenarioResultId = activeScenarioResultId
+          interruptedScenarioAttemptId = activeScenarioAttemptId
+          const failureDetail = interruptedSignal
+            ? `Execution interrupted by ${interruptedSignal}.`
+            : error instanceof Error
+              ? error.message
+              : "Execution interrupted"
+          try {
+            await submitScenarioResult({
+              apiBaseUrl: config.apiBaseUrl,
+              accessToken,
+              version: CLI_VERSION,
+              projectSlug,
+              runId,
+              payload: {
+                runId,
+                result: {
+                  scenarioId: activeScenario.scenarioId,
+                  status: "interrupted",
+                  checkResults: [],
+                  executionSummary: null,
+                  failureDetail,
+                  finishedAt: Date.now(),
+                  ...(activeScenarioAttemptId
+                    ? { executionAttemptId: activeScenarioAttemptId }
+                    : {}),
+                  // No usage report yet means the runner never ran: nothing used.
+                  ...toTokenUsageField(
+                    activeScenarioUsage ?? { complete: true }
+                  ),
+                },
+              },
+              signal: AbortSignal.timeout(10_000),
+            })
+          } catch {
+            // Preserve the original interruption error from the run loop.
+          }
+          if (activeScenarioIndex !== null) {
+            recordScenario({
+              sequenceIndex: activeScenarioIndex,
+              status: "interrupted",
+              startedAt: activeScenario.startedAt,
+              usage: activeScenarioUsage,
+              failureDetail,
+            })
+          }
+          activeScenario = null
+          activeScenarioIndex = null
+          activeScenarioResultId = null
+          activeScenarioAttemptId = null
+          activeScenarioUsage = null
+        }
+        finalRunStatus = "interrupted"
+        finalFinishedAt = Date.now()
+      } finally {
+        if (interruptedSignal) {
+          finalRunStatus = "interrupted"
+          finalFinishedAt = Date.now()
+        }
+
+        try {
+          if (finalRunStatus && finalFinishedAt !== null) {
+            try {
+              await finalizeRun({
+                apiBaseUrl: config.apiBaseUrl,
+                accessToken,
+                version: CLI_VERSION,
+                projectSlug,
+                runId,
+                payload: {
+                  status: finalRunStatus,
+                  finishedAt: finalFinishedAt,
+                  finalizationAttemptId,
+                  ...(interruptedScenarioResultId
+                    ? { interruptedScenarioResultId }
+                    : {}),
+                  ...(interruptedScenarioAttemptId
+                    ? { interruptedScenarioAttemptId }
+                    : {}),
+                },
+                signal: runAbortController.signal,
+              })
+              if (interruptedSignal && finalRunStatus !== "interrupted") {
+                await finalizeInterruptedRun(runId)
+              }
+            } catch (error) {
+              if (!interruptedSignal) {
+                finalizationError = error
+              } else {
+                try {
+                  await finalizeInterruptedRun(
+                    runId,
+                    finalRunStatus === "interrupted"
+                      ? finalFinishedAt
+                      : undefined
+                  )
+                } catch (correctionError) {
+                  finalizationError = correctionError
+                }
               }
             }
           }
+        } finally {
+          stopListeningForInterrupts()
         }
-      } finally {
-        stopListeningForInterrupts()
+
+        // Restore fixtures the run was allowed to change only after a completed
+        // or failed run: not after an interruption, a finalization error, or
+        // with --fixtures skip.
+        maintainFixtures =
+          fixtureMode !== "skip" &&
+          !interruptedSignal &&
+          !finalizationError &&
+          (finalRunStatus === "completed" || finalRunStatus === "failed") &&
+          selectPostRunResetFixtures(
+            executedScenarios,
+            executionSource.fixtures
+          ).length > 0
+        const sessionUsable =
+          runSession !== null && runSession.isHealthy?.() !== false
+        // Keep a healthy session for maintenance. Otherwise close it now, so a
+        // close failure still counts against this run's exit code and
+        // maintenance starts a fresh session.
+        if (!maintainFixtures || !sessionUsable) {
+          try {
+            await sessions.close()
+          } catch (error) {
+            closeError = error
+          }
+        }
       }
+
+      exitCode = interruptedSignal
+        ? signalExitCode()
+        : finalizationError || runError || closeError
+          ? 1
+          : resolveRunExitCode({ scenarios: scenarioReports, failOn })
+      progress.runFinished(
+        buildRunReport({
+          run: {
+            id: runId,
+            name: createRunResponse.run.name,
+            url: buildRunUrl(config.apiBaseUrl, projectSlug, runId),
+            status: interruptedSignal
+              ? "interrupted"
+              : (finalRunStatus ?? "interrupted"),
+            mode: runSelection.mode,
+            selection,
+            environment: environment.name,
+            targetUrl: environment.targetUrl,
+            runnerType,
+            model: runModel.model ?? null,
+            modelReasoningEffort: runModel.modelReasoningEffort ?? null,
+            startedAt: runStartedAt,
+            finishedAt: finalFinishedAt ?? Date.now(),
+            exitCode,
+          },
+          queue: queuePhases.map((phase) => ({ phase })),
+          scenarios: scenarioReports,
+        })
+      )
+    } finally {
+      progress.dispose()
     }
 
-    exitCode = interruptedSignal
-      ? signalExitCode()
-      : finalizationError || runError || closeError
-        ? 1
-        : resolveRunExitCode({ scenarios: scenarioReports, failOn })
-    progress.runFinished(
-      buildRunReport({
-        run: {
-          id: runId,
-          name: createRunResponse.run.name,
-          url: buildRunUrl(config.apiBaseUrl, projectSlug, runId),
-          status: interruptedSignal
-            ? "interrupted"
-            : (finalRunStatus ?? "interrupted"),
-          mode: runSelection.mode,
-          selection,
-          environment: environment.name,
-          targetUrl: environment.targetUrl,
-          runnerType,
-          model: runModel.model ?? null,
-          modelReasoningEffort: runModel.modelReasoningEffort ?? null,
-          startedAt: runStartedAt,
-          finishedAt: finalFinishedAt ?? Date.now(),
-          exitCode,
+    // After the summary and outside the live panel. Failures here never change
+    // the run or the exit code.
+    if (maintainFixtures) {
+      await runPostRunFixtureMaintenance({
+        runId,
+        executedScenarios,
+        fixtures: executionSource.fixtures,
+        // Fixtures stay editable during a run; maintain their current versions.
+        loadCurrentFixtures: async () =>
+          (
+            await fetchFixtures({
+              apiBaseUrl: config.apiBaseUrl,
+              accessToken,
+              version: CLI_VERSION,
+              projectSlug,
+            })
+          ).fixtures,
+        createRuntime: async (recordUsage) => {
+          await loadFixtureHooks()
+          return createFixtureRuntime(
+            executionSource.project.projectPrompt,
+            recordUsage
+          )
         },
-        queue: queuePhases.map((phase) => ({ phase })),
-        scenarios: scenarioReports,
+        getHooksPath: () => hooksConfig?.path ?? null,
+        listenForInterrupts,
+        stopListeningForInterrupts,
+        printUsage: (usage) =>
+          printFixtureUsage("Post-run fixture maintenance usage", usage),
       })
-    )
+    }
   } finally {
-    progress.dispose()
-  }
-
-  // Restore fixtures the run was allowed to change, after the summary and
-  // outside the live panel. Not after an interruption, and not when
-  // preflight was skipped. Failures here never change the run or exit code.
-  if (
-    fixtureMode !== "skip" &&
-    !interruptedSignal &&
-    !finalizationError &&
-    (finalRunStatus === "completed" || finalRunStatus === "failed")
-  ) {
-    await runPostRunFixtureMaintenance({
-      runId,
-      executedScenarios,
-      fixtures: executionSource.fixtures,
-      // Fixtures stay editable during a run; maintain their current versions.
-      loadCurrentFixtures: async () =>
-        (
-          await fetchFixtures({
-            apiBaseUrl: config.apiBaseUrl,
-            accessToken,
-            version: CLI_VERSION,
-            projectSlug,
-          })
-        ).fixtures,
-      createRuntime: async (recordUsage) => {
-        await loadFixtureHooks()
-        return createFixtureRuntime(
-          executionSource.project.projectPrompt,
-          recordUsage
-        )
-      },
-      getHooksPath: () => hooksConfig?.path ?? null,
-      listenForInterrupts,
-      stopListeningForInterrupts,
-      closeSession: () => sessions.close(),
-      printUsage: (usage) =>
-        printFixtureUsage("Post-run fixture maintenance usage", usage),
-    })
+    // Unconditional cleanup: closes the session kept for maintenance, or one
+    // left open by an unexpected error. A no-op when it is already closed.
+    try {
+      await sessions.close()
+    } catch (error) {
+      writeDiagnostic(
+        `Failed to close the runner: ${error instanceof Error ? error.message : "Unknown error"}\n`
+      )
+    }
   }
 
   if (setSignalExitCode()) {
@@ -2002,7 +2040,6 @@ async function runPostRunFixtureMaintenance(args: {
   getHooksPath: () => string | null
   listenForInterrupts: () => void
   stopListeningForInterrupts: () => void
-  closeSession: () => Promise<void>
   printUsage: (usage: RunnerUsageReport) => void
 }) {
   let usage: RunnerUsageReport = { complete: true }
@@ -2051,13 +2088,7 @@ async function runPostRunFixtureMaintenance(args: {
       `Warning: post-run fixture maintenance failed: ${error instanceof Error ? error.message : "Unknown error"}\n`
     )
   } finally {
-    try {
-      await args.closeSession()
-    } catch (error) {
-      process.stderr.write(
-        `Failed to close the runner: ${error instanceof Error ? error.message : "Unknown error"}\n`
-      )
-    }
+    // The caller closes the runner session.
     args.stopListeningForInterrupts()
     args.printUsage(usage)
   }

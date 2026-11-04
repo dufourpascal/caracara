@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => {
         expectation: "Nine animals exist.",
       },
     ],
-    resetInstructions: null,
+    resetInstructions: null as string | null,
     createdAt: 1,
     updatedAt: 1,
   }
@@ -706,5 +706,170 @@ describe("post-run fixture maintenance", () => {
       "reset",
       "verify",
     ])
+  })
+})
+
+describe("runner session around post-run maintenance", () => {
+  // A mutating fixture with reset instructions and no hooks, so every
+  // fixture operation runs as an agent task in the runner session.
+  const agentFixture = {
+    ...mocks.fixture,
+    resetInstructions: "Delete results calculated after the baseline.",
+  }
+
+  function useAgentFixtures(scenarioCount = 1) {
+    const plan = mocks.makePlan("mutates")
+    const template = plan.phases[0]!.scenarios[0]!
+    const scenarios = Array.from({ length: scenarioCount }, (_, index) => ({
+      ...template,
+      id: `scenario-${index + 1}`,
+      slug: `calculate-${index + 1}`,
+    }))
+    mocks.state.access = "mutates"
+    mocks.fetchExecutionPlan.mockResolvedValue({
+      ...plan,
+      fixtures: [agentFixture],
+      phases: [{ ...plan.phases[0]!, scenarios }],
+    })
+    mocks.fetchFixtures.mockResolvedValue({
+      fixtures: [{ ...agentFixture, requirements: [], health: [] }],
+    })
+    vi.mocked(readFixtureHooks).mockResolvedValue({
+      path: "/project/.caracara/fixtures.json",
+      rootDir: "/project",
+      projects: {},
+    })
+  }
+
+  function agentSession(healthy = true) {
+    const executeFixtureTask = vi.fn(
+      async (input: { checks: Array<{ id: string; name: string }> }) => ({
+        summary: "Done.",
+        checkResults: input.checks.map((check) => ({
+          checkId: check.id,
+          name: check.name,
+          verdict: "passed" as const,
+          evidence: "Seen.",
+        })),
+        usage: { complete: true },
+      })
+    )
+    const close = vi.fn(async () => undefined)
+    const session = {
+      executeScenario: mocks.executeScenario,
+      executeFixtureTask,
+      isHealthy: () => healthy,
+      close,
+    }
+    return { session, executeFixtureTask, close }
+  }
+
+  afterEach(() => {
+    mocks.fetchFixtures.mockReset().mockImplementation(async () => ({
+      fixtures: [{ ...mocks.fixture, requirements: [], health: [] }],
+    }))
+    mocks.executeScenario.mockReset().mockImplementation(async () => ({
+      checkResults: [],
+      executionSummary: "Done",
+      usage: { complete: true },
+    }))
+    mocks.startRun.mockReset().mockImplementation(async () => ({
+      executeScenario: mocks.executeScenario,
+      executeFixtureTask: vi.fn(),
+      close: vi.fn(async () => undefined),
+    }))
+  })
+
+  it("keeps one session from preflight through post-run maintenance and closes it once after", async () => {
+    useAgentFixtures()
+    const shared = agentSession()
+    mocks.startRun.mockImplementation(async () => shared.session)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ plain: true })
+
+    expect(mocks.startRun).toHaveBeenCalledOnce()
+    expect(kinds()).toEqual([
+      expect.objectContaining({ kind: "verify" }),
+      expect.objectContaining({ kind: "reset", runId: "run-1" }),
+      expect.objectContaining({ kind: "verify", runId: "run-1" }),
+    ])
+    // Preflight verify, post-run reset and verify ran in the shared session.
+    expect(shared.executeFixtureTask).toHaveBeenCalledTimes(3)
+    expect(mocks.executeScenario).toHaveBeenCalledOnce()
+    expect(shared.close).toHaveBeenCalledOnce()
+    expect(shared.close.mock.invocationCallOrder[0]).toBeGreaterThan(
+      shared.executeFixtureTask.mock.invocationCallOrder.at(-1)!
+    )
+    expect(shared.close.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.finishFixtureOperation.mock.invocationCallOrder.at(-1)!
+    )
+  })
+
+  it("still maintains fixtures after a run stopped by three runner failures in a row", async () => {
+    useAgentFixtures(4)
+    const shared = agentSession()
+    mocks.startRun.mockImplementation(async () => shared.session)
+    mocks.executeScenario
+      .mockRejectedValueOnce(new Error("Runner failed 1"))
+      .mockRejectedValueOnce(new Error("Runner failed 2"))
+      .mockRejectedValueOnce(new Error("Runner failed 3"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ plain: true })
+
+    expect(mocks.executeScenario).toHaveBeenCalledTimes(3)
+    const statuses = (
+      mocks.submitScenarioResult.mock.calls as unknown as Array<
+        [{ payload: { result: { status: string } } }]
+      >
+    ).map(([args]) => args.payload.result.status)
+    expect(statuses).toEqual([
+      "runner_failed",
+      "runner_failed",
+      "runner_failed",
+      "dependency_failed",
+    ])
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "failed" }),
+      })
+    )
+    expect(kinds().map((payload) => payload.kind)).toEqual([
+      "verify",
+      "reset",
+      "verify",
+    ])
+    expect(mocks.startRun).toHaveBeenCalledOnce()
+    expect(shared.close).toHaveBeenCalledOnce()
+    expect(process.exitCode).toBe(2)
+  })
+
+  it("maintains fixtures in a fresh session with the run's model when the run's session broke", async () => {
+    useAgentFixtures()
+    const broken = agentSession(false)
+    const fresh = agentSession()
+    mocks.startRun
+      .mockImplementationOnce(async () => broken.session)
+      .mockImplementationOnce(async () => fresh.session)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ model: "gpt-5.4-mini", plain: true })
+
+    expect(mocks.startRun).toHaveBeenCalledTimes(2)
+    for (const [args] of mocks.startRun.mock.calls as unknown as Array<
+      [{ model?: string }]
+    >) {
+      expect(args).toMatchObject({ model: "gpt-5.4-mini" })
+    }
+    // Preflight verify in the run's session; reset and verify in the new one.
+    expect(broken.executeFixtureTask).toHaveBeenCalledOnce()
+    expect(fresh.executeFixtureTask).toHaveBeenCalledTimes(2)
+    expect(broken.close).toHaveBeenCalledOnce()
+    expect(broken.close.mock.invocationCallOrder[0]).toBeLessThan(
+      fresh.executeFixtureTask.mock.invocationCallOrder[0]!
+    )
+    expect(fresh.close).toHaveBeenCalledOnce()
+    expect(process.exitCode).toBeUndefined()
   })
 })

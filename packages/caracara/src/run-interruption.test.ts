@@ -921,4 +921,42 @@ describe("scenario token usage", () => {
     expect(result?.status).toBe("runner_failed")
     expect(result).not.toHaveProperty("tokenUsage")
   })
+
+  it("keeps the usage when the completed submission is interrupted", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: true },
+    })
+    mocks.submitScenarioResult.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() =>
+      expect(mocks.submitScenarioResult).toHaveBeenCalledOnce()
+    )
+    process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+      ?.("SIGINT")
+    await run
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed", tokenUsage: storedUsage }),
+      expect.objectContaining({
+        status: "interrupted",
+        tokenUsage: storedUsage,
+      }),
+    ])
+  })
 })

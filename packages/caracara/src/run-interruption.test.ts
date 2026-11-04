@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => {
             phaseId: "phase-1",
             phaseName: "Setup",
             phaseOrder: 1,
-            dependencyIds: [],
+            dependencyIds: [] as string[],
           },
         ],
       },
@@ -1104,5 +1104,130 @@ describe("suite plan check during run start", () => {
         payload: expect.objectContaining({ status: "completed" }),
       })
     )
+  })
+})
+
+describe("run failures", () => {
+  const scenario = (id: string, phaseId: string, dependencyIds: string[]) => ({
+    id,
+    name: id,
+    slug: id,
+    status: "active",
+    instructions: `Run ${id}.`,
+    evaluationChecks: [],
+    phaseId,
+    phaseName: phaseId,
+    phaseOrder: phaseId === "phase-1" ? 1 : 2,
+    dependencyIds,
+  })
+  const originalPhases = mocks.executionPlan.phases
+
+  afterEach(() => {
+    mocks.executionPlan.phases = originalPhases
+    mocks.executeScenario.mockReset()
+    mocks.startRun.mockReset()
+  })
+
+  function useDependencyPlan() {
+    mocks.executionPlan.phases = [
+      {
+        id: "phase-1",
+        name: "Setup",
+        order: 1,
+        scenarios: [
+          scenario("create-item", "phase-1", []),
+          scenario("edit-item", "phase-1", ["create-item"]),
+          scenario("delete-item", "phase-1", ["edit-item"]),
+          scenario("open-settings", "phase-1", []),
+        ],
+      },
+      {
+        id: "phase-2",
+        name: "Reports",
+        order: 2,
+        scenarios: [scenario("export-report", "phase-2", [])],
+      },
+    ]
+  }
+
+  function submittedResults() {
+    return mocks.submitScenarioResult.mock.calls.map((call) => {
+      const args = call[0] as unknown as {
+        payload: {
+          result: {
+            scenarioId: string
+            status: string
+            failureDetail: string | null
+          }
+        }
+      }
+      const { scenarioId, status, failureDetail } = args.payload.result
+      return { scenarioId, status, failureDetail }
+    })
+  }
+
+  it("skips only scenarios that depend on a failed one", async () => {
+    useDependencyPlan()
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    mocks.startRun.mockImplementation(async () => ({
+      close: mocks.close,
+      executeScenario: mocks.executeScenario,
+    }))
+    mocks.executeScenario
+      .mockRejectedValueOnce(new Error("Codex crashed"))
+      .mockResolvedValue({ executionSummary: "Done.", checkResults: [] })
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      {
+        scenarioId: "create-item",
+        status: "runner_failed",
+        failureDetail: "Codex crashed",
+      },
+      {
+        scenarioId: "edit-item",
+        status: "dependency_failed",
+        failureDetail:
+          "Skipped because dependency create-item did not complete.",
+      },
+      {
+        scenarioId: "delete-item",
+        status: "dependency_failed",
+        failureDetail: "Skipped because dependency edit-item did not complete.",
+      },
+      { scenarioId: "open-settings", status: "completed", failureDetail: null },
+      { scenarioId: "export-report", status: "completed", failureDetail: null },
+    ])
+    expect(mocks.executeScenario).toHaveBeenCalledTimes(3)
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "failed" }),
+      })
+    )
+  })
+
+  it("skips the rest of the run when the runner cannot start", async () => {
+    useDependencyPlan()
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    mocks.startRun.mockRejectedValue(new Error("Chromium did not start"))
+
+    await runCommand({})
+
+    expect(mocks.startRun).toHaveBeenCalledOnce()
+    expect(submittedResults()).toEqual([
+      {
+        scenarioId: "create-item",
+        status: "runner_failed",
+        failureDetail: "Chromium did not start",
+      },
+      ...["edit-item", "delete-item", "open-settings", "export-report"].map(
+        (scenarioId) => ({
+          scenarioId,
+          status: "dependency_failed",
+          failureDetail: "Dependency chain stopped after an earlier failure.",
+        })
+      ),
+    ])
   })
 })

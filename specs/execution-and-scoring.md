@@ -50,7 +50,7 @@ Evaluation checks are executed in the same runner invocation as task instruction
 
 The runner receives the ordered authored checks and must return exactly one passed, failed, or blocked verdict with concrete browser evidence for every check. A blocked verdict includes one structured reason: `blocked_by_check`, `setup_incomplete`, `environment_failure`, or `tool_limit`. The runner retries only blocked checks once, using the current browser state, before returning their final verdicts. Historical `not_observed` verdicts remain readable for compatibility but are not emitted by current runners. It never returns a numeric score.
 
-For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same Codex thread if the screenshot is missing. A second miss is a runner failure.
+For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same Codex thread if the screenshot is missing. In that turn Codex either saves the screenshot or, as a last resort, returns a short reason no screenshot can show the failure, such as a screenshot tool that keeps failing. A check that still has no screenshot is recorded as evidence unavailable with that reason, or with a CLI-written reason when Codex gave none or the follow-up turn failed. The scenario still completes with its verdicts; a missing screenshot is never a runner failure.
 
 ### EXEC_08
 
@@ -68,7 +68,7 @@ The system distinguishes completed scenarios, runner failures, dependency failur
 
 The CLI handles `SIGINT` and `SIGTERM` as interrupted executions. It cancels the active local runner, reports any active scenario and enclosing run as interrupted, and only then exits with the conventional signal exit code.
 
-After a runner failure the CLI marks later scenarios as dependency failures. When the run's scenarios span more than one phase, the CLI keeps going by default: it skips only the rest of the failing phase and continues with the next phase. It stops the whole run when the runner session is unusable (the runner could not start or its browser exited) or when two phases in a row fail on their first scenario. `--no-keep-going` restores stopping after the first runner failure; `--keep-going` enables phase-level continuation for single-phase runs. Any runner failure still finalizes the run as failed.
+By default the CLI keeps going after a runner failure: it skips only the scenarios that declare a dependency on the failed one, directly or through another skipped scenario, and records them as dependency failures. Dependencies never cross phases, so other scenarios in the phase and later phases still run in the same shared browser, starting from whatever state the failed scenario left. The CLI stops the whole run when the runner session is unusable (the runner could not start or its browser exited) when two phases in a row fail on their first scenario, or after three runner failures in a row, in each case with no scenario completing in between. `--no-keep-going` restores stopping after the first runner failure. Any runner failure still finalizes the run as failed.
 
 ### EXEC_10
 

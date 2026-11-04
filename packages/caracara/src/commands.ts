@@ -1146,7 +1146,7 @@ export async function runCommand(
   const phaseIds = [
     ...new Set(queue.flatMap((item) => (item.phase ? [item.phase.id] : []))),
   ]
-  const keepGoing = options.keepGoing ?? phaseIds.length > 1
+  const keepGoing = options.keepGoing ?? true
   const progress = new RunProgress(outputMode, io, heartbeatMs)
   const scenarioReports: RunReportScenario[] = []
 
@@ -1208,9 +1208,13 @@ export async function runCommand(
   let runFailed = false
   // Every remaining scenario is skipped (no keep-going, or the session broke).
   let stopRemaining = false
-  // With keep-going, the rest of this phase is skipped after an error.
-  let skippedPhaseId: string | null = null
+  // With keep-going, only scenarios that depend on one that did not complete
+  // are skipped. Dependencies never cross phases.
+  const unfinishedScenarioSlugs = new Map<string, string>()
   let consecutiveFirstScenarioFailures = 0
+  // Runner failures since the last completed scenario; a run where nothing
+  // completes (expired login, exhausted quota) stops instead of trying all.
+  let consecutiveRunnerFailures = 0
   let executedInCurrentPhase = 0
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
@@ -1303,10 +1307,13 @@ export async function runCommand(
         activeScenarioResultId = startedScenario.result.id
         runAbortController.signal.throwIfAborted()
 
+        const failedDependencySlug = item.scenario.dependencyIds
+          .map((dependencyId) => unfinishedScenarioSlugs.get(dependencyId))
+          .find((slug) => slug !== undefined)
         const skipDetail = stopRemaining
           ? "Dependency chain stopped after an earlier failure."
-          : skippedPhaseId !== null && item.phase?.id === skippedPhaseId
-            ? "Skipped after an execution error earlier in this phase."
+          : failedDependencySlug !== undefined
+            ? `Skipped because dependency ${failedDependencySlug} did not complete.`
             : null
         if (skipDetail) {
           await submitScenarioResult({
@@ -1332,6 +1339,7 @@ export async function runCommand(
             signal: runAbortController.signal,
           })
           runAbortController.signal.throwIfAborted()
+          unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
           activeScenario = null
           activeScenarioIndex = null
           activeScenarioResultId = null
@@ -1420,9 +1428,9 @@ export async function runCommand(
           activeScenarioIndex = null
           activeScenarioResultId = null
           activeScenarioAttemptId = null
-          if (firstInPhase) {
-            consecutiveFirstScenarioFailures = 0
-          }
+          // A completed scenario shows the run is not broken as a whole.
+          consecutiveFirstScenarioFailures = 0
+          consecutiveRunnerFailures = 0
           recordScenario({
             sequenceIndex,
             status: "completed",
@@ -1439,19 +1447,19 @@ export async function runCommand(
             throw error
           }
           runFailed = true
+          unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
           if (item.phase && firstInPhase) {
             consecutiveFirstScenarioFailures += 1
           }
+          consecutiveRunnerFailures += 1
           const sessionBroken =
             runSession === null || runSession.isHealthy?.() === false
           if (
-            keepGoing &&
-            item.phase &&
-            !sessionBroken &&
-            consecutiveFirstScenarioFailures < 2
+            !keepGoing ||
+            sessionBroken ||
+            consecutiveFirstScenarioFailures >= 2 ||
+            consecutiveRunnerFailures >= 3
           ) {
-            skippedPhaseId = item.phase.id
-          } else {
             stopRemaining = true
           }
           const failureDetail =

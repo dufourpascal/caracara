@@ -158,6 +158,13 @@ export const BLOCKED_REASONS = [
   "tool_limit",
 ] as const
 export const blockedReasonSchema = z.enum(BLOCKED_REASONS)
+export const EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH = 500
+/** Why a failed check has no screenshot, for example a native dialog that blocked every capture. */
+export const evidenceUnavailableReasonSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .check(maxUtf16Length(EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH))
 export const checkVerdictSchema = z.enum([
   "passed",
   "failed",
@@ -170,6 +177,9 @@ export const checkResultSchema = z
     verdict: checkVerdictSchema,
     evidence: z.string().min(1).check(maxUtf16Length(2_000)),
     blockedReason: blockedReasonSchema.nullable().optional(),
+    evidenceUnavailableReason: evidenceUnavailableReasonSchema
+      .nullable()
+      .optional(),
   })
   .superRefine((result, context) => {
     if (result.verdict === "blocked" && !result.blockedReason) {
@@ -188,6 +198,18 @@ export const checkResultSchema = z
         code: "custom",
         message: "Only blocked checks can include a blocked reason.",
         path: ["blockedReason"],
+      })
+    }
+    if (
+      result.verdict !== "failed" &&
+      result.evidenceUnavailableReason !== undefined &&
+      result.evidenceUnavailableReason !== null
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Only failed checks can include an evidence-unavailable reason.",
+        path: ["evidenceUnavailableReason"],
       })
     }
   })

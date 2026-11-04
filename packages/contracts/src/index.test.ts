@@ -69,6 +69,44 @@ describe("contracts", () => {
     ).toBe("not_observed")
   })
 
+  it("accepts an evidence-unavailable reason only on failed checks", () => {
+    const failed = {
+      checkId: "00000000-0000-4000-8000-000000000001",
+      verdict: "failed",
+      evidence:
+        "Attempted: delete. Failed: the confirm dialog named the wrong item.",
+    }
+
+    expect(
+      checkResultSchema.parse({
+        ...failed,
+        evidenceUnavailableReason:
+          "  Native confirm dialog blocked screenshots.  ",
+      }).evidenceUnavailableReason
+    ).toBe("Native confirm dialog blocked screenshots.")
+    expect(
+      checkResultSchema.parse({ ...failed, evidenceUnavailableReason: null })
+        .evidenceUnavailableReason
+    ).toBeNull()
+    expect(
+      checkResultSchema.safeParse({ ...failed, evidenceUnavailableReason: " " })
+        .success
+    ).toBe(false)
+    expect(
+      checkResultSchema.safeParse({
+        ...failed,
+        evidenceUnavailableReason: "x".repeat(501),
+      }).success
+    ).toBe(false)
+    expect(() =>
+      checkResultSchema.parse({
+        ...failed,
+        verdict: "passed",
+        evidenceUnavailableReason: "No screenshot.",
+      })
+    ).toThrow(/only failed/i)
+  })
+
   it("validates core project and scenario shapes", () => {
     const project = projectSchema.parse({
       id: "project_1",

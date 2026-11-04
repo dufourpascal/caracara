@@ -122,7 +122,7 @@ Each run stores the selected environment and normalized target URL so the web ap
 
 `caracara run --phases 1-7,9,10` runs the listed phases, in project order, as one run. Ranges and single phase numbers can be mixed. It can't be combined with `--scenario`, `--suite`, `--phase` or `--through-phase`.
 
-When a run covers more than one phase, an execution error skips only the rest of that phase and the run continues with the next one. Pass `--no-keep-going` to stop the whole run instead, or `--keep-going` to continue in a single-phase run too. The run still stops when the browser session is gone, or when two phases in a row fail on their first scenario.
+After an execution error, the run skips only the scenarios that depend on the failed one and continues with everything else, in the same phase and later ones. Pass `--no-keep-going` to stop the whole run instead. The run still stops when the browser session is gone, when two phases in a row fail on their first scenario, or after three runner failures in a row, in each case with no scenario completing in between.
 
 In a terminal, `caracara run` keeps a status panel at the bottom with the current phase and scenario, elapsed time and ETA, check totals, tokens and the agent's current step. In CI, when output is redirected or piped (`> run.log`, `| tee run.log`), or with `--plain`, it prints timestamped lines instead, plus a heartbeat line every 5 minutes while a scenario runs (`--heartbeat 30s`, `--heartbeat 0` to turn it off). `--quiet` prints only a short summary; `--json` prints one JSON event per line (`run.started`, `phase.started`, `scenario.started`, `agent.action`, `scenario.finished`, `run.finished`).
 
@@ -162,7 +162,7 @@ Each run stores the model and reasoning effort Caracara passed to Codex. `caraca
 
 Caracara runs the Codex CLI installed on your machine: the `codex` executable on `PATH`, or the file named by `CARACARA_CODEX_PATH`. Install it with `npm install -g @openai/codex`; Caracara supports version 0.164.0 or newer and prints a warning for older versions. Updating `codex` updates the runtime Caracara uses. Codex uses your existing local Codex login, and Caracara starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
 
-When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
+When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. If no screenshot can show the failure, for example because a native browser dialog blocks every capture, the check is recorded as "evidence unavailable" with a reason, and the web app shows that reason instead. Run deletion also removes the stored screenshots.
 
 ## Run results
 

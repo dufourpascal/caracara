@@ -24,6 +24,7 @@ const checkResult = v.object({
   ),
   evidence: v.string(),
   blockedReason: v.optional(v.union(v.null(), blockedReason)),
+  evidenceUnavailableReason: v.optional(v.union(v.null(), v.string())),
 })
 
 const tokenUsage = v.object({

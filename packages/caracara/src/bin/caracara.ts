@@ -165,7 +165,7 @@ program
   )
   .option(
     "--keep-going",
-    "after an execution error, skip the rest of that phase and continue (default when the run covers several phases)"
+    "after an execution error, skip only the scenarios that depend on it and continue (default)"
   )
   .option("--no-keep-going", "stop the run after the first execution error")
   .option("--plain", "print timestamped lines instead of the live status panel")

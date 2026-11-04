@@ -29,6 +29,7 @@ import {
   toRunEvidence,
   toScenarioResult,
   validateCompletedCheckResults,
+  rejectEvidenceUnavailableReasons,
   validateFailedCheckEvidence,
   validateRunnerMatch,
   validateTokenUsage,
@@ -57,6 +58,7 @@ const checkResultValidator = v.object({
   ),
   evidence: v.string(),
   blockedReason: v.optional(v.union(v.null(), blockedReasonValidator)),
+  evidenceUnavailableReason: v.optional(v.union(v.null(), v.string())),
 })
 
 const tokenUsageValidator = v.object({
@@ -742,16 +744,23 @@ export const submitScenarioResult = mutation({
         existing.evaluationChecks,
         args.result.checkResults
       )
-      const failedCheckIds = new Set(
-        args.result.checkResults
-          .filter((check) => check.verdict === "failed")
-          .map((check) => check.checkId)
-      )
-      await deleteScenarioResultEvidence(ctx, existing._id, failedCheckIds)
-      if (
+      const requiresScreenshots =
         (run.evidencePolicy ?? "text_only") === "failed_check_screenshot" &&
         existing.runnerType === "codex"
-      ) {
+      if (!requiresScreenshots) {
+        rejectEvidenceUnavailableReasons(args.result.checkResults)
+      }
+      // A failed check recorded as evidence unavailable keeps no screenshot.
+      const screenshotCheckIds = new Set(
+        args.result.checkResults
+          .filter(
+            (check) =>
+              check.verdict === "failed" && !check.evidenceUnavailableReason
+          )
+          .map((check) => check.checkId)
+      )
+      await deleteScenarioResultEvidence(ctx, existing._id, screenshotCheckIds)
+      if (requiresScreenshots) {
         const evidence = await ctx.db
           .query("runEvidence")
           .withIndex("by_result", (query) =>

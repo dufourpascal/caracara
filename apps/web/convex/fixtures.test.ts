@@ -953,6 +953,43 @@ describe("run creation with fixtures", () => {
     await expectError(createRun(entry(interruptedAfter.id)), "conflict", /newer fixture operation replaced/)
   })
 
+  it("accepts a verify followed only by newer successful verifies", async () => {
+    const { createRun, fixture, verify } = await requiredSetup()
+    const first = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    await verify(fixture.id)
+
+    const run = await createRun({
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "healthy", operationId: first.id },
+      ],
+    })
+    expect(run.fixturePreflight).toEqual([
+      expect.objectContaining({ operationId: first.id, outcome: "healthy" }),
+    ])
+  })
+
+  it("keeps mutation evidence when a running mutating run is deleted", async () => {
+    const { ctx, createRun, fixture, verify } = await requiredSetup("mutates")
+    const running = await createRun({
+      fixturePreflight: [{ fixtureId: fixture.id, outcome: "skipped", operationId: null }],
+    })
+    vi.advanceTimersByTime(1)
+    const during = await verify(fixture.id)
+    vi.advanceTimersByTime(1)
+    await call(runs.remove, ctx, { runId: running.id as Id<"runs"> })
+
+    await expectError(
+      createRun({
+        fixturePreflight: [
+          { fixtureId: fixture.id, outcome: "healthy", operationId: during.id },
+        ],
+      }),
+      "conflict",
+      /ran or is running/
+    )
+  })
+
   it("rejects a verify followed by a run that mutates the fixture", async () => {
     const { ctx, projectId, createRun, fixture, verify, finalize, analysis } =
       await requiredSetup()

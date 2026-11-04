@@ -857,6 +857,10 @@ export const remove = mutation({
   },
   handler: async (ctx, args) => {
     const { project, run } = await ensureRunOwnership(ctx, args.runId)
+    if (run.status === "running") {
+      // Its CLI may keep changing fixtures after the record is gone.
+      await recordFixtureMutations(ctx, run, Date.now())
+    }
     const { deletedResultCount } = await deleteRunAndResults(ctx, run._id)
 
     if (run.environment) {

@@ -437,7 +437,8 @@ export async function deriveFixtureHealth(
         projectId: project._id,
         environment,
         fixtureId: fixture._id,
-        since: checkedAt,
+        // A mutation that ended while the verify ran may not have been seen.
+        since: decisive.startedAt,
       }))
     ) {
       status = "healthy"
@@ -737,25 +738,38 @@ async function validatePreflightOperation(
     conflict(`${label}: the fixture changed after it was verified; rerun.`)
   }
 
-  // The verify must still decide the fixture's health in this environment.
-  const { latestFinished, active } = await getLatestFixtureOperations(
-    ctx,
-    args.fixture._id,
-    operation.environment,
-    args.now
-  )
-  if (
-    latestFinished?._id !== operation._id ||
-    active.some((candidate) => candidate.kind !== "verify")
-  ) {
-    conflict(`${label}: a newer fixture operation replaced this verify; rerun.`)
+  // Only newer verifies that succeeded or are still running may follow it;
+  // anything else (maintenance, a failed or interrupted verify) replaces it.
+  const newerOperations = ctx.db
+    .query("fixtureOperations")
+    .withIndex("by_fixture_environment_started_at", (query) =>
+      query
+        .eq("fixtureId", args.fixture._id)
+        .eq("environment", operation.environment)
+        .gte("startedAt", operation.startedAt)
+    )
+  for await (const candidate of newerOperations) {
+    if (candidate._id === operation._id) {
+      continue
+    }
+    const stillRunning =
+      candidate.status === "running" && candidate.leaseExpiresAt > args.now
+    if (
+      candidate.kind !== "verify" ||
+      !(candidate.status === "succeeded" || stillRunning)
+    ) {
+      conflict(
+        `${label}: a newer fixture operation replaced this verify; rerun.`
+      )
+    }
   }
   if (
     await hasMutatingRunSince(ctx, {
       projectId: args.projectId,
       environment: operation.environment,
       fixtureId: args.fixture._id,
-      since: operation.finishedAt,
+      // A mutation that ended while the verify ran may not have been seen.
+      since: operation.startedAt,
     })
   ) {
     conflict(

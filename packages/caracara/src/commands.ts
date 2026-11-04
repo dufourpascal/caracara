@@ -23,6 +23,7 @@ import {
   fetchExecutionPlan,
   fetchFixtures,
   finalizeRun,
+  fetchProject,
   fetchProjects,
   fetchRunResults,
   fetchSingleScenario,
@@ -703,9 +704,9 @@ export async function fixtureOperationCommand(
     version: CLI_VERSION,
     projectSlug,
   }
-  const [{ fixtures }, plan, hookConfig] = await Promise.all([
+  const [{ fixtures }, { project }, hookConfig] = await Promise.all([
     fetchFixtures(api),
-    fetchExecutionPlan(api),
+    fetchProject(api),
     readFixtureHooks(projectSlug, cwd),
   ])
   const fixture = fixtures.find((candidate) => candidate.slug === fixtureSlug)
@@ -730,7 +731,7 @@ export async function fixtureOperationCommand(
   const context: FixtureContext = {
     projectSlug,
     environment,
-    projectPrompt: plan.project.projectPrompt,
+    projectPrompt: project.projectPrompt,
     secrets,
     hooks: hookConfig.hooks,
     hookCwd: hookConfig.cwd,
@@ -751,6 +752,7 @@ export async function fixtureOperationCommand(
       return session
     },
   }
+  let failure: unknown = null
   try {
     const result =
       operation === "verify"
@@ -766,14 +768,23 @@ export async function fixtureOperationCommand(
       process.exitCode = 4
     }
   } catch (error) {
-    if (!interruptedBy) {
-      throw error
-    }
-    process.exitCode = interruptedBy === "SIGINT" ? 130 : 143
+    failure = error
+  }
+  // Keep handling signals until the browser session is closed.
+  try {
+    await session?.close()
+  } catch (error) {
+    failure ??= error
   } finally {
     process.off("SIGINT", onSigint)
     process.off("SIGTERM", onSigterm)
-    await session?.close()
+  }
+  if (interruptedBy) {
+    process.exitCode = interruptedBy === "SIGINT" ? 130 : 143
+    return
+  }
+  if (failure) {
+    throw failure
   }
 }
 
@@ -1255,6 +1266,7 @@ export async function runCommand(
           version: CLI_VERSION,
           projectSlug,
           scenarioSlug: runSelection.requestedScenarioSlug,
+          signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
           return {
@@ -1360,7 +1372,16 @@ export async function runCommand(
   // Fixture preflight may start the runner session; the run reuses it.
   // Assigned in closures, so keep TypeScript from narrowing it to null.
   let runSession = null as RunnerSession | null
+  const closeRunSessionEarly = async () => {
+    const session = runSession
+    runSession = null
+    await session?.close().catch(() => undefined)
+  }
   const getRunSession = async () => {
+    // A session the preflight left broken (browser gone) is replaced.
+    if (runSession?.isHealthy?.() === false) {
+      await closeRunSessionEarly()
+    }
     runSession ??= await runner.startRun({
       cwd,
       secrets,
@@ -1370,11 +1391,6 @@ export async function runCommand(
       signal: runAbortController.signal,
     })
     return runSession
-  }
-  const closeRunSessionEarly = async () => {
-    const session = runSession
-    runSession = null
-    await session?.close().catch(() => undefined)
   }
 
   let createRunResponse: Awaited<ReturnType<typeof startRun>>

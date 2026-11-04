@@ -44,7 +44,6 @@ function renderEditor() {
     <FixtureEditor
       fixture={fixture}
       onDeleted={vi.fn()}
-      onError={vi.fn()}
       phases={[{ id: "phase-1", name: "Setup", order: 1 }]}
       projectId="project-1"
       removeFixture={mutations.removeFixture as never}
@@ -92,6 +91,30 @@ describe("fixture editor", () => {
         },
       ],
     })
+  })
+
+  it("shows server errors in the editor and on the rejected fields", async () => {
+    const user = userEvent.setup()
+    const { updateFixture } = renderEditor()
+    updateFixture.mockRejectedValueOnce({
+      data: {
+        code: "validation_error",
+        message: "Check the highlighted fixture fields.",
+        fieldErrors: { slug: ["Slug must be 120 characters or fewer."] },
+      },
+    })
+
+    await user.type(screen.getByLabelText("Slug"), "-x")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").map((alert) => alert.textContent)
+      ).toEqual([
+        "Check the highlighted fixture fields.",
+        "Slug must be 120 characters or fewer.",
+      ])
+    )
   })
 
   it("blocks saving incomplete items", async () => {

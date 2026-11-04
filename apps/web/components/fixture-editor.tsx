@@ -17,7 +17,7 @@ import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
 import { Textarea } from "@workspace/ui/components/textarea"
 import type { api } from "@/convex/_generated/api"
-import { getErrorMessage } from "@/lib/errors"
+import { getErrorData, getErrorMessage } from "@/lib/errors"
 
 type FixtureForm = Pick<
   Fixture,
@@ -112,7 +112,6 @@ export function FixtureEditor({
   phases,
   scenarios,
   projectId,
-  onError,
   onDeleted,
   updateFixture,
   removeFixture,
@@ -123,7 +122,6 @@ export function FixtureEditor({
   phases: Array<{ id: string; name: string; order: number }>
   scenarios: Array<{ id: string; name: string; slug: string }>
   projectId: string
-  onError: (message: string | null) => void
   onDeleted: () => void
   updateFixture: ReturnType<typeof useMutation<typeof api.fixtures.update>>
   removeFixture: ReturnType<typeof useMutation<typeof api.fixtures.remove>>
@@ -139,6 +137,7 @@ export function FixtureEditor({
   const [seenUpdatedAt, setSeenUpdatedAt] = useState(fixture.updatedAt)
   const [errors, setErrors] = useState<FormErrors>({})
   const [isPending, setIsPending] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [target, setTarget] = useState("")
   const [access, setAccess] = useState<FixtureAccess>("read")
   const [scope, setScope] = useState("")
@@ -157,12 +156,25 @@ export function FixtureEditor({
   }
 
   async function pending(action: () => Promise<void>) {
-    onError(null)
+    setActionError(null)
     setIsPending(true)
     try {
       await action()
     } catch (error) {
-      onError(getErrorMessage(error))
+      setActionError(getErrorMessage(error))
+      // Server validation errors name the fields they reject.
+      const data = getErrorData(error) as {
+        fieldErrors?: Record<string, string[] | undefined>
+      } | null
+      if (data?.fieldErrors) {
+        setErrors(
+          Object.fromEntries(
+            Object.entries(data.fieldErrors)
+              .filter(([key]) => key in form)
+              .map(([key, messages]) => [key, messages?.[0]])
+          )
+        )
+      }
     } finally {
       setIsPending(false)
     }
@@ -239,7 +251,12 @@ export function FixtureEditor({
 
   return (
     <div className="grid h-full content-start gap-6 overflow-auto px-6 py-6">
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {actionError ? (
+          <p className="mr-auto text-sm text-destructive" role="alert">
+            {actionError}
+          </p>
+        ) : null}
         <Button
           disabled={isPending}
           size="sm"
@@ -264,7 +281,7 @@ export function FixtureEditor({
           onClick={() => {
             setForm(savedForm)
             setErrors({})
-            onError(null)
+            setActionError(null)
           }}
         >
           <RotateCcw />

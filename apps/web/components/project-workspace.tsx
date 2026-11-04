@@ -2198,7 +2198,6 @@ function AuthenticatedProjectWorkspace({
                 fixture={selectedFixture}
                 key={selectedFixture.id}
                 onDeleted={() => setSelectedFixtureId(null)}
-                onError={setFixtureError}
                 phases={phases ?? []}
                 projectId={project.id}
                 removeFixture={removeFixture}

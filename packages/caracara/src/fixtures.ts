@@ -389,8 +389,12 @@ export async function runFixturePreflight(input: {
       continue
     }
     // Repair converges only fixtures that fail their verify.
+    input.log(`Fixture ${fixture.slug}: verifying…\n`, false)
     const verified = await verifyFixture(input.context, fixture)
     const repairing = !verified.ok && input.mode === "repair"
+    if (repairing) {
+      input.log(`Fixture ${fixture.slug}: converging…\n`, false)
+    }
     const result = repairing
       ? await convergeFixture(input.context, fixture)
       : verified

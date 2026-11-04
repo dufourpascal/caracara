@@ -97,7 +97,7 @@ const mocks = vi.hoisted(() => {
   const close = vi.fn(async () => undefined)
   const startRun = vi.fn(async (args: unknown) => {
     void args
-    return { executeScenario, runTask, close, isHealthy: () => true }
+    return { executeScenario, runTask, close, isHealthy: (): boolean => true }
   })
   return {
     STEP_ID,
@@ -129,6 +129,17 @@ const mocks = vi.hoisted(() => {
       return executionPlan
     }),
     fetchFixtures: vi.fn(async () => ({ fixtures: [fixture] })),
+    fetchProject: vi.fn(async () => ({
+      project: { projectPrompt: "Project rules." },
+    })),
+    fetchSingleScenario: vi.fn(async (args: unknown) => {
+      void args
+      return {
+        project: executionPlan.project,
+        scenario: executionPlan.phases[0]!.scenarios[0]!,
+        fixtures: [fixture],
+      }
+    }),
     finalizeRun: vi.fn(async (args: unknown) => {
       void args
     }),
@@ -144,6 +155,8 @@ vi.mock("./api.js", async (importOriginal) => ({
   createRun: mocks.createRun,
   fetchExecutionPlan: mocks.fetchExecutionPlan,
   fetchFixtures: mocks.fetchFixtures,
+  fetchProject: mocks.fetchProject,
+  fetchSingleScenario: mocks.fetchSingleScenario,
   finalizeRun: mocks.finalizeRun,
   startScenarioExecution: mocks.startScenarioExecution,
   submitScenarioResult: mocks.submitScenarioResult,
@@ -252,7 +265,10 @@ describe("fixture preflight in caracara run", () => {
       expect.objectContaining({ fixtures: [mocks.executionPlan.fixtures[0]] })
     )
     expect(mocks.close).toHaveBeenCalledOnce()
-    expect(stdout).toContain("Fixture demo-user: healthy (agent)")
+    expect(stdout).toContain(
+      "Fixture demo-user: verifying…\nFixture demo-user: healthy (agent)"
+    )
+    expect(stdout).not.toContain("converging…")
     expect(stdout).toContain("Fixtures   demo-user healthy (agent)")
     expect(process.exitCode).toBeUndefined()
   })
@@ -302,8 +318,11 @@ describe("fixture preflight in caracara run", () => {
     // verify fails, converge passes, final verify passes
     mocks.taskVerdicts.push("failed", "passed", "passed")
 
-    await run({ fixtures: "repair" })
+    const { stdout } = await run({ fixtures: "repair" })
 
+    expect(stdout).toContain(
+      "Fixture demo-user: verifying…\nFixture demo-user: converging…\nFixture demo-user: repaired (agent)"
+    )
     const checks = mocks.runTask.mock.calls.map((call) =>
       call[0].checks.map((check) => check.id)
     )
@@ -414,6 +433,49 @@ describe("fixture preflight in caracara run", () => {
     expect(mocks.close).toHaveBeenCalledOnce()
   })
 
+  it("cancels a stalled single-scenario fetch on SIGINT", async () => {
+    mocks.fetchSingleScenario.mockImplementationOnce(
+      (args) =>
+        new Promise((_, reject) => {
+          const { signal } = args as { signal?: AbortSignal }
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        })
+    )
+    const existing = new Set(process.listeners("SIGINT"))
+
+    const pending = run({ scenario: "articles" })
+    await vi.waitFor(() => expect(mocks.fetchSingleScenario).toHaveBeenCalled())
+    process.listeners("SIGINT").find((listener) => !existing.has(listener))?.(
+      "SIGINT"
+    )
+    await pending
+
+    expect(mocks.fetchSingleScenario).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(process.exitCode).toBe(130)
+    expect(mocks.createRun).not.toHaveBeenCalled()
+  })
+
+  it("replaces a session the preflight left unhealthy", async () => {
+    const brokenClose = vi.fn(async () => undefined)
+    mocks.startRun.mockImplementationOnce(async () => ({
+      executeScenario: mocks.executeScenario,
+      runTask: mocks.runTask,
+      close: brokenClose,
+      isHealthy: () => false,
+    }))
+
+    await run({})
+
+    expect(mocks.startRun).toHaveBeenCalledTimes(2)
+    expect(brokenClose).toHaveBeenCalledOnce()
+    expect(mocks.executeScenario).toHaveBeenCalledOnce()
+    expect(mocks.close).toHaveBeenCalledOnce()
+  })
+
   it("fetches the suite plan, runs the preflight, then creates and checks the run", async () => {
     await run({ suite: "smoke" })
 
@@ -467,6 +529,39 @@ describe("fixture commands", () => {
     expect(String(stdout.mock.calls[0]?.[0])).toBe(
       "Fixture demo-user: repaired (hook)\n"
     )
+  })
+
+  it("uses the project prompt and keeps handling signals until the session closes", async () => {
+    const existing = new Set(process.listeners("SIGINT"))
+    mocks.runTask.mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((_, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        })
+    )
+    let listenersDuringClose = 0
+    mocks.close.mockImplementationOnce(async () => {
+      listenersDuringClose = process
+        .listeners("SIGINT")
+        .filter((listener) => !existing.has(listener)).length
+    })
+
+    const pending = fixtureOperationCommand("verify", "demo-user", {})
+    await vi.waitFor(() => expect(mocks.runTask).toHaveBeenCalled())
+    expect(mocks.runTask.mock.calls[0]![0].prompt).toContain("Project rules.")
+    expect(mocks.fetchExecutionPlan).not.toHaveBeenCalled()
+    process.listeners("SIGINT").find((listener) => !existing.has(listener))?.(
+      "SIGINT"
+    )
+    await pending
+
+    expect(listenersDuringClose).toBe(1)
+    expect(process.exitCode).toBe(130)
+    expect(
+      process.listeners("SIGINT").filter((listener) => !existing.has(listener))
+    ).toHaveLength(0)
   })
 
   it("rejects an unknown fixture slug", async () => {

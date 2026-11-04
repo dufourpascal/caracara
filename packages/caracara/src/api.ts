@@ -13,6 +13,7 @@ import {
   finalizeRunResponseSchema,
   fixtureListResponseSchema,
   parseApiError,
+  projectDetailResponseSchema,
   projectListResponseSchema,
   runResultsResponseSchema,
   runEvidenceUploadResponseSchema,
@@ -139,6 +140,20 @@ export async function fetchProjects(
   })
 }
 
+export async function fetchProject(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${encodeURIComponent(args.projectSlug)}`,
+    version: args.version,
+    accessToken: args.accessToken,
+    schema: projectDetailResponseSchema,
+  })
+}
+
 export async function fetchExecutionPlan(args: {
   apiBaseUrl: string
   accessToken: string
@@ -204,11 +219,13 @@ export async function fetchSingleScenario(args: {
   version: string
   projectSlug: string
   scenarioSlug: string
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
     version: args.version,
     accessToken: args.accessToken,
+    init: { signal: args.signal },
     schema: singleScenarioResponseSchema,
   })
 }

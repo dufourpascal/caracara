@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -169,6 +170,9 @@ try {
       2
     )}\n`
   )
+  // tsc does not mark the bin executable, and `npm install -g` of the unchanged
+  // `current` link reports "up to date" without fixing it, which breaks shims.
+  chmodSync(join(staging, "dist", "bin", "caracara.js"), 0o755)
   // Swap so a reinstall of the same commit never leaves the live install missing.
   const previous = `${target}.previous-${process.pid}`
   if (existsSync(target)) {

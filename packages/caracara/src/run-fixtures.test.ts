@@ -286,13 +286,32 @@ describe("fixture preflight in caracara run", () => {
     expect(mocks.createRun).not.toHaveBeenCalled()
   })
 
-  it("repairs by converging, then verifying", async () => {
+  it("leaves a healthy fixture alone under repair", async () => {
     await run({ fixtures: "repair" })
 
     const checks = mocks.runTask.mock.calls.map((call) =>
       call[0].checks.map((check) => check.id)
     )
-    expect(checks).toEqual([[mocks.STEP_ID], [mocks.HEALTH_ID]])
+    expect(checks).toEqual([[mocks.HEALTH_ID]])
+    expect(createdPreflight()).toEqual([
+      { ...entry, outcome: "healthy", executor: "agent" },
+    ])
+  })
+
+  it("repairs an unhealthy fixture by converging, then verifying", async () => {
+    // verify fails, converge passes, final verify passes
+    mocks.taskVerdicts.push("failed", "passed", "passed")
+
+    await run({ fixtures: "repair" })
+
+    const checks = mocks.runTask.mock.calls.map((call) =>
+      call[0].checks.map((check) => check.id)
+    )
+    expect(checks).toEqual([
+      [mocks.HEALTH_ID],
+      [mocks.STEP_ID],
+      [mocks.HEALTH_ID],
+    ])
     expect(createdPreflight()).toEqual([
       { ...entry, outcome: "repaired", executor: "agent" },
     ])
@@ -300,7 +319,7 @@ describe("fixture preflight in caracara run", () => {
   })
 
   it("exits 4 when the fixture is still unhealthy after repair", async () => {
-    mocks.taskVerdicts.push("passed", "failed")
+    mocks.taskVerdicts.push("failed", "passed", "failed")
 
     await run({ fixtures: "repair" })
 

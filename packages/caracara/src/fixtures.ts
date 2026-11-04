@@ -388,12 +388,14 @@ export async function runFixturePreflight(input: {
       )
       continue
     }
-    const result =
-      input.mode === "check"
-        ? await verifyFixture(input.context, fixture)
-        : await convergeFixture(input.context, fixture)
+    // Repair converges only fixtures that fail their verify.
+    const verified = await verifyFixture(input.context, fixture)
+    const repairing = !verified.ok && input.mode === "repair"
+    const result = repairing
+      ? await convergeFixture(input.context, fixture)
+      : verified
     if (result.ok) {
-      const outcome = input.mode === "check" ? "healthy" : "repaired"
+      const outcome = repairing ? "repaired" : "healthy"
       entries.push({ ...base, outcome, executor: result.executor })
       input.log(formatFixtureResult(fixture, outcome, result), false)
     } else {

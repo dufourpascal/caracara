@@ -144,7 +144,7 @@ A fixture is persistent test data that scenarios rely on, such as a demo user or
 Before every run, `caracara run` checks the fixtures that the selected scenarios require, after it fetches the plan and before it creates the run:
 
 - `--fixtures check` (default): verify each fixture. If one is unhealthy, print its failing checks and exit 4 without creating a run.
-- `--fixtures repair`: converge each fixture, then verify it. Still unhealthy: exit 4.
+- `--fixtures repair`: verify each fixture; converge the unhealthy ones and verify them again. Still unhealthy: exit 4.
 - `--fixtures skip`: run nothing and record the fixtures as skipped.
 
 The run stores the outcome per fixture, and the run summary, `caracara results` and the web app show it. Evaluation prompts get a "Protected fixtures" section: read-only fixtures must not change, and a mutating scenario may change only its scope.

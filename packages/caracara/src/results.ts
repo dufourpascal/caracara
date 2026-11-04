@@ -279,7 +279,9 @@ export function formatRunResultsTable(report: RunResultsReport) {
       ["#", "Phase", "Scenario", "Status", "Checks", "Duration", "Tokens"],
       ...report.scenarios.map((scenario) => [
         String(scenario.sequenceIndex + 1),
-        scenario.phase ? `${scenario.phase.order} ${scenario.phase.name}` : "-",
+        scenario.phase
+          ? `${scenario.phase.order} ${oneLine(scenario.phase.name, 40)}`
+          : "-",
         scenario.slug,
         scenario.status,
         `${scenario.passedCheckCount}/${scenario.totalCheckCount}`,
@@ -302,7 +304,7 @@ export function formatRunResultsTable(report: RunResultsReport) {
     for (const check of scenario.checks) {
       if (check.verdict !== "passed") {
         issues.push(
-          `  ${scenario.slug} › ${check.name}: ${check.verdict ?? "not evaluated"}${check.blockedReason ? ` (${check.blockedReason})` : ""}${check.reason ? `: ${oneLine(check.reason)}` : ""}`
+          `  ${scenario.slug} › ${oneLine(check.name)}: ${check.verdict ?? "not evaluated"}${check.blockedReason ? ` (${check.blockedReason})` : ""}${check.reason ? `: ${oneLine(check.reason)}` : ""}`
         )
       }
     }

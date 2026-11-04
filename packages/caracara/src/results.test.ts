@@ -260,6 +260,30 @@ describe("run results report", () => {
   })
 })
 
+describe("run results table", () => {
+  it("keeps every row on one line when names contain line breaks", () => {
+    const [first, second] = response.results
+    const table = formatRunResultsTable(
+      buildRunResultsReport({
+        ...response,
+        results: [
+          { ...first!, phaseName: "Set\nup" },
+          {
+            ...second!,
+            evaluationChecks: [
+              { id: CHECK_B, name: "Rec\neipt", expectation: "VAT." },
+              { id: CHECK_C, name: "Email", expectation: "Email arrives." },
+            ],
+          },
+        ],
+      })
+    )
+
+    expect(table).toContain("1  1 Set up  sign-in")
+    expect(table).toContain("  checkout › Rec eipt: failed")
+  })
+})
+
 describe("runner usage mapping", () => {
   it("maps reported usage and drops the cost estimate", () => {
     expect(

@@ -1074,11 +1074,7 @@ const TOKEN_USAGE_COUNT_FIELDS = [
 
 export function validateTokenUsage(
   status: string,
-  tokenUsage:
-    | (Record<(typeof TOKEN_USAGE_COUNT_FIELDS)[number], number> & {
-        complete: boolean
-      })
-    | undefined
+  tokenUsage: TokenUsageRecord | undefined
 ) {
   if (tokenUsage === undefined) {
     return
@@ -1148,6 +1144,26 @@ export function validateRunnerMatch(
   }
 }
 
+type TokenUsageRecord = Record<
+  (typeof TOKEN_USAGE_COUNT_FIELDS)[number],
+  number
+> & { complete: boolean }
+
+function matchesTokenUsage(
+  existing: TokenUsageRecord | undefined,
+  submitted: TokenUsageRecord | undefined
+) {
+  if (!existing || !submitted) {
+    return existing === submitted
+  }
+  return (
+    existing.complete === submitted.complete &&
+    TOKEN_USAGE_COUNT_FIELDS.every(
+      (field) => existing[field] === submitted[field]
+    )
+  )
+}
+
 export function matchesTerminalScenarioResult(
   existing: {
     status: string
@@ -1160,6 +1176,7 @@ export function matchesTerminalScenarioResult(
     executionSummary: string | null
     failureDetail: string | null
     finishedAt: number | null
+    tokenUsage?: TokenUsageRecord
   },
   submitted: {
     status: string
@@ -1172,6 +1189,7 @@ export function matchesTerminalScenarioResult(
     executionSummary: string | null
     failureDetail: string | null
     finishedAt: number
+    tokenUsage?: TokenUsageRecord
   }
 ) {
   return (
@@ -1179,6 +1197,7 @@ export function matchesTerminalScenarioResult(
     existing.executionSummary === submitted.executionSummary &&
     existing.failureDetail === submitted.failureDetail &&
     existing.finishedAt === submitted.finishedAt &&
+    matchesTokenUsage(existing.tokenUsage, submitted.tokenUsage) &&
     existing.checkResults.length === submitted.checkResults.length &&
     existing.checkResults.every((check, index) => {
       const candidate = submitted.checkResults[index]

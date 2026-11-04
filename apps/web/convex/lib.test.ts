@@ -37,6 +37,32 @@ describe("convex response mappers", () => {
     }
 
     expect(matchesTerminalScenarioResult(result, result)).toBe(true)
+    const usage = {
+      inputTokens: 10,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 0,
+      outputTokens: 2,
+      reasoningOutputTokens: 0,
+      complete: true,
+    }
+    expect(
+      matchesTerminalScenarioResult(
+        { ...result, tokenUsage: usage },
+        { ...result, tokenUsage: { ...usage } }
+      )
+    ).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(
+        { ...result, tokenUsage: usage },
+        { ...result, tokenUsage: { ...usage, outputTokens: 3 } }
+      )
+    ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult({ ...result, tokenUsage: usage }, result)
+    ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult(result, { ...result, tokenUsage: usage })
+    ).toBe(false)
     expect(
       matchesTerminalScenarioResult(result, {
         ...result,

@@ -5,7 +5,7 @@ import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
 import {
-  assertProjectAuthoringUnlocked,
+  assertNoRunningProjectRun,
   deleteDependenciesTouchingScenarioIds,
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
@@ -283,7 +283,6 @@ export const create = mutation({
   handler: async (ctx, args) => {
     validateEvaluationChecks(args.status, args.evaluationChecks)
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const slug = await ensureUniqueScenarioSlug(
@@ -347,7 +346,6 @@ export const ensureNavigationMetadataForProject = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
     const needsRebuild = scenarios.some(
       (scenario) =>
@@ -386,7 +384,6 @@ export const update = mutation({
       ctx,
       args.scenarioId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const slug = await ensureUniqueScenarioSlug(
       ctx,
@@ -479,7 +476,6 @@ export const updateDetails = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const status = args.status ?? scenario.status
     const selectedPhaseId =
@@ -558,7 +554,6 @@ export const addCheck = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const evaluationChecks = [...scenario.evaluationChecks, args.check]
     validateEvaluationChecks(scenario.status, evaluationChecks)
     await ctx.db.patch(scenario._id, {
@@ -594,7 +589,6 @@ export const removeCheck = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
 
     if (!scenario.evaluationChecks.some((check) => check.id === args.checkId)) {
       throw new ConvexError({
@@ -649,7 +643,6 @@ export const updateCheck = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     let found = false
     const evaluationChecks = scenario.evaluationChecks.map((check) => {
       if (check.id !== args.checkId) {
@@ -702,7 +695,9 @@ export const remove = mutation({
       ctx,
       args.scenarioId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
+    // A running run reports results against this scenario ID, which must keep
+    // resolving to a scenario of this project until the run ends.
+    await assertNoRunningProjectRun(ctx, project._id, "Scenario deletion")
 
     const dependencies = await getProjectDependencies(ctx, project._id)
     const relatedDependencies = dependencies.filter(

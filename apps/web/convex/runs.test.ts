@@ -6,6 +6,7 @@ import {
 } from "./lib"
 import {
   addRunEnvironmentName,
+  assertScenarioPhaseInSuiteRun,
   canCorrectRunInterruption,
   canCorrectScenarioInterruption,
   getRunCreationState,
@@ -365,5 +366,54 @@ describe("run deletion helpers", () => {
       "result-2",
       "run-1",
     ])
+  })
+})
+
+describe("suite run phase snapshot", () => {
+  const suiteRun = {
+    mode: "suite",
+    requestedSuitePhases: [
+      { id: "phase-1", name: "Landing", order: 1 },
+      { id: "phase-2", name: "Checkout", order: 2 },
+    ],
+  }
+
+  it("accepts scenarios from the run's suite phases and non-suite runs", () => {
+    expect(() =>
+      assertScenarioPhaseInSuiteRun(suiteRun, {
+        phaseId: "phase-2",
+        phaseName: "Checkout",
+        phaseOrder: 2,
+      })
+    ).not.toThrow()
+    expect(() =>
+      assertScenarioPhaseInSuiteRun(
+        { mode: "all" },
+        { phaseId: "phase-9", phaseName: "Other", phaseOrder: 9 }
+      )
+    ).not.toThrow()
+  })
+
+  it.each([
+    [
+      "a phase added to the suite",
+      { phaseId: "phase-3", phaseName: "Pay", phaseOrder: 3 },
+    ],
+    [
+      "a renamed phase",
+      { phaseId: "phase-1", phaseName: "Home", phaseOrder: 1 },
+    ],
+    [
+      "a reordered phase",
+      { phaseId: "phase-1", phaseName: "Landing", phaseOrder: 2 },
+    ],
+    [
+      "an unassigned scenario",
+      { phaseId: null, phaseName: null, phaseOrder: null },
+    ],
+  ])("rejects a scenario from %s", (_, scenarioPhase) => {
+    expect(() => assertScenarioPhaseInSuiteRun(suiteRun, scenarioPhase)).toThrow(
+      "The suite changed after this run was created. Start the run again."
+    )
   })
 })

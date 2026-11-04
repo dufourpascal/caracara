@@ -52,7 +52,7 @@ The CLI should report each scenario result back to the hosted service immediatel
 
 Run finalization includes a per-execution attempt ID. The backend may correct a completed or failed run to interrupted only when the correction carries the same attempt ID as the request that finalized it, covering a signal race without allowing unrelated stale clients to rewrite terminal runs. Scenario start similarly includes a per-execution attempt ID. An interrupted finalization may identify the active scenario-result record and matching attempt ID so the same transaction can correct a terminal result whose response was lost during cancellation without trusting a result ID alone.
 
-Run creation accepts a client-generated attempt ID and is idempotent for that project and attempt. A bounded recovery request may also carry an interruption timestamp; the creation mutation then atomically creates the run as interrupted or interrupts the matching running run. A lost recovery response therefore cannot leave a duplicate or running authoring lock behind.
+Run creation accepts a client-generated attempt ID and is idempotent for that project and attempt. A bounded recovery request may also carry an interruption timestamp; the creation mutation then atomically creates the run as interrupted or interrupts the matching running run. A lost recovery response therefore cannot leave a duplicate or stuck running run behind.
 
 ### API_09
 
@@ -72,7 +72,7 @@ Contract responses should clearly separate malformed requests, authentication fa
 
 API v3 exposes one narrow authoring operation endpoint.
 
-`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eight supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. A running-run authoring lock returns `conflict` rather than queuing the write.
+`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eight supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. Writes apply immediately, including while a project run is running; that run keeps executing the definitions it fetched when it started.
 
 ### API_12
 
@@ -86,4 +86,4 @@ Run creation may also include the Codex `model` and `reasoningEffort` the run us
 
 The execution API supports suite filtering without suite authoring operations.
 
-`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running authoring lock. The CLI creates that suite run before fetching the execution plan. There are no suite authoring REST operations.
+`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running run. The CLI creates that suite run before fetching the execution plan and refuses to execute (finalizing the run as interrupted) when the fetched plan's suite phases differ from the run's phase snapshot, because authoring stays open in between. There are no suite authoring REST operations.

@@ -576,6 +576,32 @@ export function formatRunModel(runModel: {
     : `Model ${model}`
 }
 
+type SuitePhaseSnapshot = { id: string; name: string; order: number }
+
+const suitePhaseKey = (phase: SuitePhaseSnapshot) =>
+  JSON.stringify([phase.id, phase.name, phase.order])
+
+// Suite runs snapshot their phases when the run is created, before the CLI
+// fetches the plan. Authoring stays open during runs, so refuse to execute a
+// plan whose suite phases (membership, names or order) changed in between
+// instead of labeling the run with phases it did not run.
+export function assertSuitePlanMatchesRun(args: {
+  suiteSlug: string
+  runPhases: SuitePhaseSnapshot[]
+  planPhases: SuitePhaseSnapshot[]
+}) {
+  const runPhases = new Set(args.runPhases.map(suitePhaseKey))
+  const planPhases = new Set(args.planPhases.map(suitePhaseKey))
+  if (
+    runPhases.size !== planPhases.size ||
+    [...planPhases].some((phase) => !runPhases.has(phase))
+  ) {
+    throw new Error(
+      `Suite "${args.suiteSlug}" changed while the run was starting. Run it again.`
+    )
+  }
+}
+
 export async function runCommand(options: RunCommandOptions) {
   const cwd = process.cwd()
   const [config, secrets] = await Promise.all([
@@ -775,6 +801,13 @@ export async function runCommand(options: RunCommandOptions) {
           signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
+          if (runSelection.mode === "suite" && createRunResponse) {
+            assertSuitePlanMatchesRun({
+              suiteSlug: runSelection.requestedSuiteSlug,
+              runPhases: createRunResponse.run.requestedSuitePhases ?? [],
+              planPhases: response.phases,
+            })
+          }
           const selectedPhases =
             runSelection.mode === "phase"
               ? response.phases.filter(

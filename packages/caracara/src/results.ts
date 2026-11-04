@@ -3,12 +3,14 @@ import {
   LATEST_RUN_REFERENCE,
   sumRunTokenUsage,
   type CheckVerdict,
+  type FixturePreflightEntry,
   type RunResultsResponse,
   type TokenTotals,
   type TokenUsage,
 } from "@workspace/contracts"
 
 import type { RunnerUsageReport } from "./execution.js"
+import { formatFixturePreflight } from "./run-report.js"
 
 export const RUN_RESULTS_FORMAT_VERSION = 1
 
@@ -113,6 +115,7 @@ export type RunResultsReport = {
     totalCheckCount: number
     passRate: number | null
     tokens: TokenTotals | null
+    fixturePreflight: FixturePreflightEntry[]
   }
   scenarios: RunResultsScenario[]
 }
@@ -162,6 +165,7 @@ export function buildRunResultsReport(
       totalCheckCount: run.totalCheckCount,
       passRate: run.passRate,
       tokens: runTokens ? getTokenTotals(runTokens) : null,
+      fixturePreflight: run.fixturePreflight ?? [],
     },
     scenarios: results.map((result) => {
       const verdicts = new Map(
@@ -274,6 +278,9 @@ export function formatRunResultsTable(report: RunResultsReport) {
     `Run       ${run.name} (${run.id})`,
     `Status    ${run.status} · environment ${run.environment ?? "untracked"} · runner ${run.runnerType ?? "n/a"} · model ${run.model ?? "n/a"}${run.reasoningEffort ? ` (${run.reasoningEffort})` : ""}`,
     `Time      ${formatTimestamp(run.startedAt)} → ${formatTimestamp(run.finishedAt)} (${formatDuration(run.durationMs)})`,
+    ...(run.fixturePreflight.length > 0
+      ? [`Fixtures  ${formatFixturePreflight(run.fixturePreflight)}`]
+      : []),
     run.finishedAt === null
       ? "Checks    in progress"
       : `Checks    ${run.passedCheckCount}/${run.totalCheckCount} passed${run.passRate === null ? "" : ` (${run.passRate}%)`}`,

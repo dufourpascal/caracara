@@ -134,7 +134,44 @@ Every run ends with a summary: totals, a row per phase, the scenarios with faile
 | 1 | The run stopped on a CLI, configuration or API error |
 | 2 | A scenario was recorded as a runner failure (including a result the API rejected) or was skipped |
 | 3 | `--fail-on failed`, `--fail-on blocked` or `--fail-on failed,blocked` matched a check |
+| 4 | A required fixture is unhealthy; no run was created (see [Fixtures](#fixtures)) |
 | 130 / 143 | Interrupted by SIGINT / SIGTERM |
+
+## Fixtures
+
+A fixture is persistent test data that scenarios rely on, such as a demo user or a seeded catalog. Each fixture belongs to a project and has a description, a locator (how to find it in the application), protection rules, converge steps (each with instructions and a "done when" condition) and health checks. Phases and scenarios require a fixture with `read` access, or with `mutates` access and a scope that says what they may change.
+
+Before every run, `caracara run` checks the fixtures that the selected scenarios require, after it fetches the plan and before it creates the run:
+
+- `--fixtures check` (default): verify each fixture. If one is unhealthy, print its failing checks and exit 4 without creating a run.
+- `--fixtures repair`: converge each fixture, then verify it. Still unhealthy: exit 4.
+- `--fixtures skip`: run nothing and record the fixtures as skipped.
+
+The run stores the outcome per fixture, and the run summary, `caracara results` and the web app show it. Evaluation prompts get a "Protected fixtures" section: read-only fixtures must not change, and a mutating scenario may change only its scope.
+
+Each operation runs a local hook when one is configured, otherwise an agent task built from the fixture definition, with the run's runner, model and browser session. Verify inspects the health checks without changing anything; it is healthy when all of them pass. Converge works through the steps in order, skips steps whose "done when" already holds and stops at the first that fails. A fixture with no verify hook and no health checks (or, for repair, no converge hook and no steps) is unhealthy.
+
+Hooks live in `.caracara/fixtures.json` next to `config.json`, keyed by project slug and fixture slug:
+
+```json
+{
+  "shop": {
+    "demo-user": {
+      "verify": "./scripts/fixtures/demo-user.sh verify",
+      "converge": "./scripts/fixtures/demo-user.sh converge"
+    }
+  }
+}
+```
+
+A hook runs through the shell from the directory that contains `.caracara`, with your environment, the local secrets, and `CARACARA_ENVIRONMENT`, `CARACARA_TARGET_URL`, `CARACARA_PROJECT` and `CARACARA_FIXTURE`. Exit code 0 means success; anything else means failure. Hook output goes to stderr and is not sent to the server. Hooks are keyed by fixture slug, so renaming a fixture's slug detaches its hook. Without a converge hook, converge falls back to the agent even when a verify hook exists.
+
+Run one operation by hand, in the default or a named environment (exit 4 when the fixture ends unhealthy):
+
+```bash
+caracara fixtures:verify demo-user
+caracara fixtures:converge demo-user --environment preview   # converge, then verify
+```
 
 ## Codex model configuration
 
@@ -174,7 +211,7 @@ caracara results latest --environment preview
 caracara results brave-heron-20261104-120000 --json
 ```
 
-The run reference is a run ID, the run name that `caracara run` prints, or `latest`. `--json` prints a versioned report (`formatVersion: 1`) with run identity, status, environment, start and end, duration, model and reasoning effort (`null` until runs record them), token totals, and per scenario its phase, status, duration, tokens, and each check's name, verdict, and reason. Token usage is recorded per scenario from the runner (Codex or Claude Code) and summed per run. Runs from older CLIs have no token usage. The web app shows the same duration and token totals in the run detail.
+The run reference is a run ID, the run name that `caracara run` prints, or `latest`. `--json` prints a versioned report (`formatVersion: 1`) with run identity, status, environment, start and end, duration, model and reasoning effort (`null` until runs record them), token totals, the fixture preflight (`fixturePreflight`), and per scenario its phase, status, duration, tokens, and each check's name, verdict, and reason. Token usage is recorded per scenario from the runner (Codex or Claude Code) and summed per run. Runs from older CLIs have no token usage. The web app shows the same duration and token totals in the run detail.
 
 ## CLI scenario authoring
 
@@ -187,7 +224,17 @@ caracara addCheck --scenario complete-checkout --name "Receipt" --expectation "T
 caracara updateCheck --scenario complete-checkout --check "Receipt" --expectation "The receipt shows VAT."
 ```
 
-The complete mutation set is `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. Phase references accept an ID, order, or exact name. Check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous.
+Fixtures have four authoring commands. `--steps-file` and `--checks-file` take JSON arrays of `{ "name", "instructions", "doneWhen" }` steps and `{ "name", "expectation" }` checks, and replace the whole list on update:
+
+```bash
+caracara createFixture --name "Demo user" --locator "User demo@example.com" --steps-file steps.json --checks-file checks.json
+caracara updateFixture --fixture demo-user --protection "Never delete its saved articles."
+caracara requireFixture --fixture demo-user --phase 1
+caracara requireFixture --fixture demo-user --scenario edit-profile --access mutates --mutation-scope "the profile bio"
+caracara unrequireFixture --fixture demo-user --scenario edit-profile
+```
+
+The complete mutation set is `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, `updateCheck`, `createFixture`, `updateFixture`, `requireFixture`, and `unrequireFixture`. Phase references accept an ID, order, or exact name. Check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous.
 
 Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. They also work while a run is in progress: a running run keeps executing the scenarios, checks, and project prompt it fetched when it started, and its results show the scenarios and checks it ran. Edits apply to the next run. Deleting a scenario, changing the project slug, and deleting the project stay blocked until the run ends.
 

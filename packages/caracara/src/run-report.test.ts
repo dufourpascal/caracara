@@ -35,6 +35,7 @@ function scenario(slug: string, phaseOrder: number): OrderedScenario {
     phaseName: phaseOrder === 1 ? "Setup" : "Export",
     phaseOrder,
     dependencyIds: [],
+    fixtureRequirements: [],
   }
 }
 
@@ -99,8 +100,12 @@ const queue = [1, 2, 2, 2, 2].map((order) => ({
   },
 }))
 
-function buildReport(exitCode = 2) {
+function buildReport(
+  exitCode = 2,
+  fixturePreflight?: Parameters<typeof buildRunReport>[0]["fixturePreflight"]
+) {
   return buildRunReport({
+    fixturePreflight,
     run: {
       id: "run-1",
       name: "orderly-falcon-20261104-082151",
@@ -272,6 +277,35 @@ describe("summary", () => {
     expect(text).toContain(
       "Rerun: caracara run --environment dev --scenario full-export"
     )
+  })
+
+  it("shows the fixture preflight", () => {
+    const fixturePreflight = [
+      {
+        fixtureId: "fixture-1",
+        fixtureSlug: "demo-user",
+        fixtureName: "Demo user",
+        access: "read" as const,
+        outcome: "healthy" as const,
+        executor: "hook" as const,
+      },
+      {
+        fixtureId: "fixture-2",
+        fixtureSlug: "catalog",
+        fixtureName: "Catalog",
+        access: "mutates" as const,
+        outcome: "skipped" as const,
+        executor: null,
+      },
+    ]
+    const report = buildReport(2, fixturePreflight)
+
+    expect(report.run.fixturePreflight).toEqual(fixturePreflight)
+    expect(buildReport().run.fixturePreflight).toEqual([])
+    expect(formatRunSummary(report)).toContain(
+      "Fixtures   demo-user healthy (hook) · catalog skipped"
+    )
+    expect(formatRunSummary(buildReport())).not.toContain("Fixtures")
   })
 
   it("keeps the compact summary short", () => {

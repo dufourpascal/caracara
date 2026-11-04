@@ -11,6 +11,7 @@ import {
   executionPlanResponseSchema,
   finalizeRunRequestSchema,
   finalizeRunResponseSchema,
+  fixtureListResponseSchema,
   parseApiError,
   projectListResponseSchema,
   runResultsResponseSchema,
@@ -180,6 +181,20 @@ export async function fetchRunResults(args: {
     nonJsonHint:
       "The server may not support `caracara results` yet; check --api-base-url or update the server.",
     schema: runResultsResponseSchema,
+  })
+}
+
+export async function fetchFixtures(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${encodeURIComponent(args.projectSlug)}/fixtures`,
+    version: args.version,
+    accessToken: args.accessToken,
+    schema: fixtureListResponseSchema,
   })
 }
 

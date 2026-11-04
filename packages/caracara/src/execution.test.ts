@@ -48,6 +48,7 @@ const scenario: OrderedScenario = {
     },
   ],
   dependencyIds: [],
+  fixtureRequirements: [],
 }
 
 function processGroupExistsForTest(pid: number) {

@@ -35,6 +35,8 @@ export type RunCommandOptions = {
   plain?: boolean
   heartbeat?: string
   failOn?: string
+  /** Fixture preflight: check (default), repair or skip. */
+  fixtures?: string
 }
 
 export type ResultsCommandOptions = {

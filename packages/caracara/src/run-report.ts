@@ -1,6 +1,7 @@
 import type {
   CheckResult,
   CheckVerdict,
+  FixturePreflightEntry,
   OrderedScenario,
 } from "@workspace/contracts"
 
@@ -110,6 +111,8 @@ export type RunReport = {
     tokens: TokenTotals | null
     estimatedCostUsd: number | null
     exitCode: number
+    /** What the fixture preflight found before the run was created. */
+    fixturePreflight: FixturePreflightEntry[]
   }
   phases: RunReportPhaseRow[]
   scenarios: RunReportScenario[]
@@ -299,6 +302,7 @@ export function buildRunReport(input: {
     finishedAt: number
     exitCode: number
   }
+  fixturePreflight?: FixturePreflightEntry[]
   queue: ReadonlyArray<QueueEntry>
   scenarios: ReadonlyArray<RunReportScenario>
 }): RunReport {
@@ -357,6 +361,7 @@ export function buildRunReport(input: {
           ? costs.reduce<number>((totalCost, cost) => totalCost + cost!, 0)
           : null,
       exitCode: input.run.exitCode,
+      fixturePreflight: input.fixturePreflight ?? [],
     },
     phases: buildPhaseRows(input.queue, scenarios),
     scenarios,
@@ -527,6 +532,18 @@ function checksLine(run: RunReport["run"]) {
   return `${run.passedCheckCount} passed · ${run.failedCheckCount} failed · ${run.blockedCheckCount} blocked of ${run.totalCheckCount}${run.passRate === null ? "" : ` (${run.passRate}%)`}`
 }
 
+/** One-line fixture preflight summary, such as `demo-user healthy (hook)`. */
+export function formatFixturePreflight(
+  entries: ReadonlyArray<FixturePreflightEntry>
+) {
+  return entries
+    .map(
+      (entry) =>
+        `${entry.fixtureSlug} ${entry.outcome}${entry.executor ? ` (${entry.executor})` : ""}`
+    )
+    .join(" · ")
+}
+
 function tokensLine(run: RunReport["run"]) {
   if (!run.tokens) {
     return "n/a (the runner reported no usage)"
@@ -572,6 +589,9 @@ export function formatRunSummary(
     `Target     ${[run.environment, run.targetUrl].filter(Boolean).join("  ") || "n/a"}`,
     `Runner     ${formatRunner(run)}`,
     `Selection  ${run.selection}`,
+    ...(run.fixturePreflight.length > 0
+      ? [`Fixtures   ${formatFixturePreflight(run.fixturePreflight)}`]
+      : []),
     `Time       ${formatClock(run.startedAt)} → ${formatClock(run.finishedAt)} (${formatDuration(run.durationMs)})`,
     `Checks     ${checksLine(run)}`,
     `Scenarios  ${scenarioCountsLine(run)}`,

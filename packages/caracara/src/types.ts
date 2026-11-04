@@ -26,4 +26,6 @@ export type RunCommandOptions = {
   suite?: string
   phase?: string
   throughPhase?: string
+  /** check (default), repair, or skip */
+  fixtures?: string
 }

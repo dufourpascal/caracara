@@ -34,6 +34,7 @@ const scenario = {
   phaseName: "Purchase",
   phaseOrder: 1,
   dependencyIds: [],
+  fixtureRequirements: [],
 }
 
 const phases = [

@@ -11,10 +11,14 @@ import {
   executionPlanResponseSchema,
   finalizeRunRequestSchema,
   finalizeRunResponseSchema,
+  finishFixtureOperationRequestSchema,
+  fixtureListResponseSchema,
+  fixtureOperationResponseSchema,
   parseApiError,
   projectListResponseSchema,
   runEvidenceUploadResponseSchema,
   singleScenarioResponseSchema,
+  startFixtureOperationRequestSchema,
   startScenarioExecutionRequestSchema,
   startScenarioExecutionResponseSchema,
   submitScenarioResultRequestSchema,
@@ -274,6 +278,72 @@ export async function finalizeRun(args: {
     },
     retryTransient: true,
     schema: finalizeRunResponseSchema,
+  })
+}
+
+export async function fetchFixtures(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  signal?: AbortSignal
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/fixtures`,
+    version: args.version,
+    accessToken: args.accessToken,
+    init: { signal: args.signal },
+    retryTransient: true,
+    schema: fixtureListResponseSchema,
+  })
+}
+
+/** Idempotent per attempt ID, so transient failures are retried. */
+export async function startFixtureOperation(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  payload: Parameters<typeof startFixtureOperationRequestSchema.parse>[0]
+  signal?: AbortSignal
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/fixture-operations`,
+    version: args.version,
+    accessToken: args.accessToken,
+    init: {
+      method: "POST",
+      body: JSON.stringify(startFixtureOperationRequestSchema.parse(args.payload)),
+      signal: args.signal,
+    },
+    retryTransient: true,
+    schema: fixtureOperationResponseSchema,
+  })
+}
+
+/** Identical retries are idempotent, so transient failures are retried. */
+export async function finishFixtureOperation(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  operationId: string
+  payload: Parameters<typeof finishFixtureOperationRequestSchema.parse>[0]
+  signal?: AbortSignal
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/fixture-operations/${encodeURIComponent(args.operationId)}/finish`,
+    version: args.version,
+    accessToken: args.accessToken,
+    init: {
+      method: "POST",
+      body: JSON.stringify(
+        finishFixtureOperationRequestSchema.parse(args.payload)
+      ),
+      signal: args.signal,
+    },
+    retryTransient: true,
+    schema: fixtureOperationResponseSchema,
   })
 }
 

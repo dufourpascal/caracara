@@ -5,10 +5,15 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 
-import { BLOCKED_REASONS } from "@workspace/contracts"
+import {
+  BLOCKED_REASONS,
+  FIXTURE_OPERATION_SUMMARY_MAX_LENGTH,
+} from "@workspace/contracts"
 import type {
   BlockedReason,
   CheckResult,
+  EvaluationCheck,
+  FixtureOperationCheckResult,
   OrderedScenario,
   RunnerType,
 } from "@workspace/contracts"
@@ -25,6 +30,10 @@ import {
 } from "./codex-exec.js"
 import { startCdpWindowProxy } from "./cdp-proxy.js"
 import type { ModelReasoningEffort } from "./config.js"
+import {
+  buildProtectedFixturesSection,
+  type ProtectedFixture,
+} from "./fixture-prompts.js"
 import {
   buildWindowsTaskkillArgs,
   terminateChildProcess,
@@ -76,7 +85,23 @@ export type RunnerScenarioInput = {
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  /** Fixtures the scenario requires, shown as protected in the prompt. */
+  fixtures?: ProtectedFixture[]
   signal?: AbortSignal
+}
+
+/** One single-turn fixture maintenance task (verify, a converge step, or reset). */
+export type FixtureTaskInput = {
+  cwd: string
+  prompt: string
+  checks: EvaluationCheck[]
+  signal?: AbortSignal
+}
+
+export type FixtureTaskExecution = {
+  summary: string
+  checkResults: FixtureOperationCheckResult[]
+  usage: RunnerUsageReport
 }
 
 export type RunnerSecrets = Record<string, string>
@@ -99,6 +124,8 @@ export interface RunnerAdapter {
 
 export interface RunnerSession {
   executeScenario(input: RunnerScenarioInput): Promise<RunnerExecution>
+  /** Runs one fixture maintenance turn: no blocked retry and no screenshots. */
+  executeFixtureTask(input: FixtureTaskInput): Promise<FixtureTaskExecution>
   close(): Promise<void>
 }
 
@@ -204,6 +231,140 @@ export function mergeBlockedRetryExecution(
     checkResults: initial.checkResults.map(
       (result) => retryResults.get(result.checkId) ?? result
     ),
+  }
+}
+
+export function buildFixtureTaskResultSchema(checkIds: string[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["summary", "checkResults"],
+    properties: {
+      summary: { type: "string", minLength: 1 },
+      checkResults: {
+        type: "array",
+        minItems: checkIds.length,
+        maxItems: checkIds.length,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["checkId", "verdict", "evidence"],
+          properties: {
+            // An empty enum is not a valid schema; a task without checks
+            // returns an empty array anyway.
+            checkId:
+              checkIds.length > 0
+                ? { type: "string", enum: checkIds }
+                : { type: "string" },
+            verdict: {
+              type: "string",
+              enum: ["passed", "failed", "blocked"],
+            },
+            evidence: { type: "string", minLength: 1, maxLength: 2_000 },
+          },
+        },
+      },
+    },
+  } as const
+}
+
+type FixtureTaskOutput = {
+  summary: string
+  checkResults: Array<{ checkId: string; verdict: string; evidence: string }>
+}
+
+function clipEnd(text: string, limit: number) {
+  return text.length <= limit ? text : text.slice(0, limit)
+}
+
+export function validateFixtureTaskOutput(
+  checks: EvaluationCheck[],
+  output: unknown,
+  secrets: RunnerSecrets
+): Omit<FixtureTaskExecution, "usage"> {
+  const candidate = output as Partial<FixtureTaskOutput> | null
+  const results = Array.isArray(candidate?.checkResults)
+    ? candidate.checkResults
+    : null
+  const returnedIds = results?.map((result) => result?.checkId) ?? []
+  if (
+    typeof candidate?.summary !== "string" ||
+    candidate.summary.trim() === "" ||
+    !results ||
+    returnedIds.length !== checks.length ||
+    new Set(returnedIds).size !== returnedIds.length ||
+    checks.some((check) => !returnedIds.includes(check.id)) ||
+    results.some(
+      (result) =>
+        typeof result?.evidence !== "string" ||
+        result.evidence.trim() === "" ||
+        !["passed", "failed", "blocked"].includes(result.verdict)
+    )
+  ) {
+    throw new Error("Runner output did not account for every fixture check.")
+  }
+
+  const byId = new Map(results.map((result) => [result.checkId, result]))
+  return {
+    summary: clipEnd(
+      redactSecretValues(candidate.summary.trim(), secrets),
+      FIXTURE_OPERATION_SUMMARY_MAX_LENGTH
+    ),
+    checkResults: checks.map((check) => {
+      const result = byId.get(check.id)!
+      return {
+        checkId: check.id,
+        name: check.name,
+        verdict: result.verdict as FixtureOperationCheckResult["verdict"],
+        evidence: clipEnd(
+          redactSecretValues(result.evidence.trim(), secrets),
+          2_000
+        ),
+      }
+    }),
+  }
+}
+
+/** Runs one structured turn and returns its parsed output and usage. */
+type FixtureTurn = (input: {
+  cwd: string
+  prompt: string
+  outputSchema: ReturnType<typeof buildFixtureTaskResultSchema>
+  signal?: AbortSignal
+}) => Promise<{ output: unknown; usage: RunnerUsageReport }>
+
+/**
+ * The runner-independent part of a fixture task. Each runner supplies only
+ * how a single structured turn is invoked.
+ */
+export async function executeFixtureTaskWithTurn(
+  turn: FixtureTurn,
+  input: FixtureTaskInput,
+  secrets: RunnerSecrets
+): Promise<FixtureTaskExecution> {
+  let usage: RunnerUsageReport = { complete: false }
+  try {
+    const result = await turn({
+      cwd: input.cwd,
+      prompt: input.prompt,
+      outputSchema: buildFixtureTaskResultSchema(
+        input.checks.map((check) => check.id)
+      ),
+      signal: input.signal,
+    })
+    usage = result.usage
+    return {
+      ...validateFixtureTaskOutput(input.checks, result.output, secrets),
+      usage,
+    }
+  } catch (error) {
+    throw new RunnerExecutionError(
+      redactSecretValues(
+        error instanceof Error ? error.message : "Fixture task failed.",
+        secrets
+      ),
+      usage
+    )
   }
 }
 
@@ -401,6 +562,7 @@ export function buildRunnerPrompt(input: {
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  fixtures?: ProtectedFixture[]
   secretNames?: string[]
   evidenceDirectory?: string
 }) {
@@ -415,6 +577,7 @@ export function buildRunnerPrompt(input: {
     "",
     "Project context:",
     input.projectPrompt.trim(),
+    ...buildProtectedFixturesSection(input.fixtures),
     "",
     `Scenario: ${input.scenario.name} (${input.scenario.slug})`,
     "",
@@ -469,6 +632,7 @@ export function buildBlockedRetryPrompt(input: {
   projectPrompt: string
   scenario: OrderedScenario
   blockedResults: CheckResult[]
+  fixtures?: ProtectedFixture[]
   secretNames?: string[]
   evidenceDirectory?: string
 }) {
@@ -489,6 +653,7 @@ export function buildBlockedRetryPrompt(input: {
     "",
     "Project context:",
     input.projectPrompt.trim(),
+    ...buildProtectedFixturesSection(input.fixtures),
     "",
     "Task instructions:",
     input.scenario.instructions.trim(),
@@ -1057,6 +1222,7 @@ class CodexRunner implements RunnerAdapter {
                   targetUrl: scenarioInput.targetUrl,
                   projectPrompt: scenarioInput.projectPrompt,
                   scenario: scenarioInput.scenario,
+                  fixtures: scenarioInput.fixtures,
                   blockedResults,
                   secretNames,
                   evidenceDirectory,
@@ -1143,11 +1309,94 @@ class CodexRunner implements RunnerAdapter {
           }
         })
       },
+      async executeFixtureTask(taskInput: FixtureTaskInput) {
+        return await executeFixtureTaskWithTurn(
+          async (turnInput) => {
+            const thread = codex.startThread(
+              buildCodexThreadOptions({
+                cwd: turnInput.cwd,
+                model: input.model,
+                modelReasoningEffort: input.modelReasoningEffort,
+              })
+            )
+            const turn = await thread.run(turnInput.prompt, {
+              outputSchema: turnInput.outputSchema,
+              signal: turnInput.signal,
+            })
+            const turnUsage = toCodexRunnerUsage(turn.usage, input.model)
+            return {
+              output: JSON.parse(turn.finalResponse) as unknown,
+              usage: { usage: turnUsage, complete: turnUsage !== undefined },
+            }
+          },
+          taskInput,
+          input.secrets
+        )
+      },
       async close() {
         await sharedBrowser.close()
       },
     }
   }
+}
+
+async function writeClaudeMcpConfig(input: {
+  dir: string
+  chromeDevtoolsLogPath: string
+  wsEndpoint: string
+  workspaceRoot: string
+}) {
+  const mcpConfigPath = join(input.dir, "mcp.json")
+  await writeFile(
+    mcpConfigPath,
+    JSON.stringify({
+      mcpServers: {
+        "chrome-devtools": {
+          command: "npx",
+          args: buildCodexChromeMcpArgs({
+            logFilePath: input.chromeDevtoolsLogPath,
+            wsEndpoint: input.wsEndpoint,
+            workspaceRoot: input.workspaceRoot,
+          }),
+        },
+      },
+    }),
+    "utf8"
+  )
+  return mcpConfigPath
+}
+
+/** One `claude -p` invocation with structured output and the shared browser. */
+async function runClaudeTurn(input: {
+  cwd: string
+  env: NodeJS.ProcessEnv
+  secrets: RunnerSecrets
+  mcpConfigPath: string
+  outputSchema: unknown
+  prompt: string
+  signal?: AbortSignal
+}) {
+  const result = await runChildCommand({
+    command: "claude",
+    cwd: input.cwd,
+    env: input.env,
+    secrets: input.secrets,
+    signal: input.signal,
+    commandArgs: [
+      "-p",
+      "--permission-mode",
+      process.env.CARACARA_CLAUDE_PERMISSION_MODE ?? "bypassPermissions",
+      "--output-format",
+      "json",
+      "--mcp-config",
+      input.mcpConfigPath,
+      "--strict-mcp-config",
+      "--json-schema",
+      JSON.stringify(input.outputSchema),
+      input.prompt,
+    ],
+  })
+  return parseClaudeJsonResult(result.stdout)
 }
 
 class ClaudeRunner implements RunnerAdapter {
@@ -1161,52 +1410,36 @@ class ClaudeRunner implements RunnerAdapter {
     })
     const runnerEnv = { ...process.env, ...runInput.secrets }
     const secretNames = Object.keys(runInput.secrets)
+    const withMcpConfig = <T>(work: (mcpConfigPath: string) => Promise<T>) =>
+      withTempFiles(async (dir) =>
+        work(
+          await writeClaudeMcpConfig({
+            dir,
+            chromeDevtoolsLogPath: sharedBrowser.chromeDevtoolsLogPath,
+            wsEndpoint: sharedBrowser.wsEndpoint,
+            workspaceRoot: runInput.cwd,
+          })
+        )
+      )
     return {
       async executeScenario(scenarioInput: RunnerScenarioInput) {
-        return await withTempFiles(async (dir) => {
-          const mcpConfigPath = join(dir, "mcp.json")
-          await writeFile(
-            mcpConfigPath,
-            JSON.stringify({
-              mcpServers: {
-                "chrome-devtools": {
-                  command: "npx",
-                  args: buildCodexChromeMcpArgs({
-                    logFilePath: sharedBrowser.chromeDevtoolsLogPath,
-                    wsEndpoint: sharedBrowser.wsEndpoint,
-                    workspaceRoot: runInput.cwd,
-                  }),
-                },
-              },
-            }),
-            "utf8"
-          )
-          let usage: RunnerUsageReport = { complete: false }
-          try {
-            const execution = await runChildCommand({
-              command: "claude",
+        return await withMcpConfig(async (mcpConfigPath) => {
+          const turn = (outputSchema: unknown, prompt: string) =>
+            runClaudeTurn({
               cwd: scenarioInput.cwd,
               env: runnerEnv,
               secrets: runInput.secrets,
+              mcpConfigPath,
+              outputSchema,
+              prompt,
               signal: scenarioInput.signal,
-              commandArgs: [
-                "-p",
-                "--permission-mode",
-                process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
-                  "bypassPermissions",
-                "--output-format",
-                "json",
-                "--mcp-config",
-                mcpConfigPath,
-                "--strict-mcp-config",
-                "--json-schema",
-                JSON.stringify(
-                  buildExecutionResultSchema(scenarioInput.scenario)
-                ),
-                buildRunnerPrompt({ ...scenarioInput, secretNames }),
-              ],
             })
-            const parsed = parseClaudeJsonResult(execution.stdout)
+          let usage: RunnerUsageReport = { complete: false }
+          try {
+            const parsed = await turn(
+              buildExecutionResultSchema(scenarioInput.scenario),
+              buildRunnerPrompt({ ...scenarioInput, secretNames })
+            )
             usage = {
               usage: parsed.usage,
               complete: parsed.usage !== undefined,
@@ -1224,37 +1457,18 @@ class ClaudeRunner implements RunnerAdapter {
               )
               const usageBeforeRetry = usage
               usage = { ...usage, complete: false }
-              const retry = await runChildCommand({
-                command: "claude",
-                cwd: scenarioInput.cwd,
-                env: runnerEnv,
-                secrets: runInput.secrets,
-                signal: scenarioInput.signal,
-                commandArgs: [
-                  "-p",
-                  "--permission-mode",
-                  process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
-                    "bypassPermissions",
-                  "--output-format",
-                  "json",
-                  "--mcp-config",
-                  mcpConfigPath,
-                  "--strict-mcp-config",
-                  "--json-schema",
-                  JSON.stringify(
-                    buildBlockedRetryResultSchema(blockedCheckIds)
-                  ),
-                  buildBlockedRetryPrompt({
-                    environment: scenarioInput.environment,
-                    targetUrl: scenarioInput.targetUrl,
-                    projectPrompt: scenarioInput.projectPrompt,
-                    scenario: scenarioInput.scenario,
-                    blockedResults,
-                    secretNames,
-                  }),
-                ],
-              })
-              const parsedRetry = parseClaudeJsonResult(retry.stdout)
+              const parsedRetry = await turn(
+                buildBlockedRetryResultSchema(blockedCheckIds),
+                buildBlockedRetryPrompt({
+                  environment: scenarioInput.environment,
+                  targetUrl: scenarioInput.targetUrl,
+                  projectPrompt: scenarioInput.projectPrompt,
+                  scenario: scenarioInput.scenario,
+                  fixtures: scenarioInput.fixtures,
+                  blockedResults,
+                  secretNames,
+                })
+              )
               usage = mergeRunnerUsage(usageBeforeRetry, {
                 usage: parsedRetry.usage,
                 complete: parsedRetry.usage !== undefined,
@@ -1282,6 +1496,32 @@ class ClaudeRunner implements RunnerAdapter {
             )
           }
         })
+      },
+      async executeFixtureTask(taskInput: FixtureTaskInput) {
+        return await withMcpConfig((mcpConfigPath) =>
+          executeFixtureTaskWithTurn(
+            async (turnInput) => {
+              const parsed = await runClaudeTurn({
+                cwd: turnInput.cwd,
+                env: runnerEnv,
+                secrets: runInput.secrets,
+                mcpConfigPath,
+                outputSchema: turnInput.outputSchema,
+                prompt: turnInput.prompt,
+                signal: turnInput.signal,
+              })
+              return {
+                output: parsed.execution,
+                usage: {
+                  usage: parsed.usage,
+                  complete: parsed.usage !== undefined,
+                },
+              }
+            },
+            taskInput,
+            runInput.secrets
+          )
+        )
       },
       async close() {
         await sharedBrowser.close()

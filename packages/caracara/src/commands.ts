@@ -6,6 +6,7 @@ import {
   API_NAMESPACE,
   formatRunName,
   type AuthoringRequest,
+  type Fixture,
   type OrderedScenario,
   type RunnablePhase,
 } from "@workspace/contracts"
@@ -13,6 +14,7 @@ import {
 import {
   createRun,
   fetchExecutionPlan,
+  fetchFixtures,
   finalizeRun,
   fetchProjects,
   fetchSingleScenario,
@@ -44,12 +46,30 @@ import {
   RunnerExecutionError,
   type RunnerUsageReport,
 } from "./execution.js"
+import {
+  getProjectFixtureHooks,
+  readFixtureHooks,
+  findUnknownHookSlugs,
+} from "./fixture-hooks.js"
+import { resolveProtectedFixtures } from "./fixture-prompts.js"
+import {
+  collectRequiredFixtures,
+  createFixtureOperationApi,
+  createLazyRunnerSession,
+  formatPreflightAbort,
+  parseFixtureMode,
+  runFixturePreflight,
+  runPostRunMaintenance,
+  selectPostRunResetFixtures,
+  type FixturePreflightEntry,
+  type FixtureRuntime,
+} from "./fixtures.js"
 import type { InitCommandOptions, RunCommandOptions } from "./types.js"
+import { CLI_VERSION } from "./version.js"
 
 const CLIENT_ID = "caracara-cli"
-const CLI_VERSION = "0.6.2"
 
-function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
+export function ensureAccessToken(config: Awaited<ReturnType<typeof readConfig>>) {
   if (!config.accessToken) {
     throw new Error("Not logged in. Run `caracara login` first.")
   }
@@ -156,12 +176,12 @@ export async function listEnvironmentsCommand(startDir = process.cwd()) {
   }
 }
 
-type AuthoringCommandOptions = {
+export type AuthoringCommandOptions = {
   apiBaseUrl?: string
   project?: string
 }
 
-async function getAuthoringContext(options: AuthoringCommandOptions) {
+export async function getAuthoringContext(options: AuthoringCommandOptions) {
   const config = await readResolvedConfig(
     {
       apiBaseUrl: options.apiBaseUrl,
@@ -239,7 +259,7 @@ export function resolveCheckReference(
   return [...matches.values()][0]!
 }
 
-async function fetchAuthoringScenario(
+export async function fetchAuthoringScenario(
   context: Awaited<ReturnType<typeof getAuthoringContext>>,
   scenarioSlug: string
 ) {
@@ -252,7 +272,7 @@ async function fetchAuthoringScenario(
   ).scenario
 }
 
-async function resolvePhaseId(
+export async function resolvePhaseId(
   context: Awaited<ReturnType<typeof getAuthoringContext>>,
   reference: string
 ) {
@@ -273,7 +293,7 @@ async function resolveDependencyIds(
   return scenarios.map((scenario) => scenario.id)
 }
 
-async function author(
+export async function author(
   context: Awaited<ReturnType<typeof getAuthoringContext>>,
   payload: AuthoringRequest
 ) {
@@ -583,6 +603,12 @@ export async function runCommand(options: RunCommandOptions) {
     options.environment,
     process.env
   )
+  const fixtureMode = parseFixtureMode(options.fixtures)
+  // Hooks are local only; `skip` never runs them.
+  const hooksConfig = fixtureMode === "skip" ? null : await readFixtureHooks(cwd)
+  const fixtureHooks = hooksConfig
+    ? getProjectFixtureHooks(hooksConfig, projectSlug)
+    : {}
 
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
@@ -628,6 +654,148 @@ export async function runCommand(options: RunCommandOptions) {
     const message = error instanceof Error ? error.message : "Unknown error"
     process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
   }
+  let runUsage: RunnerUsageReport = { complete: true }
+  const printUsage = (report: RunnerUsageReport) => {
+    if (report.usage || !report.complete) {
+      process.stdout.write(`\n${formatRunnerUsage(report)}\n`)
+    }
+  }
+  // One runner session serves preflight agent operations and the run.
+  const sessions = createLazyRunnerSession(() =>
+    runner.startRun({
+      cwd,
+      secrets,
+      targetUrl: environment.targetUrl,
+      model: config.model,
+      modelReasoningEffort: config.model_reasoning_effort,
+      signal: runAbortController.signal,
+    })
+  )
+  // A session started for preflight must not outlive an early exit.
+  const closeSessionQuietly = async () => {
+    try {
+      await sessions.close()
+    } catch {
+      // The error or signal that ended the command matters more.
+    }
+  }
+  const createFixtureRuntime = (
+    projectPrompt: string,
+    recordUsage: (usage: RunnerUsageReport) => void
+  ): FixtureRuntime => ({
+    api: createFixtureOperationApi({
+      apiBaseUrl: config.apiBaseUrl,
+      accessToken,
+      projectSlug,
+    }),
+    projectSlug,
+    environment,
+    hooks: fixtureHooks,
+    hookCwd: hooksConfig?.rootDir ?? cwd,
+    secrets,
+    signal: runAbortController.signal,
+    async getAgent() {
+      const session = await sessions.get()
+      return {
+        cwd,
+        projectPrompt,
+        secretNames: Object.keys(secrets),
+        executeFixtureTask: (input) => session.executeFixtureTask(input),
+      }
+    },
+    recordUsage,
+    write: (text) => {
+      process.stdout.write(text)
+    },
+  })
+  const warnAboutUnknownHooks = async () => {
+    if (Object.keys(fixtureHooks).length === 0) {
+      return
+    }
+    try {
+      const { fixtures } = await fetchFixtures({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        signal: runAbortController.signal,
+      })
+      const unknown = findUnknownHookSlugs(
+        fixtureHooks,
+        fixtures.map((fixture) => fixture.slug)
+      )
+      if (unknown.length > 0) {
+        process.stderr.write(
+          `Warning: ${hooksConfig?.path ?? ".caracara/fixtures.json"} configures hooks for ${unknown.join(", ")}, which ${unknown.length === 1 ? "is not a fixture" : "are not fixtures"} of project ${projectSlug}.\n`
+        )
+      }
+    } catch {
+      // The warning is advisory; preflight reports real problems.
+    }
+  }
+  let fixturePreflight: FixturePreflightEntry[] = []
+  /**
+   * Verifies the selection's fixtures before the run exists. Returns false
+   * when the command must stop: a signal, or an unhealthy fixture (exit 3).
+   */
+  const runPreflightBeforeCreation = async (source: {
+    project: { projectPrompt: string }
+    fixtures: Fixture[]
+    scenarios: OrderedScenario[]
+  }) => {
+    const required = collectRequiredFixtures(source.scenarios, source.fixtures)
+    if (required.length === 0) {
+      fixturePreflight = []
+      return true
+    }
+    listenForInterrupts()
+    const cleanUp = async () => {
+      try {
+        await sessions.close()
+      } catch (error) {
+        process.stderr.write(
+          `Failed to close the runner: ${error instanceof Error ? error.message : "Unknown error"}\n`
+        )
+      }
+      stopListeningForInterrupts()
+      printUsage(runUsage)
+    }
+    let result: Awaited<ReturnType<typeof runFixturePreflight>>
+    try {
+      if (fixtureMode !== "skip") {
+        await warnAboutUnknownHooks()
+      }
+      result = await runFixturePreflight(
+        createFixtureRuntime(source.project.projectPrompt, (usage) => {
+          runUsage = mergeRunnerUsage(runUsage, usage)
+        }),
+        required,
+        fixtureMode,
+        { hooksPath: hooksConfig?.path ?? null }
+      )
+    } catch (error) {
+      await cleanUp()
+      if (setSignalExitCode()) {
+        return false
+      }
+      throw error
+    }
+    if (!result.ok) {
+      await cleanUp()
+      process.stdout.write(
+        `\n${formatPreflightAbort(result.unhealthy, fixtureMode, environment.name)}`
+      )
+      process.exitCode = 3
+      return false
+    }
+    if (interruptedSignal) {
+      await cleanUp()
+      setSignalExitCode()
+      return false
+    }
+    fixturePreflight = result.entries
+    return true
+  }
 
   const startRun = (signal?: AbortSignal, interruptedAt?: number) =>
     createRun({
@@ -645,6 +813,7 @@ export async function runCommand(options: RunCommandOptions) {
         targetUrl: environment.targetUrl,
         startedAt: runStartedAt,
         creationAttemptId,
+        fixturePreflight,
         ...(interruptedAt === undefined ? {} : { interruptedAt }),
       },
       signal,
@@ -694,16 +863,37 @@ export async function runCommand(options: RunCommandOptions) {
       reportInterruptedFinalizationError(error)
     } finally {
       stopListeningForInterrupts()
+      await closeSessionQuietly()
     }
     setSignalExitCode()
   }
   let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
   if (runSelection.mode === "suite") {
+    // The suite plan is read-only; the run that locks authoring is created
+    // only after its fixtures pass preflight.
+    const preflightPlan = await fetchExecutionPlan({
+      apiBaseUrl: config.apiBaseUrl,
+      accessToken,
+      version: CLI_VERSION,
+      projectSlug,
+      suiteSlug: runSelection.requestedSuiteSlug ?? undefined,
+      signal: runAbortController.signal,
+    })
+    if (
+      !(await runPreflightBeforeCreation({
+        project: preflightPlan.project,
+        fixtures: preflightPlan.fixtures,
+        scenarios: preflightPlan.phases.flatMap((phase) => phase.scenarios),
+      }))
+    ) {
+      return
+    }
     listenForInterrupts()
     try {
       createRunResponse = await startRunWithRecovery()
     } catch (error) {
       stopListeningForInterrupts()
+      await closeSessionQuietly()
       if (setSignalExitCode()) {
         return
       }
@@ -729,6 +919,7 @@ export async function runCommand(options: RunCommandOptions) {
             phases: [] as RunnablePhase[],
             suite: null,
             unassignedScenarioCount: 0,
+            fixtures: response.fixtures,
             queue: [
               {
                 phase: null as RunnablePhase | null,
@@ -789,6 +980,7 @@ export async function runCommand(options: RunCommandOptions) {
       finalizationError = cleanupError
     } finally {
       stopListeningForInterrupts()
+      await closeSessionQuietly()
     }
     if (setSignalExitCode()) {
       if (finalizationError) {
@@ -816,6 +1008,7 @@ export async function runCommand(options: RunCommandOptions) {
       finalizationError = error
     } finally {
       stopListeningForInterrupts()
+      await closeSessionQuietly()
     }
     if (setSignalExitCode()) {
       if (finalizationError) {
@@ -836,11 +1029,21 @@ export async function runCommand(options: RunCommandOptions) {
   }
 
   if (!createRunResponse) {
+    if (
+      !(await runPreflightBeforeCreation({
+        project: executionSource.project,
+        fixtures: executionSource.fixtures,
+        scenarios: executionSource.queue.map((item) => item.scenario),
+      }))
+    ) {
+      return
+    }
     listenForInterrupts()
     try {
       createRunResponse = await startRunWithRecovery()
     } catch (error) {
       stopListeningForInterrupts()
+      await closeSessionQuietly()
       if (setSignalExitCode()) {
         return
       }
@@ -887,8 +1090,7 @@ export async function runCommand(options: RunCommandOptions) {
   let closeError: unknown = null
   let finalizationError: unknown = null
   let runError: unknown = null
-  let runUsage: RunnerUsageReport = { complete: true }
-  let runSession: Awaited<ReturnType<typeof runner.startRun>> | null = null
+  const executedScenarios: OrderedScenario[] = []
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
   let activeScenarioResultId: string | null = null
   let activeScenarioAttemptId: string | null = null
@@ -969,22 +1171,21 @@ export async function runCommand(options: RunCommandOptions) {
       }
 
       try {
-        runSession ??= await runner.startRun({
-          cwd,
-          secrets,
-          targetUrl: environment.targetUrl,
-          model: config.model,
-          modelReasoningEffort: config.model_reasoning_effort,
-          signal: runAbortController.signal,
-        })
+        const runSession = await sessions.get()
         runAbortController.signal.throwIfAborted()
 
+        const fixtures = resolveProtectedFixtures(
+          item.scenario.fixtureRequirements,
+          executionSource.fixtures
+        )
+        executedScenarios.push(item.scenario)
         const execution = await runSession.executeScenario({
           cwd,
           environment: environment.name,
           targetUrl: environment.targetUrl,
           projectPrompt: executionSource.project.projectPrompt,
           scenario: item.scenario,
+          fixtures,
           signal: runAbortController.signal,
         })
         runUsage = mergeRunnerUsage(
@@ -1132,14 +1333,12 @@ export async function runCommand(options: RunCommandOptions) {
     finalFinishedAt = Date.now()
   } finally {
     try {
-      await runSession?.close()
+      await sessions.close()
     } catch (error) {
       closeError = error
     }
 
-    if (runUsage.usage || !runUsage.complete) {
-      process.stdout.write(`\n${formatRunnerUsage(runUsage)}\n`)
-    }
+    printUsage(runUsage)
 
     if (interruptedSignal) {
       finalRunStatus = "interrupted"
@@ -1193,6 +1392,28 @@ export async function runCommand(options: RunCommandOptions) {
     }
   }
 
+  // Restore fixtures the run was allowed to change. Not after an
+  // interruption, and not when preflight was skipped.
+  if (
+    fixtureMode !== "skip" &&
+    !interruptedSignal &&
+    !finalizationError &&
+    (finalRunStatus === "completed" || finalRunStatus === "failed")
+  ) {
+    await runPostRunFixtureMaintenance({
+      runId: createRunResponse.run.id,
+      executedScenarios,
+      fixtures: executionSource.fixtures,
+      createRuntime: (recordUsage) =>
+        createFixtureRuntime(executionSource.project.projectPrompt, recordUsage),
+      hooksPath: hooksConfig?.path ?? null,
+      listenForInterrupts,
+      stopListeningForInterrupts,
+      closeSession: () => sessions.close(),
+      printUsage,
+    })
+  }
+
   if (setSignalExitCode()) {
     if (finalizationError) {
       reportInterruptedFinalizationError(finalizationError)
@@ -1210,6 +1431,60 @@ export async function runCommand(options: RunCommandOptions) {
 
   if (closeError) {
     throw closeError
+  }
+}
+
+async function runPostRunFixtureMaintenance(args: {
+  runId: string
+  executedScenarios: OrderedScenario[]
+  fixtures: Fixture[]
+  createRuntime: (
+    recordUsage: (usage: RunnerUsageReport) => void
+  ) => FixtureRuntime
+  hooksPath: string | null
+  listenForInterrupts: () => void
+  stopListeningForInterrupts: () => void
+  closeSession: () => Promise<void>
+  printUsage: (usage: RunnerUsageReport) => void
+}) {
+  let usage: RunnerUsageReport = { complete: true }
+  try {
+    const resetFixtures = selectPostRunResetFixtures(
+      args.executedScenarios,
+      args.fixtures
+    )
+    if (resetFixtures.length === 0) {
+      return
+    }
+    args.listenForInterrupts()
+    const runtime = args.createRuntime((next) => {
+      usage = mergeRunnerUsage(usage, next)
+    })
+    try {
+      await runPostRunMaintenance(runtime, resetFixtures, args.runId, {
+        hooksPath: args.hooksPath,
+      })
+    } catch (error) {
+      if (!runtime.signal.aborted) {
+        process.stderr.write(
+          `Warning: post-run fixture maintenance failed: ${error instanceof Error ? error.message : "Unknown error"}\n`
+        )
+      }
+    }
+  } catch (error) {
+    process.stderr.write(
+      `Warning: post-run fixture maintenance failed: ${error instanceof Error ? error.message : "Unknown error"}\n`
+    )
+  } finally {
+    try {
+      await args.closeSession()
+    } catch (error) {
+      process.stderr.write(
+        `Failed to close the runner: ${error instanceof Error ? error.message : "Unknown error"}\n`
+      )
+    }
+    args.stopListeningForInterrupts()
+    args.printUsage(usage)
   }
 }
 

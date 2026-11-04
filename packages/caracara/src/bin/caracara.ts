@@ -20,6 +20,22 @@ import {
   updateScenarioCommand,
   whoamiCommand,
 } from "../commands.js"
+import {
+  addFixtureCheckCommand,
+  addFixtureStepCommand,
+  createFixtureCommand,
+  fixturesConvergeCommand,
+  fixturesListCommand,
+  fixturesResetCommand,
+  fixturesVerifyCommand,
+  removeFixtureCheckCommand,
+  removeFixtureStepCommand,
+  requireFixtureCommand,
+  unrequireFixtureCommand,
+  updateFixtureCheckCommand,
+  updateFixtureCommand,
+  updateFixtureStepCommand,
+} from "../fixture-commands.js"
 
 const program = new Command()
 
@@ -141,6 +157,153 @@ program
   .action(updateCheckCommand)
 
 program
+  .command("createFixture")
+  .requiredOption("--name <name>")
+  .option("--slug <slug>")
+  .option("--description <text>")
+  .option("--locator <text>", "how to find the fixture in the application")
+  .option("--protection <text>", "extra rules for evaluation runs")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(createFixtureCommand)
+
+program
+  .command("updateFixture")
+  .requiredOption("--fixture <slug>")
+  .option("--name <name>")
+  .option("--slug <slug>")
+  .option("--description <text>")
+  .option("--locator <text>")
+  .option("--protection <text>")
+  .option("--reset-instructions <text>")
+  .option("--clear-reset", "remove the reset instructions")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(updateFixtureCommand)
+
+program
+  .command("addFixtureStep")
+  .requiredOption("--fixture <slug>")
+  .requiredOption("--name <name>")
+  .requiredOption("--instructions <text>")
+  .requiredOption("--done-when <text>")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(addFixtureStepCommand)
+
+program
+  .command("updateFixtureStep")
+  .requiredOption("--fixture <slug>")
+  .requiredOption("--step <reference>", "step ID or exact name")
+  .option("--name <name>")
+  .option("--instructions <text>")
+  .option("--done-when <text>")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(updateFixtureStepCommand)
+
+program
+  .command("removeFixtureStep")
+  .requiredOption("--fixture <slug>")
+  .requiredOption("--step <reference>", "step ID or exact name")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(removeFixtureStepCommand)
+
+program
+  .command("addFixtureCheck")
+  .requiredOption("--fixture <slug>")
+  .requiredOption("--name <name>")
+  .requiredOption("--expectation <expectation>")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(addFixtureCheckCommand)
+
+program
+  .command("updateFixtureCheck")
+  .requiredOption("--fixture <slug>")
+  .requiredOption("--check <reference>", "check ID or exact name")
+  .option("--name <name>")
+  .option("--expectation <expectation>")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(updateFixtureCheckCommand)
+
+program
+  .command("removeFixtureCheck")
+  .requiredOption("--fixture <slug>")
+  .requiredOption("--check <reference>", "check ID or exact name")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(removeFixtureCheckCommand)
+
+program
+  .command("requireFixture")
+  .requiredOption("--fixture <slug>")
+  .option("--phase <reference>", "phase ID, order, or exact name")
+  .option("--scenario <slug>")
+  .option("--access <access>", "read or mutates", "read")
+  .option("--mutation-scope <text>", "what a mutating requirement may change")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(requireFixtureCommand)
+
+program
+  .command("unrequireFixture")
+  .requiredOption("--fixture <slug>")
+  .option("--phase <reference>", "phase ID, order, or exact name")
+  .option("--scenario <slug>")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(unrequireFixtureCommand)
+
+program
+  .command("fixtures:list")
+  .description("list fixtures with their health and local hooks")
+  .option("--environment <name>", "show health for one environment")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(async (options) => {
+    await fixturesListCommand(options)
+  })
+
+program
+  .command("fixtures:verify")
+  .description("verify fixtures (all when no slug is given); exit 3 if unhealthy")
+  .argument("[slugs...]")
+  .option("--environment <name>")
+  .option("--runner <runner>", "codex or claude-code")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(async (slugs: string[], options) => {
+    await fixturesVerifyCommand(slugs, options)
+  })
+
+program
+  .command("fixtures:converge")
+  .description("converge a fixture, then verify it; exit 3 if unhealthy")
+  .argument("<slug>")
+  .option("--environment <name>")
+  .option("--runner <runner>", "codex or claude-code")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(async (slug: string, options) => {
+    await fixturesConvergeCommand(slug, options)
+  })
+
+program
+  .command("fixtures:reset")
+  .description("reset a fixture, then verify it; exit 3 if unhealthy")
+  .argument("<slug>")
+  .option("--environment <name>")
+  .option("--runner <runner>", "codex or claude-code")
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(async (slug: string, options) => {
+    await fixturesResetCommand(slug, options)
+  })
+
+program
   .command("run")
   .option("--api-base-url <url>")
   .option("--project <slug>")
@@ -150,6 +313,11 @@ program
   .option("--suite <slug>")
   .option("--phase <number>")
   .option("--through-phase <number>")
+  .option(
+    "--fixtures <mode>",
+    "fixture preflight: check (default), repair, or skip",
+    "check"
+  )
   .action(async (options) => {
     await runCommand(options)
   })

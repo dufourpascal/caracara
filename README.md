@@ -147,9 +147,65 @@ caracara addCheck --scenario complete-checkout --name "Receipt" --expectation "T
 caracara updateCheck --scenario complete-checkout --check "Receipt" --expectation "The receipt shows VAT."
 ```
 
-The complete mutation set is `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. Phase references accept an ID, order, or exact name. Check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous.
+The scenario commands are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. The fixture commands are `createFixture`, `updateFixture`, `addFixtureStep`, `updateFixtureStep`, `removeFixtureStep`, `addFixtureCheck`, `updateFixtureCheck`, `removeFixtureCheck`, `requireFixture`, and `unrequireFixture` (see [Fixtures](#fixtures)). Phase references accept an ID, order, or exact name. Fixture references accept a slug. Step and check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous. The CLI cannot delete fixtures; use the web app.
 
-Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. The server rejects phase and scenario writes while the project has a running run.
+Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. The server rejects phase, scenario, and fixture writes while the project has a running run.
+
+## Fixtures
+
+A fixture is persistent test data that scenarios read or change, such as a seeded project with nine animals and twelve slices. Each fixture has a description, a locator that says where to find it in the app, protection rules, ordered converge steps, health checks, and optional reset instructions.
+
+```bash
+caracara createFixture --name "HET vs HOMO" --locator "Projects > Caracara Fixture HET vs HOMO"
+caracara addFixtureCheck --fixture het-vs-homo --name "Animals" --expectation "The project lists 9 animals."
+caracara addFixtureStep --fixture het-vs-homo --name "Import animals" --instructions "Import animals.csv." --done-when "9 animals are listed."
+caracara updateFixture --fixture het-vs-homo --reset-instructions "Delete results calculated after the baseline."
+caracara requireFixture --fixture het-vs-homo --phase "Analysis"
+caracara requireFixture --fixture het-vs-homo --scenario calculate-results --access mutates --mutation-scope "calculated results"
+```
+
+A requirement on a phase applies to all its scenarios. `read` is the default access. Evaluation prompts list the required fixtures as protected, and a `mutates` requirement allows changes only within its mutation scope.
+
+`caracara run` checks the selection's fixtures before it creates the run. `--fixtures check` (the default) verifies each one and stops with exit code 3 if any is unhealthy, so no run is created. `--fixtures repair` converges an unhealthy fixture and verifies it again. `--fixtures skip` runs no fixture operations. After a completed or failed run, the CLI resets and verifies each fixture that an executed scenario was allowed to change. A failure there prints a warning but does not change the run result.
+
+Manage fixtures outside a run with:
+
+```bash
+caracara fixtures:list [--environment <name>]
+caracara fixtures:verify [slugs...] [--environment <name>]
+caracara fixtures:converge <slug> [--environment <name>]
+caracara fixtures:reset <slug> [--environment <name>]
+```
+
+Converge and reset always end with a verify. The commands exit with code 3 when the final verify is unhealthy.
+
+Each operation runs a local hook when one is configured, otherwise the runner agent works from the fixture's definition. Hooks live in `.caracara/fixtures.json` next to `config.json` and never leave your machine:
+
+```json
+{
+  "projects": {
+    "neuroqp": {
+      "het-vs-homo": {
+        "verify": "./scripts/fixtures/verify-het-vs-homo.sh",
+        "converge": "./scripts/fixtures/seed-het-vs-homo.sh",
+        "reset": "./scripts/fixtures/reset-het-vs-homo.sh",
+        "timeoutMinutes": 60
+      }
+    }
+  }
+}
+```
+
+The CLI runs each hook through the shell in the directory that contains `.caracara`, with your secrets and `CARACARA_ENVIRONMENT`, `CARACARA_TARGET_URL`, `CARACARA_PROJECT`, `CARACARA_FIXTURE`, `CARACARA_FIXTURE_OPERATION`, and `CARACARA_RESULT_FILE` set. Exit code 0 means success. `timeoutMinutes` defaults to 60 and may be at most 180; a timeout kills the hook's process tree. A hook may write JSON to `$CARACARA_RESULT_FILE`:
+
+```json
+{
+  "summary": "Checked through the API.",
+  "checks": [{ "check": "Animals", "passed": true, "evidence": "9 animals." }]
+}
+```
+
+`check` is a health check ID or exact name. If `checks` is present it must name every health check exactly once, or the operation fails as an invalid result file. The operation succeeds only when the hook exits 0 and every listed check passed. Hook output streams to the terminal and its last 4,000 characters become the operation summary. The CLI redacts exact values from `.caracara/secrets.env` and inherited `CARACARA_SECRET_*` variables. It cannot catch encoded or partial secrets, so do not print them.
 
 ## Verify the flow
 

@@ -22,12 +22,14 @@ const mocks = vi.hoisted(() => {
             phaseName: "Setup",
             phaseOrder: 1,
             dependencyIds: [],
+            fixtureRequirements: [],
           },
         ],
       },
     ],
     suite: null,
     unassignedScenarioCount: 0,
+    fixtures: [],
   }
   const executeScenario = vi.fn(
     ({ signal }: { signal?: AbortSignal }) =>
@@ -325,7 +327,8 @@ describe("run interruption", () => {
 
     await run
 
-    expect(mocks.fetchExecutionPlan).not.toHaveBeenCalled()
+    // Only the read-only preflight fetch ran; the run plan was never fetched.
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledOnce()
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({ status: "interrupted" }),
@@ -448,6 +451,7 @@ describe("run interruption", () => {
   )
 
   it("preserves the signal exit code when plan-fetch cleanup fails", async () => {
+    mocks.fetchExecutionPlan.mockResolvedValueOnce(mocks.executionPlan)
     mocks.fetchExecutionPlan.mockImplementationOnce(
       (args?: { signal?: AbortSignal }) =>
         new Promise((_, reject) => {
@@ -476,7 +480,8 @@ describe("run interruption", () => {
     await run
 
     expect(mocks.executeScenario).not.toHaveBeenCalled()
-    expect(mocks.fetchExecutionPlan).toHaveBeenCalledWith(
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledTimes(2)
+    expect(mocks.fetchExecutionPlan).toHaveBeenLastCalledWith(
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
@@ -497,6 +502,7 @@ describe("run interruption", () => {
 
   it("preserves the signal exit code during plan-error cleanup", async () => {
     let finishFinalization: (() => void) | undefined
+    mocks.fetchExecutionPlan.mockResolvedValueOnce(mocks.executionPlan)
     mocks.fetchExecutionPlan.mockRejectedValueOnce(new Error("Plan failed"))
     mocks.finalizeRun.mockImplementationOnce(
       () =>
@@ -528,10 +534,10 @@ describe("run interruption", () => {
 
   it("preserves the signal exit code during empty-suite cleanup", async () => {
     let finishFinalization: (() => void) | undefined
-    mocks.fetchExecutionPlan.mockResolvedValueOnce({
-      ...mocks.executionPlan,
-      phases: [],
-    })
+    const emptySuite = { ...mocks.executionPlan, phases: [] }
+    mocks.fetchExecutionPlan
+      .mockResolvedValueOnce(emptySuite)
+      .mockResolvedValueOnce(emptySuite)
     mocks.finalizeRun.mockImplementationOnce(
       () =>
         new Promise((resolve) => {

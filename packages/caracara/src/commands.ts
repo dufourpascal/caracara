@@ -882,6 +882,10 @@ export async function runCommand(options: RunCommandOptions) {
   })
 
   let runFailed = false
+  // Scenarios that did not complete in this run. Only scenarios that depend on
+  // one of them are skipped; dependencies never cross phases.
+  const unfinishedScenarioSlugs = new Map<string, string>()
+  let runnerStartFailed = false
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
@@ -937,7 +941,16 @@ export async function runCommand(options: RunCommandOptions) {
       activeScenarioResultId = startedScenario.result.id
       runAbortController.signal.throwIfAborted()
 
-      if (runFailed) {
+      const failedDependencySlug = item.scenario.dependencyIds
+        .map((dependencyId) => unfinishedScenarioSlugs.get(dependencyId))
+        .find((slug) => slug !== undefined)
+      const skipDetail = runnerStartFailed
+        ? "Skipped because the runner could not start."
+        : failedDependencySlug !== undefined
+          ? `Skipped because dependency ${failedDependencySlug} did not complete.`
+          : null
+
+      if (skipDetail !== null) {
         await submitScenarioResult({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
@@ -951,8 +964,7 @@ export async function runCommand(options: RunCommandOptions) {
               status: "dependency_failed",
               checkResults: [],
               executionSummary: null,
-              failureDetail:
-                "Dependency chain stopped after an earlier failure.",
+              failureDetail: skipDetail,
               finishedAt: Date.now(),
               ...(activeScenarioAttemptId
                 ? { executionAttemptId: activeScenarioAttemptId }
@@ -962,9 +974,11 @@ export async function runCommand(options: RunCommandOptions) {
           signal: runAbortController.signal,
         })
         runAbortController.signal.throwIfAborted()
+        unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
         activeScenario = null
         activeScenarioResultId = null
         activeScenarioAttemptId = null
+        process.stdout.write(`  skipped: ${skipDetail}\n`)
         continue
       }
 
@@ -1054,6 +1068,8 @@ export async function runCommand(options: RunCommandOptions) {
           throw error
         }
         runFailed = true
+        runnerStartFailed ||= runSession === null
+        unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
         await submitScenarioResult({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,

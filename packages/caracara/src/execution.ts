@@ -5,7 +5,10 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 
-import { BLOCKED_REASONS } from "@workspace/contracts"
+import {
+  BLOCKED_REASONS,
+  EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH,
+} from "@workspace/contracts"
 import type {
   BlockedReason,
   CheckResult,
@@ -550,8 +553,105 @@ export function buildMissingScreenshotPrompt(input: {
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`
     ),
+    "Use screenshotUnavailableReason only as a last resort, when no screenshot can show the failure or where it appeared, for example because a browser-native dialog blocks every capture. Then save nothing for that check and set a short, specific reason. For every check whose screenshot you saved, set it to null.",
+    "Return JSON with exactly one checks entry per listed check ID.",
     "Do not include secret values, screenshot paths, or image bytes in your response.",
   ].join("\n")
+}
+
+export function buildMissingScreenshotResultSchema(missingCheckIds: string[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["checks"],
+    properties: {
+      checks: {
+        type: "array",
+        minItems: missingCheckIds.length,
+        maxItems: missingCheckIds.length,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["checkId", "screenshotUnavailableReason"],
+          properties: {
+            checkId: { type: "string", enum: missingCheckIds },
+            screenshotUnavailableReason: {
+              anyOf: [
+                {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH,
+                },
+                { type: "null" },
+              ],
+            },
+          },
+        },
+      },
+    },
+  } as const
+}
+
+/** Written by the CLI when Codex saved no screenshot and gave no reason of its own. */
+export const MISSING_SCREENSHOT_FALLBACK_REASON =
+  "Caracara: no screenshot was saved and Codex gave no reason."
+
+/** Reads the reasons from a correction turn; an unreadable response yields none. */
+export function parseScreenshotUnavailableReasons(finalResponse: string) {
+  const reasons = new Map<string, string>()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(finalResponse)
+  } catch {
+    return reasons
+  }
+  const checks = (parsed as { checks?: unknown } | null)?.checks
+  if (!Array.isArray(checks)) {
+    return reasons
+  }
+  for (const check of checks as Array<Record<string, unknown> | null>) {
+    const checkId = check?.checkId
+    const reason = check?.screenshotUnavailableReason
+    if (typeof checkId === "string" && typeof reason === "string") {
+      const trimmed = reason.trim()
+      if (trimmed !== "") {
+        reasons.set(checkId, trimmed)
+      }
+    }
+  }
+  return reasons
+}
+
+/**
+ * Records failed checks that still have no screenshot as evidence unavailable,
+ * so the scenario completes with its verdicts instead of failing the runner.
+ */
+export function applyEvidenceUnavailableReasons(
+  execution: RunnerExecution,
+  missingCheckIds: string[],
+  reasons: Map<string, string>
+): RunnerExecution {
+  const missing = new Set(missingCheckIds)
+  return {
+    ...execution,
+    checkResults: execution.checkResults.map((result) => {
+      const { evidenceUnavailableReason: _ignored, ...rest } = result
+      void _ignored
+      return result.verdict === "failed" && missing.has(result.checkId)
+        ? {
+            ...rest,
+            evidenceUnavailableReason:
+              reasons.get(result.checkId) ?? MISSING_SCREENSHOT_FALLBACK_REASON,
+          }
+        : rest
+    }),
+  }
+}
+
+function limitEvidenceUnavailableReason(reason: string) {
+  return reason.length > EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH
+    ? `${reason.slice(0, EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH - 1)}…`
+    : reason
 }
 
 const maxScreenshotBytes = 3 * 1024 * 1024
@@ -620,6 +720,14 @@ export function redactRunnerExecution(
     checkResults: execution.checkResults.map((result) => ({
       ...result,
       evidence: redactSecretValues(result.evidence, secrets),
+      // Redaction can lengthen the reason, so the limit is applied afterwards.
+      ...(result.evidenceUnavailableReason
+        ? {
+            evidenceUnavailableReason: limitEvidenceUnavailableReason(
+              redactSecretValues(result.evidenceUnavailableReason, secrets)
+            ),
+          }
+        : {}),
     })),
   }
 }
@@ -637,6 +745,13 @@ function redactEvidenceDirectory(
       evidence: result.evidence
         .split(evidenceDirectory)
         .join("[LOCAL_EVIDENCE_DIR]"),
+      ...(result.evidenceUnavailableReason
+        ? {
+            evidenceUnavailableReason: result.evidenceUnavailableReason
+              .split(evidenceDirectory)
+              .join("[LOCAL_EVIDENCE_DIR]"),
+          }
+        : {}),
     })),
   }
 }
@@ -1096,7 +1211,12 @@ class CodexRunner implements RunnerAdapter {
                   evidenceDirectory,
                   missingCheckIds: screenshots.missingCheckIds,
                 }),
-                { signal: scenarioInput.signal }
+                {
+                  outputSchema: buildMissingScreenshotResultSchema(
+                    screenshots.missingCheckIds
+                  ),
+                  signal: scenarioInput.signal,
+                }
               )
               waitingForUsage = false
               const correctionUsage = toCodexRunnerUsage(
@@ -1111,11 +1231,10 @@ class CodexRunner implements RunnerAdapter {
                 evidenceDirectory,
                 checkIds: failedCheckIds,
               })
-            }
-
-            if (screenshots.missingCheckIds.length > 0) {
-              throw new Error(
-                `Codex did not capture required screenshot evidence for ${screenshots.missingCheckIds.length} failed check${screenshots.missingCheckIds.length === 1 ? "" : "s"}.`
+              validated = applyEvidenceUnavailableReasons(
+                validated,
+                screenshots.missingCheckIds,
+                parseScreenshotUnavailableReasons(correction.finalResponse)
               )
             }
 

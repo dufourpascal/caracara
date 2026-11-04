@@ -5,6 +5,7 @@ import {
   deriveScenarioNavigationMetadata,
   ensureSuiteOwnership,
   matchesTerminalScenarioResult,
+  rejectEvidenceUnavailableReasons,
   toRun,
   toScenarioResult,
   validateCompletedCheckResults,
@@ -36,6 +37,26 @@ describe("convex response mappers", () => {
     }
 
     expect(matchesTerminalScenarioResult(result, result)).toBe(true)
+    const unavailable = {
+      ...result,
+      checkResults: [
+        {
+          checkId: "a",
+          verdict: "failed",
+          evidence: "Wrong dialog text",
+          evidenceUnavailableReason: "Native dialog blocked screenshots.",
+        },
+      ],
+    }
+    expect(matchesTerminalScenarioResult(unavailable, unavailable)).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(unavailable, {
+        ...unavailable,
+        checkResults: [
+          { ...unavailable.checkResults[0]!, evidenceUnavailableReason: null },
+        ],
+      })
+    ).toBe(false)
     expect(
       matchesTerminalScenarioResult(result, {
         ...result,
@@ -177,6 +198,83 @@ describe("convex response mappers", () => {
         [{ checkId: "failed" }, { checkId: "failed" }]
       )
     ).toThrow(/requires exactly one screenshot/i)
+  })
+
+  it("accepts a failed check without a screenshot only with a reason", () => {
+    const unavailable = {
+      checkId: "dialog",
+      verdict: "failed",
+      evidenceUnavailableReason: "A native confirm dialog blocked screenshots.",
+    }
+    expect(() =>
+      validateFailedCheckEvidence(
+        [unavailable, { checkId: "shown", verdict: "failed" }],
+        [{ checkId: "shown" }]
+      )
+    ).not.toThrow()
+    expect(() =>
+      validateFailedCheckEvidence(
+        [{ ...unavailable, evidenceUnavailableReason: null }],
+        []
+      )
+    ).toThrow(/screenshot or an evidence-unavailable reason/i)
+    expect(() =>
+      validateFailedCheckEvidence([unavailable], [{ checkId: "dialog" }])
+    ).toThrow(/both a screenshot and an evidence-unavailable reason/i)
+    expect(() =>
+      validateFailedCheckEvidence(
+        [unavailable, { checkId: "passed", verdict: "passed" }],
+        [{ checkId: "passed" }]
+      )
+    ).toThrow(/requires exactly one screenshot/i)
+  })
+
+  it("rejects evidence-unavailable reasons where screenshots are not required", () => {
+    expect(() =>
+      rejectEvidenceUnavailableReasons([
+        { evidenceUnavailableReason: null },
+        {},
+      ])
+    ).not.toThrow()
+    expect(() =>
+      rejectEvidenceUnavailableReasons([
+        { evidenceUnavailableReason: "No screenshot." },
+      ])
+    ).toThrow(/only accepted for runs that require screenshots/i)
+  })
+
+  it("validates evidence-unavailable reasons on completed results", () => {
+    const checks = [{ id: "check" }]
+    const failed = {
+      checkId: "check",
+      verdict: "failed",
+      evidence: "Attempted: export. Failed: the progress text was wrong.",
+    }
+    expect(() =>
+      validateCompletedCheckResults(checks, [
+        { ...failed, evidenceUnavailableReason: "Transient state is gone." },
+      ])
+    ).not.toThrow()
+    for (const evidenceUnavailableReason of [
+      " ",
+      " padded ",
+      "x".repeat(501),
+    ]) {
+      expect(() =>
+        validateCompletedCheckResults(checks, [
+          { ...failed, evidenceUnavailableReason },
+        ])
+      ).toThrow(/match the scenario snapshot/i)
+    }
+    expect(() =>
+      validateCompletedCheckResults(checks, [
+        {
+          ...failed,
+          verdict: "passed",
+          evidenceUnavailableReason: "No screenshot.",
+        },
+      ])
+    ).toThrow(/match the scenario snapshot/i)
   })
 
   it("rejects a scenario runner that differs from its run", () => {

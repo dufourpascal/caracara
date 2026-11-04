@@ -19,6 +19,7 @@ import {
   GitBranch,
   History,
   ImageIcon,
+  ImageOff,
   LoaderCircle,
   ListChecks,
   Maximize2,
@@ -3678,7 +3679,7 @@ function PhaseEditor({
   )
 }
 
-function RunResultDetail({
+export function RunResultDetail({
   result,
 }: {
   result: {
@@ -3700,6 +3701,7 @@ function RunResultDetail({
         | "environment_failure"
         | "tool_limit"
         | null
+      evidenceUnavailableReason?: string | null
     }>
     evidence: Array<{
       id: string
@@ -3852,6 +3854,11 @@ function RunResultDetail({
                   checkName={check.name}
                   key={screenshot.id}
                 />
+              ) : checkResult?.verdict === "failed" &&
+                checkResult.evidenceUnavailableReason ? (
+                <CheckEvidenceUnavailable
+                  reason={checkResult.evidenceUnavailableReason}
+                />
               ) : null}
             </article>
           )
@@ -3879,6 +3886,18 @@ function RunResultDetail({
           <CopyableTextBlock value={result.executionInstructions} />
         </Field>
       </div>
+    </div>
+  )
+}
+
+function CheckEvidenceUnavailable({ reason }: { reason: string }) {
+  return (
+    <div className="grid max-w-md gap-1 border border-border bg-muted/20 px-3 py-2">
+      <p className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+        <ImageOff aria-hidden className="size-3.5" />
+        Screenshot unavailable
+      </p>
+      <p className="text-sm text-foreground">{reason}</p>
     </div>
   )
 }

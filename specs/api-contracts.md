@@ -42,7 +42,7 @@ Scenario start snapshots the data that will be executed.
 
 The start request includes scenario identity, instructions, phase metadata, and checks. Result submission sends scenario ID, status, check results, summary or failure detail, and finish time. The backend validates result IDs against the stored snapshot.
 
-API v3 run creation snapshots an evidence policy and returns the authenticated Convex HTTP-action URL for screenshot uploads. The CLI uploads each failed-check screenshot after scenario start and before result submission. The backend rejects a completed Codex result under the screenshot policy unless every failed check has exactly one attached image.
+API v3 run creation snapshots an evidence policy and returns the authenticated Convex HTTP-action URL for screenshot uploads. The CLI uploads each failed-check screenshot after scenario start and before result submission. The backend rejects a completed Codex result under the screenshot policy unless every failed check has exactly one attached image, or none plus an `evidenceUnavailableReason` (1 to 500 characters). A check with both is rejected, and only failed checks may carry a reason. Results outside the screenshot policy cannot carry a reason.
 
 ### API_08
 

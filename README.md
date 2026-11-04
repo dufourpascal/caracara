@@ -134,7 +134,7 @@ Both settings are optional. Without them, Codex uses its own configuration. You 
 
 Caracara runs the Codex CLI installed on your machine: the `codex` executable on `PATH`, or the file named by `CARACARA_CODEX_PATH`. Install it with `npm install -g @openai/codex`; Caracara supports version 0.164.0 or newer and prints a warning for older versions. Updating `codex` updates the runtime Caracara uses. Codex uses your existing local Codex login, and Caracara starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
 
-When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
+When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. If no screenshot can show the failure, for example because a native browser dialog blocks every capture, the check is recorded as "evidence unavailable" with a reason, and the web app shows that reason instead. Run deletion also removes the stored screenshots.
 
 ## CLI scenario authoring
 

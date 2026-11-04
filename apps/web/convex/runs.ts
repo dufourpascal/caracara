@@ -169,6 +169,40 @@ export function matchesScenarioExecutionAttempt(
   )
 }
 
+// Suite runs snapshot their phases at creation, before the CLI fetches the
+// plan, and authoring stays open in between. Reject scenarios from a phase
+// that is not in the run's snapshot (or was renamed or reordered since), so
+// that even CLIs without their own check cannot run a different suite than
+// the run reports.
+export function assertScenarioPhaseInSuiteRun(
+  run: {
+    mode: string
+    requestedSuitePhases?: Array<{ id: string; name: string; order: number }>
+  },
+  scenarioPhase: {
+    phaseId?: string | null
+    phaseName?: string | null
+    phaseOrder?: number | null
+  }
+) {
+  if (run.mode !== "suite") {
+    return
+  }
+  const snapshot = (run.requestedSuitePhases ?? []).find(
+    (phase) => phase.id === scenarioPhase.phaseId
+  )
+  if (
+    !snapshot ||
+    snapshot.name !== scenarioPhase.phaseName ||
+    snapshot.order !== scenarioPhase.phaseOrder
+  ) {
+    throw new ConvexError({
+      code: "conflict",
+      message: "The suite changed after this run was created. Start the run again.",
+    })
+  }
+}
+
 export const listForProject = query({
   args: {
     projectSlug: v.string(),
@@ -622,6 +656,7 @@ export const startScenarioExecution = mutation({
     }
 
     validateRunnerMatch(run.runnerType, args.result.runnerType)
+    assertScenarioPhaseInSuiteRun(run, args.result)
 
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 

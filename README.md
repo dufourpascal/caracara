@@ -167,7 +167,7 @@ caracara updateCheck --scenario complete-checkout --check "Receipt" --expectatio
 
 The complete mutation set is `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. Phase references accept an ID, order, or exact name. Check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous.
 
-Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. The server rejects phase and scenario writes while the project has a running run.
+Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. They also work while a run is in progress: a running run keeps executing the scenarios, checks, and project prompt it fetched when it started, and its results show the scenarios and checks it ran. Edits apply to the next run. Deleting a scenario, changing the project slug, and deleting the project stay blocked until the run ends.
 
 ## Verify the flow
 

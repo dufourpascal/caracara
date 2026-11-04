@@ -6,7 +6,6 @@ import type { Id } from "./_generated/dataModel"
 import type { QueryCtx, MutationCtx } from "./_generated/server"
 import { mutation, query } from "./_generated/server"
 import {
-  assertProjectAuthoringUnlocked,
   ensureSuiteOwnership,
   ensureUniqueSuiteSlug,
   getProjectPhases,
@@ -93,7 +92,6 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const input = parseSuiteInput(args)
     await validateSuitePhaseIds(ctx, project._id, args.phaseIds)
     const timestamp = Date.now()
@@ -133,7 +131,6 @@ export const update = mutation({
       args.suiteId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const input = parseSuiteInput(args)
     await validateSuitePhaseIds(ctx, project._id, args.phaseIds)
     await ctx.db.patch(suite._id, {
@@ -163,12 +160,11 @@ export const remove = mutation({
     suiteId: v.id("suites"),
   },
   handler: async (ctx, args) => {
-    const { project, suite } = await ensureSuiteOwnership(
+    const { suite } = await ensureSuiteOwnership(
       ctx,
       args.suiteId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     await ctx.db.delete(suite._id)
 
     return {

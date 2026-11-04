@@ -93,6 +93,7 @@ export type RunResultsReport = {
     targetUrl: string | null
     runnerType: string | null
     model: string | null
+    reasoningEffort: string | null
     startedAt: string
     finishedAt: string | null
     durationMs: number | null
@@ -112,10 +113,16 @@ function getDurationMs(startedAt: number, finishedAt: number | null) {
   return finishedAt === null ? null : Math.max(0, finishedAt - startedAt)
 }
 
-/** Reads the run's model once the API records one; null until then. */
-export function readRunModel(run: object): string | null {
-  const model = (run as { model?: unknown }).model
-  return typeof model === "string" && model.length > 0 ? model : null
+/**
+ * Reads an optional run string the API may not send yet, such as the run's
+ * model and reasoning effort. Null when absent.
+ */
+export function readRunString(
+  run: object,
+  key: "model" | "reasoningEffort"
+): string | null {
+  const value = (run as Record<string, unknown>)[key]
+  return typeof value === "string" && value.length > 0 ? value : null
 }
 
 export function buildRunResultsReport(
@@ -134,7 +141,8 @@ export function buildRunResultsReport(
       environment: run.environment ?? null,
       targetUrl: run.targetUrl ?? null,
       runnerType: run.runnerType,
-      model: readRunModel(run),
+      model: readRunString(run, "model"),
+      reasoningEffort: readRunString(run, "reasoningEffort"),
       startedAt: toIso(run.startedAt),
       finishedAt: run.finishedAt === null ? null : toIso(run.finishedAt),
       durationMs: getDurationMs(run.startedAt, run.finishedAt),
@@ -252,9 +260,11 @@ export function formatRunResultsTable(report: RunResultsReport) {
   const { run } = report
   const lines = [
     `Run       ${run.name} (${run.id})`,
-    `Status    ${run.status} · environment ${run.environment ?? "untracked"} · runner ${run.runnerType ?? "n/a"} · model ${run.model ?? "n/a"}`,
+    `Status    ${run.status} · environment ${run.environment ?? "untracked"} · runner ${run.runnerType ?? "n/a"} · model ${run.model ?? "n/a"}${run.reasoningEffort ? ` (${run.reasoningEffort})` : ""}`,
     `Time      ${formatTimestamp(run.startedAt)} → ${formatTimestamp(run.finishedAt)} (${formatDuration(run.durationMs)})`,
-    `Checks    ${run.passedCheckCount}/${run.totalCheckCount} passed${run.passRate === null ? "" : ` (${run.passRate}%)`}`,
+    run.finishedAt === null
+      ? "Checks    in progress"
+      : `Checks    ${run.passedCheckCount}/${run.totalCheckCount} passed${run.passRate === null ? "" : ` (${run.passRate}%)`}`,
     `Tokens    ${formatTokenBreakdown(run.tokens)}`,
   ]
 

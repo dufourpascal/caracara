@@ -146,7 +146,7 @@ caracara results latest --environment preview
 caracara results brave-heron-20261104-120000 --json
 ```
 
-The run reference is a run ID, the run name that `caracara run` prints, or `latest`. `--json` prints a versioned report (`formatVersion: 1`) with run identity, status, environment, start and end, duration, model (`null` until runs record one), token totals, and per scenario its phase, status, duration, tokens, and each check's name, verdict, and reason. Token usage is recorded per scenario from the runner (Codex or Claude Code) and summed per run. Runs from older CLIs have no token usage. The web app shows the same duration and token totals in the run detail.
+The run reference is a run ID, the run name that `caracara run` prints, or `latest`. `--json` prints a versioned report (`formatVersion: 1`) with run identity, status, environment, start and end, duration, model and reasoning effort (`null` until runs record them), token totals, and per scenario its phase, status, duration, tokens, and each check's name, verdict, and reason. Token usage is recorded per scenario from the runner (Codex or Claude Code) and summed per run. Runs from older CLIs have no token usage. The web app shows the same duration and token totals in the run detail.
 
 ## CLI scenario authoring
 

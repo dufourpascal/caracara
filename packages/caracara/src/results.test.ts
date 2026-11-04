@@ -5,7 +5,7 @@ import type { RunResultsResponse } from "@workspace/contracts"
 import {
   buildRunResultsReport,
   formatRunResultsTable,
-  readRunModel,
+  readRunString,
   toTokenUsage,
 } from "./results.js"
 
@@ -213,14 +213,24 @@ describe("run results report", () => {
     expect(report.run.finishedAt).toBeNull()
     expect(report.scenarios[0]?.tokens).toBeNull()
     expect(report.scenarios[0]?.durationMs).toBeNull()
+    expect(formatRunResultsTable(report)).toContain("Checks    in progress")
   })
 
-  it("reads a recorded model once the API sends one", () => {
-    expect(readRunModel(response.run)).toBeNull()
-    expect(readRunModel({ ...response.run, model: "gpt-6.1-sol" })).toBe(
-      "gpt-6.1-sol"
-    )
-    expect(readRunModel({ model: "" })).toBeNull()
+  it("reads a recorded model and reasoning effort once the API sends them", () => {
+    expect(readRunString(response.run, "model")).toBeNull()
+    expect(readRunString(response.run, "reasoningEffort")).toBeNull()
+    const report = buildRunResultsReport({
+      ...response,
+      run: {
+        ...response.run,
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+      } as RunResultsResponse["run"],
+    })
+    expect(report.run.model).toBe("gpt-6.1-sol")
+    expect(report.run.reasoningEffort).toBe("high")
+    expect(formatRunResultsTable(report)).toContain("model gpt-6.1-sol (high)")
+    expect(readRunString({ model: "" }, "model")).toBeNull()
   })
 
   it("prints a compact table with the checks that did not pass", () => {

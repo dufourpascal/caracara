@@ -1920,8 +1920,10 @@ export async function runCommand(
       progress.dispose()
     }
 
-    // After the summary and outside the live panel. Failures here never change
-    // the run or the exit code.
+    // After the summary and outside the live panel. Fixture failures here never
+    // change the run or the exit code, but a signal during maintenance (130/143)
+    // or a failed final session close (1) still sets the process exit code,
+    // which can then differ from the exit code the summary already printed.
     if (maintainFixtures) {
       await runPostRunFixtureMaintenance({
         signal: runAbortController.signal,

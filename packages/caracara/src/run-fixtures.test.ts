@@ -966,9 +966,11 @@ describe("signals and cleanup after the run", () => {
     const close = trackedSession(async () => {
       throw new Error("browser stuck")
     })
+    const existing = new Set<unknown>(process.listeners("SIGINT"))
     vi.spyOn(process.stdout, "write").mockImplementation(() => true)
 
     await expect(runCommand({ plain: true })).rejects.toThrow("browser stuck")
+    expect(newListeners("SIGINT", existing)).toHaveLength(0)
 
     expect(kinds().map((payload) => payload.kind)).toEqual([
       "verify",

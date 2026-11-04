@@ -969,6 +969,25 @@ describe("run creation with fixtures", () => {
     ])
   })
 
+  it("accepts a verify that shares its start time with the converge before it", async () => {
+    const { createRun, fixture, verify, startOperation, finishOperation } =
+      await requiredSetup()
+    const attemptId = crypto.randomUUID()
+    const converge = await startOperation(fixture.id, { kind: "converge", attemptId })
+    await finishOperation(converge, attemptId)
+    const healthy = await verify(fixture.id)
+    expect(healthy.startedAt).toBe(converge.startedAt)
+
+    const run = await createRun({
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "repaired", operationId: healthy.id },
+      ],
+    })
+    expect(run.fixturePreflight).toEqual([
+      expect.objectContaining({ operationId: healthy.id, outcome: "repaired" }),
+    ])
+  })
+
   it("accepts a verify while a newer verify is still running", async () => {
     const { createRun, fixture, verify, startOperation } = await requiredSetup()
     const first = await verify(fixture.id)

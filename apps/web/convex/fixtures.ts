@@ -740,7 +740,9 @@ async function validatePreflightOperation(
 
   // Only newer verifies that succeeded or are still running may follow it;
   // anything else (maintenance, a failed or interrupted verify) replaces it.
-  const newerOperations = ctx.db
+  // Walk newest first and stop at the verify: the index breaks start-time ties
+  // by creation order, so operations sharing its millisecond stay ordered.
+  const newestFirst = ctx.db
     .query("fixtureOperations")
     .withIndex("by_fixture_environment_started_at", (query) =>
       query
@@ -748,9 +750,10 @@ async function validatePreflightOperation(
         .eq("environment", operation.environment)
         .gte("startedAt", operation.startedAt)
     )
-  for await (const candidate of newerOperations) {
+    .order("desc")
+  for await (const candidate of newestFirst) {
     if (candidate._id === operation._id) {
-      continue
+      break
     }
     const stillRunning =
       candidate.status === "running" && candidate.leaseExpiresAt > args.now

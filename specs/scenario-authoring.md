@@ -62,9 +62,9 @@ When a scenario is changed, the system must ensure past runs still reference the
 
 ### AUTHORING_11
 
-The CLI exposes eight narrow authoring commands.
+The CLI exposes eighteen narrow authoring commands.
 
-The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. They update live records directly and return structured results. The CLI does not expose a generic patch or scenario deletion command.
+The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, `updateCheck`, `createFixture`, `updateFixture`, `addFixtureStep`, `updateFixtureStep`, `removeFixtureStep`, `addFixtureCheck`, `updateFixtureCheck`, `removeFixtureCheck`, `requireFixture`, and `unrequireFixture`. They update live records directly and return structured results. The CLI does not expose a generic patch, scenario deletion, or fixture deletion command.
 
 ### AUTHORING_12
 
@@ -83,3 +83,9 @@ Every phase and scenario write is rejected while the project has a running run. 
 Suite authoring is frontend-only and direct.
 
 The frontend supports direct suite create, update, and delete operations using a name, slug, and phase membership checkboxes. Suite writes use the same running-run authoring lock. These operations are intentionally absent from the CLI authoring API.
+
+### AUTHORING_15
+
+Fixtures are authored in the web app and through narrow CLI commands.
+
+The web editor saves the whole definition at once, keeping the IDs of existing steps and checks and assigning IDs to new ones, and can delete a fixture. Requirements are managed from the fixture ("Used by") and the CLI; phase and scenario editors do not edit them. Fixture writes use the running-run authoring lock and are also rejected while an operation for that fixture is running with an unexpired lease.

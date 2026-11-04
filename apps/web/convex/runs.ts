@@ -6,8 +6,15 @@ import {
 } from "@workspace/contracts"
 
 import type { Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { mutation, query, type MutationCtx } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
+import {
+  assertNoConflictingFixtureRun,
+  getFixtureRequirementIndex,
+  getSingleRunScenarios,
+  requiredFixturesForScenarios,
+  validateRunFixturePreflight,
+} from "./fixtures"
 import {
   computeRunCheckCounts,
   createRunName,
@@ -137,6 +144,46 @@ export function matchesScenarioExecutionAttempt(
     existingAttemptId === undefined ||
     submittedAttemptId === existingAttemptId
   )
+}
+
+type RunSelection = {
+  mode: "all" | "single" | "phase" | "through_phase" | "suite"
+  requestedScenarioSlug?: string | null
+  requestedPhaseOrder?: number | null
+}
+
+/** The scenarios a run selection executes, matching the CLI's selection. */
+async function getRunSelectionScenarios(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+  selection: RunSelection,
+  suitePhases: Array<{ scenarios: Array<{ id: string; phaseId?: string | null }> }>
+) {
+  if (selection.mode === "single") {
+    return await getSingleRunScenarios(
+      ctx,
+      projectId,
+      selection.requestedScenarioSlug ?? null
+    )
+  }
+  if (selection.mode === "suite") {
+    return suitePhases.flatMap((phase) => phase.scenarios)
+  }
+
+  const order = selection.requestedPhaseOrder ?? null
+  const { phases } = await getExecutionPlan(ctx, projectId, {
+    activeOnly: true,
+  })
+
+  return phases
+    .filter((phase) =>
+      selection.mode === "phase"
+        ? phase.order === order
+        : selection.mode === "through_phase"
+          ? order !== null && phase.order <= order
+          : true
+    )
+    .flatMap((phase) => phase.scenarios)
 }
 
 export const listForProject = query({
@@ -272,6 +319,19 @@ export const create = mutation({
     startedAt: v.number(),
     creationAttemptId: v.optional(v.string()),
     interruptedAt: v.optional(v.number()),
+    fixturePreflight: v.optional(
+      v.array(
+        v.object({
+          fixtureId: v.string(),
+          outcome: v.union(
+            v.literal("healthy"),
+            v.literal("repaired"),
+            v.literal("skipped")
+          ),
+          operationId: v.union(v.null(), v.string()),
+        })
+      )
+    ),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -337,6 +397,28 @@ export const create = mutation({
     }
     const environment = parseRunEnvironment(args)
     const timestamp = Date.now()
+    // Selections without fixture requirements skip this and behave as before.
+    const requirementIndex = await getFixtureRequirementIndex(ctx, project._id)
+    const requiredFixtures = requirementIndex.isEmpty
+      ? []
+      : requiredFixturesForScenarios(
+          requirementIndex,
+          await getRunSelectionScenarios(ctx, project._id, args, suitePhases)
+        )
+    const fixturePreflight = await validateRunFixturePreflight(ctx, {
+      projectId: project._id,
+      required: requiredFixtures,
+      preflight: args.fixturePreflight,
+      environment,
+      now: timestamp,
+    })
+    if (fixturePreflight && args.interruptedAt === undefined) {
+      await assertNoConflictingFixtureRun(ctx, {
+        projectId: project._id,
+        environment: environment?.environment ?? null,
+        snapshot: fixturePreflight.snapshot,
+      })
+    }
     if (environment) {
       const runEnvironmentNames = addRunEnvironmentName(
         project.runEnvironmentNames ?? [],
@@ -368,6 +450,9 @@ export const create = mutation({
       runnerType: args.runnerType,
       evidencePolicy: args.evidencePolicy ?? "text_only",
       ...(environment ?? {}),
+      ...(fixturePreflight
+        ? { fixturePreflight: fixturePreflight.snapshot }
+        : {}),
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,
@@ -376,6 +461,10 @@ export const create = mutation({
         : {}),
       updatedAt: timestamp,
     })
+
+    for (const operationId of fixturePreflight?.operationIds ?? []) {
+      await ctx.db.patch(operationId, { runId })
+    }
 
     const run = await ctx.db.get(runId)
     if (!run) {

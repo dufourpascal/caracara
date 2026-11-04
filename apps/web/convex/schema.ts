@@ -26,6 +26,21 @@ const checkResult = v.object({
   blockedReason: v.optional(v.union(v.null(), blockedReason)),
 })
 
+const fixtureAccess = v.union(v.literal("read"), v.literal("mutates"))
+
+const fixturePreflightEntry = v.object({
+  fixtureId: v.string(),
+  fixtureSlug: v.string(),
+  fixtureName: v.string(),
+  access: fixtureAccess,
+  outcome: v.union(
+    v.literal("healthy"),
+    v.literal("repaired"),
+    v.literal("skipped")
+  ),
+  operationId: v.union(v.null(), v.string()),
+})
+
 export default defineSchema({
   projects: defineTable({
     ownerUserId: v.string(),
@@ -129,6 +144,7 @@ export default defineSchema({
     ),
     environment: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
+    fixturePreflight: v.optional(v.array(fixturePreflightEntry)),
     passedCheckCount: v.number(),
     totalCheckCount: v.number(),
     startedAt: v.number(),
@@ -194,4 +210,87 @@ export default defineSchema({
     .index("by_result", ["scenarioResultId"])
     .index("by_result_check", ["scenarioResultId", "checkId"])
     .index("by_storage_id", ["storageId"]),
+  fixtures: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    slug: v.string(),
+    description: v.string(),
+    locator: v.string(),
+    protection: v.string(),
+    convergeSteps: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        instructions: v.string(),
+        doneWhen: v.string(),
+      })
+    ),
+    healthChecks: v.array(evaluationCheck),
+    resetInstructions: v.union(v.null(), v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_slug", ["projectId", "slug"]),
+  fixtureRequirements: defineTable({
+    projectId: v.id("projects"),
+    fixtureId: v.id("fixtures"),
+    phaseId: v.union(v.null(), v.id("phases")),
+    scenarioId: v.union(v.null(), v.id("scenarios")),
+    access: fixtureAccess,
+    mutationScope: v.union(v.null(), v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_fixture", ["fixtureId"])
+    .index("by_phase", ["phaseId"])
+    .index("by_scenario", ["scenarioId"]),
+  fixtureOperations: defineTable({
+    projectId: v.id("projects"),
+    fixtureId: v.union(v.null(), v.id("fixtures")),
+    fixtureSlug: v.string(),
+    fixtureName: v.string(),
+    environment: v.string(),
+    targetUrl: v.string(),
+    runId: v.union(v.null(), v.id("runs")),
+    kind: v.union(
+      v.literal("verify"),
+      v.literal("converge"),
+      v.literal("reset")
+    ),
+    executor: v.union(v.literal("hook"), v.literal("agent")),
+    status: v.union(
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("interrupted")
+    ),
+    checkResults: v.array(
+      v.object({
+        checkId: v.string(),
+        name: v.string(),
+        verdict: v.union(
+          v.literal("passed"),
+          v.literal("failed"),
+          v.literal("blocked")
+        ),
+        evidence: v.string(),
+      })
+    ),
+    summary: v.union(v.null(), v.string()),
+    attemptId: v.string(),
+    startedAt: v.number(),
+    finishedAt: v.union(v.null(), v.number()),
+    leaseExpiresAt: v.number(),
+  })
+    .index("by_fixture_environment_started_at", [
+      "fixtureId",
+      "environment",
+      "startedAt",
+    ])
+    .index("by_run", ["runId"])
+    .index("by_project_started_at", ["projectId", "startedAt"])
+    .index("by_project_status", ["projectId", "status"])
+    .index("by_project_attempt", ["projectId", "attemptId"]),
 })

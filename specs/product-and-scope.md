@@ -95,3 +95,9 @@ The agent still judges each check from browser evidence, but it cannot choose th
 Projects may define reusable phase suites.
 
 A suite is a named subset of a project's phases for evaluating a distinct product surface without duplicating phases or scenarios. Suite authoring is frontend-only; the CLI can execute an existing suite but cannot create, edit, or delete one.
+
+### SCOPE_17
+
+Projects may protect persistent test data as fixtures.
+
+Fixtures make shared evaluation data explicit, checkable, and repairable. Unhealthy fixtures abort a run by default; nothing repairs them automatically or interactively. Run-scoped baselines, verify-result caching, and CLI fixture deletion are out of scope.

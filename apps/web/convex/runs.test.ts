@@ -267,6 +267,7 @@ describe("scenario result correction", () => {
 
 describe("run deletion helpers", () => {
   it("deletes screenshot storage and rows before results and the run", async () => {
+    const patches: Array<{ id: string; value: unknown }> = []
     const deletedIds: string[] = []
     const deletedStorageIds: string[] = []
     const ctx = {
@@ -295,7 +296,9 @@ describe("run deletion helpers", () => {
                         { _id: "evidence-1", storageId: "storage-1" },
                         { _id: "evidence-2", storageId: "storage-2" },
                       ]
-                    : [{ _id: "result-1" }, { _id: "result-2" }]
+                    : table === "fixtureOperations"
+                      ? [{ _id: "operation-1" }]
+                      : [{ _id: "result-1" }, { _id: "result-2" }]
                 },
               }
             },
@@ -303,6 +306,9 @@ describe("run deletion helpers", () => {
         },
         async delete(id: string) {
           deletedIds.push(id)
+        },
+        async patch(id: string, value: unknown) {
+          patches.push({ id, value })
         },
       },
       storage: {
@@ -313,6 +319,8 @@ describe("run deletion helpers", () => {
     } as never
 
     const result = await deleteRunAndResults(ctx, "run-1" as never)
+
+    expect(patches).toEqual([{ id: "operation-1", value: { runId: null } }])
 
     expect(result).toEqual({ deletedEvidenceCount: 2, deletedResultCount: 2 })
     expect(deletedStorageIds).toEqual(["storage-1", "storage-2"])

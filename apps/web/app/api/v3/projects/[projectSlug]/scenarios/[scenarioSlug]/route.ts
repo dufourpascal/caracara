@@ -25,8 +25,8 @@ export async function GET(
     const token = await requireVerifiedToken(request)
     const { projectSlug, scenarioSlug } = await params
     const projectResponse = await getProjectBySlug(token, projectSlug)
-    const scenario = await fetchQuery(
-      api.scenarios.getBySlug,
+    const execution = await fetchQuery(
+      api.scenarios.executionScenarioForProject,
       {
         projectSlug,
         scenarioSlug,
@@ -34,7 +34,7 @@ export async function GET(
       { token }
     )
 
-    if (!scenario) {
+    if (!execution) {
       throw new ApiRouteError(404, "not_found", "Scenario not found.")
     }
 
@@ -46,7 +46,8 @@ export async function GET(
           slug: projectResponse.project.slug,
           projectPrompt: projectResponse.project.projectPrompt,
         },
-        scenario,
+        scenario: execution.scenario,
+        fixtures: execution.fixtures,
       })
     )
   } catch (error) {

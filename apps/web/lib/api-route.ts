@@ -9,11 +9,15 @@ import {
   createRunRequestSchema,
   createVersionMismatchDetails,
   finalizeRunRequestSchema,
+  finishFixtureOperationRequestSchema,
+  fixtureListResponseSchema,
+  fixtureOperationResponseSchema,
   isCliVersionSupported,
   oauthAuthorizeRequestSchema,
   oauthTokenRequestSchema,
   projectDetailResponseSchema,
   projectListResponseSchema,
+  startFixtureOperationRequestSchema,
   startScenarioExecutionRequestSchema,
   submitScenarioResultRequestSchema,
   whoAmIResponseSchema,
@@ -400,12 +404,221 @@ export async function authorProject(args: {
         { token: args.token }
       )
       break
+    case "createFixture":
+      result = await fetchMutation(
+        api.fixtures.create,
+        {
+          projectId: project.id as never,
+          name: payload.name,
+          ...(payload.slug === undefined ? {} : { slug: payload.slug }),
+          description: payload.description,
+          locator: payload.locator,
+          protection: payload.protection,
+        },
+        { token: args.token }
+      )
+      break
+    case "updateFixture":
+      result = await fetchMutation(
+        api.fixtures.updateDetails,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.slug === undefined ? {} : { slug: payload.slug }),
+          ...(payload.description === undefined
+            ? {}
+            : { description: payload.description }),
+          ...(payload.locator === undefined ? {} : { locator: payload.locator }),
+          ...(payload.protection === undefined
+            ? {}
+            : { protection: payload.protection }),
+          ...(payload.resetInstructions === undefined
+            ? {}
+            : { resetInstructions: payload.resetInstructions }),
+        },
+        { token: args.token }
+      )
+      break
+    case "addFixtureStep":
+      result = await fetchMutation(
+        api.fixtures.addStep,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          name: payload.name,
+          instructions: payload.instructions,
+          doneWhen: payload.doneWhen,
+        },
+        { token: args.token }
+      )
+      break
+    case "updateFixtureStep":
+      result = await fetchMutation(
+        api.fixtures.updateStep,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          stepId: payload.stepId,
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.instructions === undefined
+            ? {}
+            : { instructions: payload.instructions }),
+          ...(payload.doneWhen === undefined
+            ? {}
+            : { doneWhen: payload.doneWhen }),
+        },
+        { token: args.token }
+      )
+      break
+    case "removeFixtureStep":
+      result = await fetchMutation(
+        api.fixtures.removeStep,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          stepId: payload.stepId,
+        },
+        { token: args.token }
+      )
+      break
+    case "addFixtureCheck":
+      result = await fetchMutation(
+        api.fixtures.addCheck,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          check: payload.check,
+        },
+        { token: args.token }
+      )
+      break
+    case "updateFixtureCheck":
+      result = await fetchMutation(
+        api.fixtures.updateCheck,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          checkId: payload.checkId,
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+          ...(payload.expectation === undefined
+            ? {}
+            : { expectation: payload.expectation }),
+        },
+        { token: args.token }
+      )
+      break
+    case "removeFixtureCheck":
+      result = await fetchMutation(
+        api.fixtures.removeCheck,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          checkId: payload.checkId,
+        },
+        { token: args.token }
+      )
+      break
+    case "requireFixture":
+      result = await fetchMutation(
+        api.fixtures.setRequirement,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          ...fixtureRequirementTarget(payload),
+          access: payload.access,
+          mutationScope: payload.mutationScope ?? null,
+        },
+        { token: args.token }
+      )
+      break
+    case "unrequireFixture":
+      result = await fetchMutation(
+        api.fixtures.removeRequirement,
+        {
+          projectId: project.id as never,
+          fixtureId: payload.fixtureId as never,
+          ...fixtureRequirementTarget(payload),
+        },
+        { token: args.token }
+      )
+      break
   }
 
   return {
     operation: payload.operation,
     result,
   } satisfies { operation: AuthoringRequest["operation"]; result: unknown }
+}
+
+function fixtureRequirementTarget(payload: {
+  phaseId?: string
+  scenarioId?: string
+}) {
+  return payload.phaseId !== undefined
+    ? { phaseId: payload.phaseId as never }
+    : { scenarioId: payload.scenarioId as never }
+}
+
+export async function listFixtures(token: string, projectSlug: string) {
+  const fixtures = await fetchQuery(
+    api.fixtures.listForProject,
+    { projectSlug },
+    { token }
+  )
+  return fixtureListResponseSchema.parse({ fixtures })
+}
+
+export async function startFixtureOperation(args: {
+  token: string
+  projectSlug: string
+  body: unknown
+}) {
+  const payload = startFixtureOperationRequestSchema.parse(args.body)
+  const { project } = await getProjectBySlug(args.token, args.projectSlug)
+  const operation = await fetchMutation(
+    api.fixtures.startOperation,
+    {
+      projectId: project.id as never,
+      fixtureId: payload.fixtureId as never,
+      kind: payload.kind,
+      executor: payload.executor,
+      environment: payload.environment,
+      targetUrl: payload.targetUrl,
+      ...(payload.runId ? { runId: payload.runId as never } : {}),
+      attemptId: payload.attemptId,
+      ...(payload.interruptedAt === undefined
+        ? {}
+        : { interruptedAt: payload.interruptedAt }),
+    },
+    { token: args.token }
+  )
+
+  return fixtureOperationResponseSchema.parse({ operation })
+}
+
+export async function finishFixtureOperation(args: {
+  token: string
+  projectSlug: string
+  operationId: string
+  body: unknown
+}) {
+  const payload = finishFixtureOperationRequestSchema.parse(args.body)
+  const { project } = await getProjectBySlug(args.token, args.projectSlug)
+  const operation = await fetchMutation(
+    api.fixtures.finishOperation,
+    {
+      projectId: project.id as never,
+      operationId: args.operationId as never,
+      attemptId: payload.attemptId,
+      status: payload.status,
+      checkResults: payload.checkResults,
+      summary: payload.summary,
+    },
+    { token: args.token }
+  )
+
+  return fixtureOperationResponseSchema.parse({ operation })
 }
 
 export async function createRun(
@@ -454,6 +667,9 @@ export async function createRun(
       ...(payload.interruptedAt
         ? { interruptedAt: payload.interruptedAt }
         : {}),
+      ...(payload.fixturePreflight === undefined
+        ? {}
+        : { fixturePreflight: payload.fixturePreflight }),
     },
     { token }
   )
@@ -568,8 +784,10 @@ export const routeSchemas = {
   authoringRequestSchema,
   createRunRequestSchema,
   finalizeRunRequestSchema,
+  finishFixtureOperationRequestSchema,
   oauthAuthorizeRequestSchema,
   oauthTokenRequestSchema,
+  startFixtureOperationRequestSchema,
   startScenarioExecutionRequestSchema,
   submitScenarioResultRequestSchema,
 }

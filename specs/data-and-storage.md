@@ -79,3 +79,9 @@ CLI and web authoring overwrite the current scenario or phase record. The data m
 Suites store phase references and follow project lifecycle rules.
 
 The `suites` table stores project ID, unique project-scoped slug, name, and phase IDs. Deleting a phase removes it from every suite membership; deleting a project deletes its suites. Deleting a suite does not affect phases or scenarios. Suite-targeted runs store the requested suite slug, resolved suite name, and selected phase IDs, names, and orders as immutable metadata. These run fields remain optional for runs created before suite support.
+
+### DATA_14
+
+Fixtures, requirements, and operations are separate tables.
+
+`fixtures` embeds ordered steps and checks. `fixtureRequirements` stores fixture, phase or scenario, access, and mutation scope. `fixtureOperations` stores snapshots, results, attempt ID, and lease expiry, indexed by fixture and environment, run, project status, and attempt. Runs store an optional immutable `fixturePreflight` snapshot. Deleting a fixture deletes its requirements and keeps its operations without the fixture link. Deleting a phase or scenario deletes requirements on it. Deleting a run unlinks its operations. Deleting a project deletes all three and is rejected while a fixture operation holds a lease.

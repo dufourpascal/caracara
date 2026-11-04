@@ -19,6 +19,13 @@ import {
   executionPlanResponseSchema,
   finalizeRunRequestSchema,
   finalizeRunResponseSchema,
+  finishFixtureOperationRequestSchema,
+  fixtureInputSchema,
+  fixtureListResponseSchema,
+  fixtureRequirementSchema,
+  mergeFixtureRequirements,
+  singleScenarioResponseSchema,
+  startFixtureOperationRequestSchema,
   createUniqueSlug,
   formatRunName,
   isCliVersionSupported,
@@ -1463,6 +1470,219 @@ describe("string bounds measured in UTF-16 code units", () => {
     expect(
       suiteInputSchema.safeParse({ name: "😀".repeat(61), phaseIds: [] })
         .success
+    ).toBe(false)
+  })
+})
+
+describe("fixture contracts", () => {
+  const guid = (index: number) =>
+    `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`
+
+  it("merges scenario and phase requirements with mutating access winning", () => {
+    expect(
+      mergeFixtureRequirements([
+        { fixtureId: "b", access: "read", mutationScope: null },
+        { fixtureId: "a", access: "read", mutationScope: "ignored" },
+        { fixtureId: "b", access: "mutates", mutationScope: "Adds results." },
+        { fixtureId: "b", access: "mutates", mutationScope: "Adds results." },
+        { fixtureId: "a", access: "mutates", mutationScope: "Renames a slice." },
+      ])
+    ).toEqual([
+      { fixtureId: "a", access: "mutates", mutationScope: "Renames a slice." },
+      { fixtureId: "b", access: "mutates", mutationScope: "Adds results." },
+    ])
+    expect(
+      mergeFixtureRequirements([
+        { fixtureId: "a", access: "mutates", mutationScope: "One." },
+        { fixtureId: "a", access: "mutates", mutationScope: "Two." },
+      ])[0]?.mutationScope
+    ).toBe("One.; Two.")
+  })
+
+  it("normalizes editor input and marks new entries with null IDs", () => {
+    const parsed = fixtureInputSchema.parse({
+      name: " Study ",
+      slug: " ",
+      description: "",
+      locator: "",
+      protection: "",
+      resetInstructions: "  ",
+      convergeSteps: [
+        { id: null, name: "Create", instructions: "Create.", doneWhen: "Done." },
+      ],
+      healthChecks: [{ id: guid(1), name: "Animals", expectation: "9." }],
+    })
+    expect(parsed).toMatchObject({
+      name: "Study",
+      slug: undefined,
+      resetInstructions: null,
+    })
+    expect(
+      fixtureInputSchema.safeParse({
+        ...parsed,
+        convergeSteps: Array.from({ length: 21 }, () => parsed.convergeSteps[0]),
+      }).success
+    ).toBe(false)
+  })
+
+  it("requires exactly one requirement target", () => {
+    const base = {
+      id: "r",
+      projectId: "p",
+      fixtureId: "f",
+      access: "read",
+      mutationScope: null,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    expect(
+      fixtureRequirementSchema.safeParse({ ...base, phaseId: "x", scenarioId: null })
+        .success
+    ).toBe(true)
+    expect(
+      fixtureRequirementSchema.safeParse({ ...base, phaseId: "x", scenarioId: "y" })
+        .success
+    ).toBe(false)
+    expect(
+      fixtureRequirementSchema.safeParse({ ...base, phaseId: null, scenarioId: null })
+        .success
+    ).toBe(false)
+  })
+
+  it("validates fixture authoring requests", () => {
+    expect(
+      authoringRequestSchema.parse({ operation: "createFixture", name: "Study" })
+    ).toEqual({
+      operation: "createFixture",
+      name: "Study",
+      description: "",
+      locator: "",
+      protection: "",
+    })
+    expect(
+      authoringRequestSchema.parse({
+        operation: "requireFixture",
+        fixtureId: "f",
+        phaseId: "p",
+      })
+    ).toMatchObject({ access: "read" })
+    for (const invalid of [
+      { operation: "updateFixture", fixtureId: "f" },
+      { operation: "updateFixtureStep", fixtureId: "f", stepId: guid(1) },
+      { operation: "updateFixtureCheck", fixtureId: "f", checkId: guid(1) },
+      { operation: "requireFixture", fixtureId: "f" },
+      { operation: "unrequireFixture", fixtureId: "f", phaseId: "p", scenarioId: "s" },
+      { operation: "requireFixture", fixtureId: "f", phaseId: "p", access: "mutates" },
+      {
+        operation: "requireFixture",
+        fixtureId: "f",
+        phaseId: "p",
+        access: "read",
+        mutationScope: "Changes.",
+      },
+    ]) {
+      expect(authoringRequestSchema.safeParse(invalid).success).toBe(false)
+    }
+  })
+
+  it("checks the run preflight shape", () => {
+    const run = { mode: "all", runnerType: "codex", startedAt: 1 }
+    expect(
+      createRunRequestSchema.safeParse({
+        ...run,
+        fixturePreflight: [
+          { fixtureId: "a", outcome: "healthy", operationId: "op" },
+          { fixtureId: "b", outcome: "skipped", operationId: null },
+        ],
+      }).success
+    ).toBe(true)
+    for (const fixturePreflight of [
+      [{ fixtureId: "a", outcome: "skipped", operationId: "op" }],
+      [{ fixtureId: "a", outcome: "repaired", operationId: null }],
+      [
+        { fixtureId: "a", outcome: "skipped", operationId: null },
+        { fixtureId: "a", outcome: "skipped", operationId: null },
+      ],
+    ]) {
+      expect(
+        createRunRequestSchema.safeParse({ ...run, fixturePreflight }).success
+      ).toBe(false)
+    }
+  })
+
+  it("keeps fixture fields optional in responses from older servers", () => {
+    const scenario = {
+      id: "s",
+      name: "S",
+      slug: "s",
+      status: "active",
+      instructions: "Do.",
+      evaluationChecks: [],
+      phaseId: null,
+      phaseName: null,
+      phaseOrder: null,
+      dependencyIds: [],
+    }
+    const project = { id: "p", name: "P", slug: "p", projectPrompt: "" }
+    const plan = executionPlanResponseSchema.parse({
+      project,
+      phases: [{ id: "ph", name: "Ph", order: 1, scenarios: [scenario] }],
+      unassignedScenarioCount: 0,
+    })
+    expect(plan.fixtures).toEqual([])
+    expect(plan.phases[0]?.scenarios[0]?.fixtureRequirements).toEqual([])
+    expect(singleScenarioResponseSchema.parse({ project, scenario }).fixtures).toEqual(
+      []
+    )
+  })
+
+  it("parses fixture lists and operation requests", () => {
+    const fixture = {
+      id: "f",
+      projectId: "p",
+      name: "Study",
+      slug: "study",
+      description: "",
+      locator: "",
+      protection: "",
+      convergeSteps: [
+        { id: guid(1), name: "Create", instructions: "Create.", doneWhen: "Done." },
+      ],
+      healthChecks: [],
+      resetInstructions: null,
+      createdAt: 1,
+      updatedAt: 1,
+      requirements: [],
+      health: [
+        {
+          environment: "preview",
+          status: "healthy",
+          operationId: "op",
+          checkedAt: 2,
+          busy: false,
+        },
+      ],
+    }
+    expect(fixtureListResponseSchema.parse({ fixtures: [fixture] }).fixtures).toHaveLength(1)
+    expect(
+      startFixtureOperationRequestSchema.parse({
+        fixtureId: "f",
+        kind: "converge",
+        executor: "agent",
+        environment: "preview",
+        targetUrl: "https://preview.example.com",
+        attemptId: guid(2),
+      }).targetUrl
+    ).toBe("https://preview.example.com/")
+    expect(
+      finishFixtureOperationRequestSchema.safeParse({
+        attemptId: guid(2),
+        status: "failed",
+        checkResults: [
+          { checkId: guid(1), name: "Create", verdict: "not_observed", evidence: "?" },
+        ],
+        summary: null,
+      }).success
     ).toBe(false)
   })
 })

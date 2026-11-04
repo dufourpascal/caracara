@@ -282,6 +282,39 @@ describe("project deletion helpers", () => {
             }
           }
 
+          if (
+            table === "fixtures" ||
+            table === "fixtureRequirements" ||
+            table === "fixtureOperations"
+          ) {
+            return {
+              withIndex(
+                indexName: string,
+                buildQuery: (query: {
+                  eq: (field: string, value: string) => null
+                }) => null
+              ) {
+                buildQuery({
+                  eq() {
+                    return null
+                  },
+                })
+                return {
+                  async collect() {
+                    if (table === "fixtureOperations") {
+                      return indexName === "by_run"
+                        ? []
+                        : [{ _id: "operation-1" }]
+                    }
+                    return table === "fixtures"
+                      ? [{ _id: "fixture-1" }]
+                      : [{ _id: "requirement-1" }]
+                  },
+                }
+              },
+            }
+          }
+
           throw new Error(`Unexpected table ${table}`)
         },
         async delete(id: string) {
@@ -299,6 +332,7 @@ describe("project deletion helpers", () => {
 
     expect(result).toEqual({
       deletedDependencyCount: 2,
+      deletedFixtureCount: 1,
       deletedPhaseCount: 2,
       deletedProjectId: "project-1",
       deletedResultCount: 3,
@@ -307,12 +341,15 @@ describe("project deletion helpers", () => {
       deletedSuiteCount: 1,
     })
     expect(deletedIds).toEqual([
+      "operation-1",
       "evidence-1",
       "result-1",
       "run-1",
       "result-2",
       "result-3",
       "run-2",
+      "requirement-1",
+      "fixture-1",
       "dependency-1",
       "dependency-2",
       "scenario-1",

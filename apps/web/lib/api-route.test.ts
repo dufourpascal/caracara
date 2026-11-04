@@ -11,10 +11,12 @@ import {
   ApiRouteError,
   authorProject,
   createRun,
+  finishFixtureOperation,
   handleApiError,
   parseJsonBody,
   requireCliVersion,
   routeSchemas,
+  startFixtureOperation,
   startScenarioExecution,
   submitScenarioResult,
 } from "./api-route"
@@ -116,6 +118,162 @@ describe("api-route helpers", () => {
         scenarioId: "scenario-2",
         checkId: "00000000-0000-4000-8000-000000000001",
         expectation: "The final receipt is visible.",
+      },
+    ],
+    [
+      {
+        operation: "createFixture",
+        name: "Study fixture",
+        locator: "Studies list",
+      },
+      {
+        projectId: "project-1",
+        name: "Study fixture",
+        description: "",
+        locator: "Studies list",
+        protection: "",
+      },
+    ],
+    [
+      {
+        operation: "updateFixture",
+        fixtureId: "fixture-1",
+        resetInstructions: null,
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        resetInstructions: null,
+      },
+    ],
+    [
+      {
+        operation: "addFixtureStep",
+        fixtureId: "fixture-1",
+        name: "Create",
+        instructions: "Create the study.",
+        doneWhen: "The study exists.",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        name: "Create",
+        instructions: "Create the study.",
+        doneWhen: "The study exists.",
+      },
+    ],
+    [
+      {
+        operation: "updateFixtureStep",
+        fixtureId: "fixture-1",
+        stepId: "00000000-0000-4000-8000-000000000002",
+        doneWhen: "The study has 9 animals.",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        stepId: "00000000-0000-4000-8000-000000000002",
+        doneWhen: "The study has 9 animals.",
+      },
+    ],
+    [
+      {
+        operation: "removeFixtureStep",
+        fixtureId: "fixture-1",
+        stepId: "00000000-0000-4000-8000-000000000002",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        stepId: "00000000-0000-4000-8000-000000000002",
+      },
+    ],
+    [
+      {
+        operation: "addFixtureCheck",
+        fixtureId: "fixture-1",
+        check: {
+          id: "00000000-0000-4000-8000-000000000003",
+          name: "Animals",
+          expectation: "9 animals are listed.",
+        },
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        check: {
+          id: "00000000-0000-4000-8000-000000000003",
+          name: "Animals",
+          expectation: "9 animals are listed.",
+        },
+      },
+    ],
+    [
+      {
+        operation: "updateFixtureCheck",
+        fixtureId: "fixture-1",
+        checkId: "00000000-0000-4000-8000-000000000003",
+        name: "Animal count",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        checkId: "00000000-0000-4000-8000-000000000003",
+        name: "Animal count",
+      },
+    ],
+    [
+      {
+        operation: "removeFixtureCheck",
+        fixtureId: "fixture-1",
+        checkId: "00000000-0000-4000-8000-000000000003",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        checkId: "00000000-0000-4000-8000-000000000003",
+      },
+    ],
+    [
+      {
+        operation: "requireFixture",
+        fixtureId: "fixture-1",
+        scenarioId: "scenario-2",
+        access: "mutates",
+        mutationScope: "Adds analysis results.",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        scenarioId: "scenario-2",
+        access: "mutates",
+        mutationScope: "Adds analysis results.",
+      },
+    ],
+    [
+      {
+        operation: "requireFixture",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+        access: "read",
+        mutationScope: null,
+      },
+    ],
+    [
+      {
+        operation: "unrequireFixture",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
+      },
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        phaseId: "phase-1",
       },
     ],
   ])(
@@ -351,6 +509,138 @@ describe("api-route helpers", () => {
       }),
       { token: "token" }
     )
+  })
+
+  it("passes the fixture preflight to run creation", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    vi.mocked(fetchMutation).mockResolvedValue({ id: "run-1" })
+    const fixturePreflight = [
+      { fixtureId: "fixture-1", outcome: "healthy", operationId: "op-1" },
+      { fixtureId: "fixture-2", outcome: "skipped", operationId: null },
+    ]
+
+    await createRun("token", {
+      projectSlug: "demo",
+      evidencePolicy: "text_only",
+      body: {
+        mode: "all",
+        runnerType: "codex",
+        startedAt: 1,
+        fixturePreflight,
+      },
+    })
+
+    expect(fetchMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ fixturePreflight }),
+      { token: "token" }
+    )
+  })
+
+  it("starts and finishes fixture operations for the URL project", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    const operation = {
+      id: "op-1",
+      projectId: "project-1",
+      fixtureId: "fixture-1",
+      fixtureSlug: "study",
+      fixtureName: "Study",
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+      runId: null,
+      kind: "verify",
+      executor: "hook",
+      status: "running",
+      checkResults: [],
+      summary: null,
+      startedAt: 1,
+      finishedAt: null,
+      leaseExpiresAt: 2,
+    }
+    vi.mocked(fetchMutation).mockResolvedValue(operation)
+
+    await expect(
+      startFixtureOperation({
+        token: "token",
+        projectSlug: "demo",
+        body: {
+          fixtureId: "fixture-1",
+          kind: "verify",
+          executor: "hook",
+          environment: "preview",
+          targetUrl: "https://preview.example.com",
+          attemptId: "00000000-0000-4000-8000-000000000001",
+        },
+      })
+    ).resolves.toEqual({ operation })
+    expect(fetchMutation).toHaveBeenLastCalledWith(
+      expect.anything(),
+      {
+        projectId: "project-1",
+        fixtureId: "fixture-1",
+        kind: "verify",
+        executor: "hook",
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+        attemptId: "00000000-0000-4000-8000-000000000001",
+      },
+      { token: "token" }
+    )
+
+    vi.mocked(fetchMutation).mockResolvedValue({
+      ...operation,
+      status: "succeeded",
+      finishedAt: 3,
+    })
+    await finishFixtureOperation({
+      token: "token",
+      projectSlug: "demo",
+      operationId: "op-1",
+      body: {
+        attemptId: "00000000-0000-4000-8000-000000000001",
+        status: "succeeded",
+        checkResults: [],
+        summary: "Healthy.",
+      },
+    })
+    expect(fetchMutation).toHaveBeenLastCalledWith(
+      expect.anything(),
+      {
+        projectId: "project-1",
+        operationId: "op-1",
+        attemptId: "00000000-0000-4000-8000-000000000001",
+        status: "succeeded",
+        checkResults: [],
+        summary: "Healthy.",
+      },
+      { token: "token" }
+    )
+    expect(() =>
+      routeSchemas.finishFixtureOperationRequestSchema.parse({
+        attemptId: "00000000-0000-4000-8000-000000000001",
+        status: "running",
+        checkResults: [],
+        summary: null,
+      })
+    ).toThrow()
   })
 
   it("delegates suite resolution to the run creation mutation", async () => {

@@ -4,6 +4,7 @@ import { z } from "zod"
 
 import { mutation, query } from "./_generated/server"
 import {
+  assertNoActiveFixtureOperations,
   assertProjectAuthoringUnlocked,
   deleteProjectCascade,
   ensureUniqueProjectSlug,
@@ -145,6 +146,7 @@ export const remove = mutation({
     }
 
     await assertProjectAuthoringUnlocked(ctx, project._id)
+    await assertNoActiveFixtureOperations(ctx, project._id)
     const result = await deleteProjectCascade(ctx, project._id)
 
     return {

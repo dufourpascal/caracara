@@ -251,6 +251,7 @@ export function toRun(run: Doc<"runs">) {
     evidencePolicy: run.evidencePolicy ?? "text_only",
     environment: run.environment ?? null,
     targetUrl: run.targetUrl ?? null,
+    fixturePreflight: run.fixturePreflight ?? [],
     passedCheckCount: run.passedCheckCount,
     totalCheckCount: run.totalCheckCount,
     passRate:
@@ -898,7 +899,7 @@ export async function ensureRunOwnership(ctx: Ctx, runId: Id<"runs">) {
 }
 
 export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
-  const [evidence, results] = await Promise.all([
+  const [evidence, results, fixtureOperations] = await Promise.all([
     ctx.db
       .query("runEvidence")
       .withIndex("by_run", (query) => query.eq("runId", runId))
@@ -907,7 +908,16 @@ export async function deleteRunAndResults(ctx: MutationCtx, runId: Id<"runs">) {
       .query("scenarioResults")
       .withIndex("by_run", (query) => query.eq("runId", runId))
       .collect(),
+    ctx.db
+      .query("fixtureOperations")
+      .withIndex("by_run", (query) => query.eq("runId", runId))
+      .collect(),
   ])
+
+  // Fixture operations outlive the run; they only lose the link to it.
+  for (const operation of fixtureOperations) {
+    await ctx.db.patch(operation._id, { runId: null })
+  }
 
   for (const item of evidence) {
     await ctx.storage.delete(item.storageId)
@@ -1008,11 +1018,74 @@ export function validateFailedCheckEvidence(
   }
 }
 
+/** Fixture operations that still hold their fixture and environment. */
+export async function getActiveFixtureOperations(
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  now: number
+) {
+  const running = await ctx.db
+    .query("fixtureOperations")
+    .withIndex("by_project_status", (query) =>
+      query.eq("projectId", projectId).eq("status", "running")
+    )
+    .collect()
+
+  return running.filter((operation) => operation.leaseExpiresAt > now)
+}
+
+export async function assertNoActiveFixtureOperations(
+  ctx: Ctx,
+  projectId: Id<"projects">
+) {
+  const [active] = await getActiveFixtureOperations(ctx, projectId, Date.now())
+
+  if (active) {
+    throw new ConvexError({
+      code: "conflict",
+      message: `Fixture ${active.fixtureSlug} is being maintained (${active.kind} in ${active.environment}). Try again when it finishes.`,
+    })
+  }
+}
+
+export async function deleteFixtureRequirementsForTarget(
+  ctx: MutationCtx,
+  target: { phaseId: Id<"phases"> } | { scenarioId: Id<"scenarios"> }
+) {
+  const requirements =
+    "phaseId" in target
+      ? await ctx.db
+          .query("fixtureRequirements")
+          .withIndex("by_phase", (query) => query.eq("phaseId", target.phaseId))
+          .collect()
+      : await ctx.db
+          .query("fixtureRequirements")
+          .withIndex("by_scenario", (query) =>
+            query.eq("scenarioId", target.scenarioId)
+          )
+          .collect()
+
+  for (const requirement of requirements) {
+    await ctx.db.delete(requirement._id)
+  }
+
+  return requirements.length
+}
+
 export async function deleteProjectCascade(
   ctx: MutationCtx,
   projectId: Id<"projects">
 ) {
-  const [dependencies, phases, scenarios, suites, runs] = await Promise.all([
+  const [
+    dependencies,
+    phases,
+    scenarios,
+    suites,
+    runs,
+    fixtures,
+    fixtureRequirements,
+    fixtureOperations,
+  ] = await Promise.all([
     getProjectDependencies(ctx, projectId),
     getProjectPhases(ctx, projectId),
     getProjectScenarios(ctx, projectId),
@@ -1021,13 +1094,40 @@ export async function deleteProjectCascade(
       .query("runs")
       .withIndex("by_project", (query) => query.eq("projectId", projectId))
       .collect(),
+    ctx.db
+      .query("fixtures")
+      .withIndex("by_project", (query) => query.eq("projectId", projectId))
+      .collect(),
+    ctx.db
+      .query("fixtureRequirements")
+      .withIndex("by_project", (query) => query.eq("projectId", projectId))
+      .collect(),
+    ctx.db
+      .query("fixtureOperations")
+      .withIndex("by_project_started_at", (query) =>
+        query.eq("projectId", projectId)
+      )
+      .collect(),
   ])
+
+  // Operations go first so deleting runs has no operations left to unlink.
+  for (const operation of fixtureOperations) {
+    await ctx.db.delete(operation._id)
+  }
 
   let deletedResultCount = 0
 
   for (const run of runs) {
     const result = await deleteRunAndResults(ctx, run._id)
     deletedResultCount += result.deletedResultCount
+  }
+
+  for (const requirement of fixtureRequirements) {
+    await ctx.db.delete(requirement._id)
+  }
+
+  for (const fixture of fixtures) {
+    await ctx.db.delete(fixture._id)
   }
 
   for (const dependency of dependencies) {
@@ -1050,6 +1150,7 @@ export async function deleteProjectCascade(
 
   return {
     deletedDependencyCount: dependencies.length,
+    deletedFixtureCount: fixtures.length,
     deletedPhaseCount: phases.length,
     deletedProjectId: projectId,
     deletedResultCount,

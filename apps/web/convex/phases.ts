@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server"
 import {
   assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
+  deleteFixtureRequirementsForTarget,
   ensurePhaseOwnership,
   getProjectPhases,
   getProjectScenarios,
@@ -181,6 +182,7 @@ export const remove = mutation({
       project._id,
       affectedScenarios.map((scenario) => scenario._id)
     )
+    await deleteFixtureRequirementsForTarget(ctx, { phaseId: phase._id })
     await ctx.db.delete(phase._id)
     await normalizeProjectPhaseOrders(ctx, project._id)
     await rebuildScenarioNavigationMetadata(ctx, project._id)

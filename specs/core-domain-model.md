@@ -71,3 +71,21 @@ A suite has a name, slug, and unordered set of phase IDs. A phase may belong to 
 Suite-targeted runs preserve their target identity.
 
 When a run targets a suite, the run snapshots the suite name, slug, and each selected phase's ID, name, and order so history remains intelligible after the suite or its phases change or are deleted.
+
+### DOMAIN_13
+
+A fixture is persistent test data that evaluations rely on but must not damage.
+
+A fixture belongs to one project and has a name, project-unique slug, description, locator, protection rules, ordered idempotent converge steps (name, instructions, done-when), ordered health checks (the evaluation check shape), and optional reset instructions. It has no draft or active status. Steps and checks keep stable IDs across edits. Run-scoped baselines remain scenarios.
+
+### DOMAIN_14
+
+A fixture requirement attaches a fixture to exactly one phase or scenario.
+
+A requirement has `read` or `mutates` access; a mutating requirement names the only change it may make. There is at most one requirement per fixture and target. A scenario's effective requirements merge its own with its phase's per fixture: `mutates` wins and mutation scopes are joined.
+
+### DOMAIN_15
+
+A fixture operation records one verify, converge, or reset of a fixture in one environment.
+
+An operation stores the fixture slug and name as a snapshot, the environment and target URL, the executor (`hook` or `agent`), status (`running`, `succeeded`, `failed`, `interrupted`), per-check or per-step results, a redacted summary, server-time start, finish, and lease expiry, and an optional run link. A verify succeeds only when the fixture is healthy; converge and reset succeed when their steps are done and are followed by a verify. Health per environment is derived, never stored: the latest finished operation decides. A succeeded verify is `healthy` unless a run that mutates the fixture in that environment ran after it; a failed verify is `unhealthy`; anything else is `unknown`.

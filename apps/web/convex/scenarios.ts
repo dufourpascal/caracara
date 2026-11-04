@@ -5,8 +5,14 @@ import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
 import {
+  effectiveFixtureRequirements,
+  getFixtureRequirementIndex,
+  referencedFixtures,
+} from "./fixtures"
+import {
   assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
+  deleteFixtureRequirementsForTarget,
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
   getExecutionPlan,
@@ -239,6 +245,48 @@ export const getBySlug = query({
   },
 })
 
+/** One scenario as the CLI executes it, with the fixtures it requires. */
+export const executionScenarioForProject = query({
+  args: {
+    projectSlug: v.string(),
+    scenarioSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    const [scenario, dependencyIdsByScenario, phases, requirementIndex] =
+      await Promise.all([
+        getScenarioBySlug(ctx, project._id, args.scenarioSlug),
+        getScenarioDependencyIds(ctx, project._id),
+        getProjectPhases(ctx, project._id),
+        getFixtureRequirementIndex(ctx, project._id),
+      ])
+
+    if (!scenario) {
+      return null
+    }
+
+    const phase =
+      phases.find(
+        (candidate) => candidate._id === (scenario.phaseId ?? null)
+      ) ?? null
+    const fixtureRequirements = effectiveFixtureRequirements(
+      requirementIndex,
+      { id: scenario._id, phaseId: scenario.phaseId ?? null }
+    )
+
+    return {
+      scenario: {
+        ...toScenario(scenario, phase),
+        dependencyIds: [
+          ...(dependencyIdsByScenario.get(scenario._id) ?? []),
+        ].sort(),
+        fixtureRequirements,
+      },
+      fixtures: referencedFixtures(requirementIndex, fixtureRequirements),
+    }
+  },
+})
+
 export const executionPlanForProject = query({
   args: {
     projectSlug: v.string(),
@@ -246,12 +294,27 @@ export const executionPlanForProject = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const [executionPlan, suite] = await Promise.all([
+    const [executionPlan, suite, requirementIndex] = await Promise.all([
       getExecutionPlan(ctx, project._id, { activeOnly: true }),
       args.suiteSlug
         ? getSuiteBySlug(ctx, project._id, args.suiteSlug)
         : Promise.resolve(null),
+      getFixtureRequirementIndex(ctx, project._id),
     ])
+    const phases = (
+      suite
+        ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
+        : executionPlan.phases
+    ).map((phase) => ({
+      ...phase,
+      scenarios: phase.scenarios.map((scenario) => ({
+        ...scenario,
+        fixtureRequirements: effectiveFixtureRequirements(
+          requirementIndex,
+          scenario
+        ),
+      })),
+    }))
 
     return {
       projectPrompt: project.projectPrompt,
@@ -260,11 +323,15 @@ export const executionPlanForProject = query({
         name: project.name,
         slug: project.slug,
       },
-      phases: suite
-        ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
-        : executionPlan.phases,
+      phases,
       suite: suite ? { name: suite.name, slug: suite.slug } : null,
       unassignedScenarioCount: executionPlan.unassignedScenarioCount,
+      fixtures: referencedFixtures(
+        requirementIndex,
+        phases.flatMap((phase) =>
+          phase.scenarios.flatMap((scenario) => scenario.fixtureRequirements)
+        )
+      ),
     }
   },
 })
@@ -715,6 +782,7 @@ export const remove = mutation({
       await ctx.db.delete(dependency._id)
     }
 
+    await deleteFixtureRequirementsForTarget(ctx, { scenarioId: scenario._id })
     await ctx.db.delete(scenario._id)
     await rebuildScenarioNavigationMetadata(ctx, project._id)
 

@@ -72,7 +72,7 @@ Contract responses should clearly separate malformed requests, authentication fa
 
 API v3 exposes one narrow authoring operation endpoint.
 
-`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eight supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. A running-run authoring lock returns `conflict` rather than queuing the write.
+`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eighteen supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. A running-run authoring lock returns `conflict` rather than queuing the write.
 
 ### API_12
 
@@ -85,3 +85,21 @@ The environment name and target URL must be supplied together. The backend valid
 The execution API supports suite filtering without suite authoring operations.
 
 `GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running authoring lock. The CLI creates that suite run before fetching the execution plan. There are no suite authoring REST operations.
+
+### API_14
+
+Execution responses include fixture requirements.
+
+Each ordered scenario in the execution plan and single-scenario responses carries its merged `fixtureRequirements`; both responses include the referenced fixture definitions as `fixtures`. Clients default both to empty for older servers. Run creation accepts an optional `fixturePreflight` and returns the stored snapshot.
+
+### API_15
+
+`GET /api/v3/projects/:projectSlug/fixtures` lists fixture details.
+
+Each fixture includes its definition, requirements, and per-environment health with the deciding operation, check time, and a busy flag.
+
+### API_16
+
+Fixture operations are started and finished through two endpoints.
+
+`POST /api/v3/projects/:projectSlug/fixture-operations` starts an operation from a fixture ID, kind, executor, environment, target URL, optional run ID, attempt ID, and optional interruption time. `POST /api/v3/projects/:projectSlug/fixture-operations/:operationId/finish` records the terminal status, check results, and summary for the same attempt. Both return `{ operation }`; lease and attempt violations return `conflict`. Fixture operations do not take the project authoring lock.

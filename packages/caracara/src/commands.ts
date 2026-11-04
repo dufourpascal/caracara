@@ -556,6 +556,25 @@ export function resolveRunMode(options: RunCommandOptions) {
   }
 }
 
+// Suite runs snapshot their phases when the run is created, before the CLI
+// fetches the plan. Authoring stays open during runs, so refuse to execute a
+// plan whose suite phases changed in between instead of mislabeling the run.
+export function assertSuitePlanMatchesRun(args: {
+  suiteSlug: string
+  runPhaseIds: string[]
+  planPhaseIds: string[]
+}) {
+  const runPhaseIds = new Set(args.runPhaseIds)
+  if (
+    runPhaseIds.size !== new Set(args.planPhaseIds).size ||
+    args.planPhaseIds.some((phaseId) => !runPhaseIds.has(phaseId))
+  ) {
+    throw new Error(
+      `Suite "${args.suiteSlug}" changed while the run was starting. Run it again.`
+    )
+  }
+}
+
 export async function runCommand(options: RunCommandOptions) {
   const cwd = process.cwd()
   const [config, secrets] = await Promise.all([
@@ -746,6 +765,15 @@ export async function runCommand(options: RunCommandOptions) {
           signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
+          if (runSelection.mode === "suite" && createRunResponse) {
+            assertSuitePlanMatchesRun({
+              suiteSlug: runSelection.requestedSuiteSlug,
+              runPhaseIds: (
+                createRunResponse.run.requestedSuitePhases ?? []
+              ).map((phase) => phase.id),
+              planPhaseIds: response.phases.map((phase) => phase.id),
+            })
+          }
           const selectedPhases =
             runSelection.mode === "phase"
               ? response.phases.filter(

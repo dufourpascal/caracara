@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  assertSuitePlanMatchesRun,
   listEnvironmentsCommand,
   resolveCheckReference,
   resolvePhaseReference,
@@ -103,5 +104,31 @@ describe("run selection", () => {
     expect(() =>
       resolveRunMode({ suite: "demo-only", scenario: "checkout" })
     ).toThrow(/cannot be combined/i)
+  })
+})
+
+describe("suite run plan check", () => {
+  it("accepts a plan with the run's suite phases in any order", () => {
+    expect(() =>
+      assertSuitePlanMatchesRun({
+        suiteSlug: "smoke",
+        runPhaseIds: ["phase-1", "phase-2"],
+        planPhaseIds: ["phase-2", "phase-1"],
+      })
+    ).not.toThrow()
+  })
+
+  it.each([
+    ["a phase was added", ["phase-1"], ["phase-1", "phase-2"]],
+    ["a phase was removed", ["phase-1", "phase-2"], ["phase-1"]],
+    ["a phase was swapped", ["phase-1", "phase-2"], ["phase-1", "phase-3"]],
+  ])("rejects the plan when %s after run creation", (_, runIds, planIds) => {
+    expect(() =>
+      assertSuitePlanMatchesRun({
+        suiteSlug: "smoke",
+        runPhaseIds: runIds,
+        planPhaseIds: planIds,
+      })
+    ).toThrow('Suite "smoke" changed while the run was starting. Run it again.')
   })
 })

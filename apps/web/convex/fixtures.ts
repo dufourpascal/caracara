@@ -732,7 +732,10 @@ async function validatePreflightOperation(
   if (args.now - operation.finishedAt > FIXTURE_PREFLIGHT_MAX_AGE_MS) {
     conflict(`${label}: the preflight verify is too old; rerun.`)
   }
-  if (operation.startedAt < args.fixture.updatedAt) {
+  if (
+    operation.startedAt < args.fixture.updatedAt ||
+    operation.fixtureUpdatedAt !== args.fixture.updatedAt
+  ) {
     conflict(`${label}: the fixture changed after it was verified; rerun.`)
   }
 
@@ -1549,10 +1552,8 @@ export const removeRequirement = mutation({
       args.projectId,
       args.fixtureId
     )
-    const existing = await findRequirement(ctx, fixture._id, {
-      phaseId: args.phaseId ?? null,
-      scenarioId: args.scenarioId ?? null,
-    })
+    const target = await resolveRequirementTarget(ctx, project._id, args)
+    const existing = await findRequirement(ctx, fixture._id, target)
 
     if (!existing) {
       notFound("Fixture requirement not found.")
@@ -1585,6 +1586,7 @@ export const startOperation = mutation({
     targetUrl: v.string(),
     runId: v.optional(v.union(v.null(), v.id("runs"))),
     attemptId: v.string(),
+    fixtureUpdatedAt: v.optional(v.number()),
     interruptedAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -1639,6 +1641,14 @@ export const startOperation = mutation({
     }
 
     if (args.interruptedAt === undefined) {
+      if (
+        args.fixtureUpdatedAt !== undefined &&
+        args.fixtureUpdatedAt !== fixture.updatedAt
+      ) {
+        conflict(
+          `Fixture ${fixture.slug} changed after it was loaded; run the command again.`
+        )
+      }
       const running = await ctx.db
         .query("fixtureOperations")
         .withIndex("by_project_status", (query) =>
@@ -1699,6 +1709,9 @@ export const startOperation = mutation({
       checkResults: [],
       summary: null,
       attemptId: args.attemptId,
+      ...(args.fixtureUpdatedAt === undefined
+        ? {}
+        : { fixtureUpdatedAt: args.fixtureUpdatedAt }),
       startedAt: now,
       finishedAt: args.interruptedAt === undefined ? null : now,
       leaseExpiresAt: now + FIXTURE_OPERATION_LEASE_MS,

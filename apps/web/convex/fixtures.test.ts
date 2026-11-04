@@ -85,6 +85,7 @@ async function setup() {
       attemptId: string
       runId: Id<"runs"> | null
       interruptedAt: number
+      fixtureUpdatedAt: number
     }> = {}
   ) =>
     await call(fixtures.startOperation, ctx, {
@@ -95,6 +96,11 @@ async function setup() {
       environment: overrides.environment ?? PREVIEW.environment,
       targetUrl: overrides.targetUrl ?? PREVIEW.targetUrl,
       attemptId: overrides.attemptId ?? crypto.randomUUID(),
+      // Like the CLI: the version of the definition it is about to execute.
+      fixtureUpdatedAt:
+        overrides.fixtureUpdatedAt ??
+        (fake.rows("fixtures").find((row) => row._id === fixtureId)
+          ?.updatedAt as number | undefined),
       ...(overrides.runId === undefined ? {} : { runId: overrides.runId }),
       ...(overrides.interruptedAt === undefined
         ? {}
@@ -521,6 +527,11 @@ describe("fixture requirements", () => {
     await expectError(
       call(fixtures.removeRequirement, ctx, { ...base, phaseId: setupPhase }),
       "not_found"
+    )
+    await expectError(
+      call(fixtures.removeRequirement, ctx, { ...base, phaseId: foreignPhase }),
+      "validation_error",
+      /does not belong/
     )
   })
 
@@ -1054,6 +1065,61 @@ describe("run creation with fixtures", () => {
     vi.advanceTimersByTime(1)
     await startOperation(fixture.id, { attemptId: uuid(21), interruptedAt: Date.now() })
     await expectError(createRun(entry(interruptedAfter.id)), "conflict", /newer fixture operation replaced/)
+  })
+
+  it("binds verifies to the fixture definition the client executed", async () => {
+    const { ctx, projectId, createRun, fixture, startOperation, verify } =
+      await requiredSetup()
+    const loadedAt = fixture.updatedAt
+    vi.advanceTimersByTime(1)
+    await call(fixtures.updateDetails, ctx, {
+      projectId,
+      fixtureId: fixture.id,
+      locator: "Moved after the CLI loaded it",
+    })
+    await expectError(
+      startOperation(fixture.id, { fixtureUpdatedAt: loadedAt }),
+      "conflict",
+      /changed after it was loaded/
+    )
+
+    // A verify that does not say which definition it ran cannot satisfy preflight.
+    vi.advanceTimersByTime(1)
+    const attemptId = crypto.randomUUID()
+    const unversioned = await call(fixtures.startOperation, ctx, {
+      projectId,
+      fixtureId: fixture.id as Id<"fixtures">,
+      kind: "verify",
+      executor: "hook",
+      environment: "preview",
+      targetUrl: "https://preview.example.com/",
+      attemptId,
+    })
+    await call(fixtures.finishOperation, ctx, {
+      projectId,
+      operationId: unversioned.id as Id<"fixtureOperations">,
+      attemptId,
+      status: "succeeded",
+      checkResults: [],
+      summary: null,
+    })
+    await expectError(
+      createRun({
+        fixturePreflight: [
+          { fixtureId: fixture.id, outcome: "healthy", operationId: unversioned.id },
+        ],
+      }),
+      "conflict",
+      /changed after it was verified/
+    )
+
+    vi.advanceTimersByTime(1)
+    const current = await verify(fixture.id)
+    await createRun({
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "healthy", operationId: current.id },
+      ],
+    })
   })
 
   it("accepts a verify followed only by newer successful verifies", async () => {

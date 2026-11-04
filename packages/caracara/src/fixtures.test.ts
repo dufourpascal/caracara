@@ -232,6 +232,7 @@ describe("preflight", () => {
         environment: "development",
         targetUrl: "http://localhost:3000/",
         attemptId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        fixtureUpdatedAt: expect.any(Number),
       }),
       runtime.signal
     )

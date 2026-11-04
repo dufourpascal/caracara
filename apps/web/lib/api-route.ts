@@ -587,6 +587,9 @@ export async function startFixtureOperation(args: {
       targetUrl: payload.targetUrl,
       ...(payload.runId ? { runId: payload.runId as never } : {}),
       attemptId: payload.attemptId,
+      ...(payload.fixtureUpdatedAt === undefined
+        ? {}
+        : { fixtureUpdatedAt: payload.fixtureUpdatedAt }),
       ...(payload.interruptedAt === undefined
         ? {}
         : { interruptedAt: payload.interruptedAt }),

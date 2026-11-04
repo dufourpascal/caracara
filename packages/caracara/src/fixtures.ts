@@ -351,6 +351,7 @@ export async function executeFixtureOperation(
     environment: runtime.environment.name,
     targetUrl: runtime.environment.targetUrl,
     attemptId,
+    fixtureUpdatedAt: fixture.updatedAt,
     ...(options.runId ? { runId: options.runId } : {}),
   }
   const reportCleanupError = (error: unknown) => {

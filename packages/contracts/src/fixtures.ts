@@ -204,6 +204,12 @@ export const startFixtureOperationRequestSchema = z.object({
   targetUrl: targetUrlSchema,
   runId: z.string().min(1).nullable().optional(),
   attemptId: z.guid(),
+  /**
+   * The `updatedAt` of the fixture definition the client will execute. The
+   * server rejects the start if the fixture changed since, and preflight only
+   * accepts verifies whose version matches the current definition.
+   */
+  fixtureUpdatedAt: timestampSchema.optional(),
   /** Recovery after a lost start response: create or mark the attempt interrupted. */
   interruptedAt: z.number().int().positive().optional(),
 })

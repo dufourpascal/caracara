@@ -298,6 +298,8 @@ export default defineSchema({
     leaseExpiresAt: v.number(),
     /** Set once the operation was linked to a run; it never satisfies another preflight. */
     consumedAt: v.optional(v.number()),
+    /** The fixture definition version the client executed. */
+    fixtureUpdatedAt: v.optional(v.number()),
   })
     .index("by_fixture_environment_started_at", [
       "fixtureId",

@@ -34,6 +34,7 @@ import {
   readLocalSecrets,
   readResolvedConfig,
   resolveEnvironment,
+  resolveRunModel,
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
@@ -556,6 +557,16 @@ export function resolveRunMode(options: RunCommandOptions) {
   }
 }
 
+export function formatRunModel(runModel: {
+  model?: string
+  modelReasoningEffort?: string
+}) {
+  const model = runModel.model ?? "Codex default (not recorded)"
+  return runModel.modelReasoningEffort
+    ? `Model ${model}, reasoning ${runModel.modelReasoningEffort}`
+    : `Model ${model}`
+}
+
 export async function runCommand(options: RunCommandOptions) {
   const cwd = process.cwd()
   const [config, secrets] = await Promise.all([
@@ -583,6 +594,11 @@ export async function runCommand(options: RunCommandOptions) {
     options.environment,
     process.env
   )
+
+  const runModel = resolveRunModel(config, {
+    model: options.model,
+    modelReasoningEffort: options.modelReasoningEffort,
+  })
 
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
@@ -643,6 +659,10 @@ export async function runCommand(options: RunCommandOptions) {
         runnerType,
         environment: environment.name,
         targetUrl: environment.targetUrl,
+        ...(runModel.model ? { model: runModel.model } : {}),
+        ...(runModel.modelReasoningEffort
+          ? { reasoningEffort: runModel.modelReasoningEffort }
+          : {}),
         startedAt: runStartedAt,
         creationAttemptId,
         ...(interruptedAt === undefined ? {} : { interruptedAt }),
@@ -856,6 +876,9 @@ export async function runCommand(options: RunCommandOptions) {
   process.stdout.write(
     `Environment ${environment.name} (${environment.targetUrl})\n`
   )
+  if (runnerType === "codex") {
+    process.stdout.write(`${formatRunModel(runModel)}\n`)
+  }
   if (executionSource.suite) {
     process.stdout.write(
       `Suite ${executionSource.suite.name} (${executionSource.suite.slug})\n`
@@ -973,8 +996,8 @@ export async function runCommand(options: RunCommandOptions) {
           cwd,
           secrets,
           targetUrl: environment.targetUrl,
-          model: config.model,
-          modelReasoningEffort: config.model_reasoning_effort,
+          model: runModel.model,
+          modelReasoningEffort: runModel.modelReasoningEffort,
           signal: runAbortController.signal,
         })
         runAbortController.signal.throwIfAborted()

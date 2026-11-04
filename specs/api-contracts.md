@@ -80,6 +80,8 @@ Run creation may include a target environment snapshot.
 
 The environment name and target URL must be supplied together. The backend validates the name and safe HTTP or HTTPS URL, then stores both on the run. Older clients may omit both and create an untracked run.
 
+Run creation may also include the Codex `model` and `reasoningEffort` the run uses. Both are optional and only accepted for Codex runs. The backend stores them as given (model: printable ASCII without spaces, up to 100 characters; reasoning effort: a short lowercase token, so newer CLI effort levels don't fail run creation). Run responses return both fields, `null` when not recorded.
+
 ### API_13
 
 The execution API supports suite filtering without suite authoring operations.

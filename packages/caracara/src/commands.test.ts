@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  formatRunModel,
   listEnvironmentsCommand,
   resolveCheckReference,
   resolvePhaseReference,
@@ -103,5 +104,15 @@ describe("run selection", () => {
     expect(() =>
       resolveRunMode({ suite: "demo-only", scenario: "checkout" })
     ).toThrow(/cannot be combined/i)
+  })
+})
+
+describe("formatRunModel", () => {
+  it("prints the model and reasoning effort the run uses", () => {
+    expect(
+      formatRunModel({ model: "gpt-6.1-sol", modelReasoningEffort: "high" })
+    ).toBe("Model gpt-6.1-sol, reasoning high")
+    expect(formatRunModel({ model: "gpt-6.1-sol" })).toBe("Model gpt-6.1-sol")
+    expect(formatRunModel({})).toBe("Model Codex default (not recorded)")
   })
 })

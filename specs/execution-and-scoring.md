@@ -92,6 +92,8 @@ Each CLI run selects one named target environment.
 
 The nearest `.caracara/config.json` maps arbitrary lowercase environment names to HTTP or HTTPS application URLs and may set a default. `--environment` overrides `CARACARA_ENVIRONMENT`, which overrides the saved default. The CLI opens its shared browser at the selected URL and treats that origin as authoritative for every scenario in the run.
 
+The same config may set the default Codex `model` and `model_reasoning_effort`. `caracara run --model` and `--model-reasoning-effort` override them for one run and are rejected for the `claude-code` runner. The CLI validates the resolved values once, passes them to Codex and stores the same values on the run as `model` and `reasoningEffort`. These record the requested settings. When no model is configured, Codex uses its own default and the run records no model.
+
 ### EXEC_14
 
 The CLI can execute one named suite.

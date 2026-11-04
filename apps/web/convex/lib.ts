@@ -251,6 +251,8 @@ export function toRun(run: Doc<"runs">) {
     evidencePolicy: run.evidencePolicy ?? "text_only",
     environment: run.environment ?? null,
     targetUrl: run.targetUrl ?? null,
+    model: run.model ?? null,
+    reasoningEffort: run.reasoningEffort ?? null,
     passedCheckCount: run.passedCheckCount,
     totalCheckCount: run.totalCheckCount,
     passRate:

@@ -71,6 +71,28 @@ export const targetUrlSchema = z
     }
   })
   .transform((value) => new URL(value).toString())
+// Reasoning efforts the CLI can pass to Codex. The server stores any
+// runReasoningEffortSchema token so a newer CLI never fails run creation.
+export const modelReasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+])
+export const runModelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .check(maxUtf16Length(100))
+  .regex(/^[\x21-\x7e]+$/, {
+    error: "Model must be printable ASCII without spaces.",
+  })
+export const runReasoningEffortSchema = z.string().regex(/^[a-z0-9_-]{1,32}$/, {
+  error: "Reasoning effort must be a short lowercase token.",
+})
 export const runEnvironmentSchema = z.object({
   environment: environmentNameSchema,
   targetUrl: targetUrlSchema,
@@ -271,6 +293,8 @@ export const runSchema = z.object({
   evidencePolicy: evidencePolicySchema,
   environment: environmentNameSchema.nullable().optional(),
   targetUrl: targetUrlSchema.nullable().optional(),
+  model: z.string().min(1).nullable().optional(),
+  reasoningEffort: z.string().min(1).nullable().optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),

@@ -12,6 +12,7 @@ import {
   matchesScenarioExecutionAttempt,
   matchesTerminalRun,
   parseRunEnvironment,
+  parseRunModel,
   removeRunEnvironmentName,
 } from "./runs"
 
@@ -49,6 +50,37 @@ describe("run environments", () => {
     expect(
       removeRunEnvironmentName(["preview", "production"], "preview")
     ).toEqual(["production"])
+  })
+})
+
+describe("run model", () => {
+  it("stores only validated Codex model settings", () => {
+    expect(parseRunModel({ runnerType: "codex" })).toEqual({})
+    expect(
+      parseRunModel({
+        runnerType: "codex",
+        model: " gpt-6.1-sol ",
+        reasoningEffort: "high",
+      })
+    ).toEqual({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    expect(
+      parseRunModel({ runnerType: "codex", reasoningEffort: "ultra" })
+    ).toEqual({ reasoningEffort: "ultra" })
+    expect(() =>
+      parseRunModel({ runnerType: "claude-code", model: "gpt-6.1-sol" })
+    ).toThrow("only supported for Codex")
+    let invalidModelError: unknown
+    try {
+      parseRunModel({ runnerType: "codex", model: "gpt 6" })
+    } catch (error) {
+      invalidModelError = error
+    }
+    expect(invalidModelError).toMatchObject({
+      data: { code: "validation_error" },
+    })
+    expect(() =>
+      parseRunModel({ runnerType: "codex", reasoningEffort: "HIGH" })
+    ).toThrow("lowercase token")
   })
 })
 

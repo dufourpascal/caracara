@@ -22,6 +22,8 @@ export type RunCommandOptions = {
   project?: string
   runner?: RunnerType
   environment?: string
+  model?: string
+  modelReasoningEffort?: string
   scenario?: string
   suite?: string
   phase?: string

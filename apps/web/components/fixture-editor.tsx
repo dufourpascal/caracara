@@ -721,6 +721,7 @@ export function FixtureEditor({
         ) : null}
         <div className="ml-auto flex items-center gap-2">
           <Button
+            disabled={isSaving}
             size="sm"
             variant="destructive"
             onClick={async () => {
@@ -748,7 +749,7 @@ export function FixtureEditor({
             Delete
           </Button>
           <Button
-            disabled={!isDirty}
+            disabled={!isDirty || isSaving}
             size="sm"
             variant="outline"
             onClick={() => {
@@ -767,349 +768,359 @@ export function FixtureEditor({
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <FormField error={fieldErrors.name} id={fieldId("name")} label="Name">
-          <Input
-            aria-invalid={!!fieldErrors.name}
-            id={fieldId("name")}
-            maxLength={120}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, name: event.target.value }))
-            }
-            value={form.name}
-          />
-        </FormField>
-        <FormField error={fieldErrors.slug} id={fieldId("slug")} label="Slug">
-          <Input
-            aria-invalid={!!fieldErrors.slug}
-            className="font-mono"
-            id={fieldId("slug")}
-            maxLength={120}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, slug: event.target.value }))
-            }
-            value={form.slug}
-          />
-        </FormField>
-      </div>
+      {/* Edits made while a save is pending would be overwritten by its result. */}
+      <fieldset className="contents" disabled={isSaving}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField error={fieldErrors.name} id={fieldId("name")} label="Name">
+            <Input
+              aria-invalid={!!fieldErrors.name}
+              id={fieldId("name")}
+              maxLength={120}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, name: event.target.value }))
+              }
+              value={form.name}
+            />
+          </FormField>
+          <FormField error={fieldErrors.slug} id={fieldId("slug")} label="Slug">
+            <Input
+              aria-invalid={!!fieldErrors.slug}
+              className="font-mono"
+              id={fieldId("slug")}
+              maxLength={120}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, slug: event.target.value }))
+              }
+              value={form.slug}
+            />
+          </FormField>
+        </div>
 
-      <FormField
-        error={fieldErrors.description}
-        id={fieldId("description")}
-        label="Description"
-      >
-        <Textarea
-          aria-invalid={!!fieldErrors.description}
-          className="min-h-20"
-          id={fieldId("description")}
-          maxLength={FIXTURE_DESCRIPTION_MAX_LENGTH}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              description: event.target.value,
-            }))
-          }
-          placeholder="What this data is and which scenarios rely on it."
-          value={form.description}
-        />
-      </FormField>
-
-      <FormField
-        error={fieldErrors.locator}
-        hint="Where the fixture lives in the app."
-        id={fieldId("locator")}
-        label="How to find it"
-      >
-        <Textarea
-          aria-invalid={!!fieldErrors.locator}
-          className="min-h-20"
-          id={fieldId("locator")}
-          maxLength={FIXTURE_LOCATOR_MAX_LENGTH}
-          onChange={(event) =>
-            setForm((current) => ({ ...current, locator: event.target.value }))
-          }
-          value={form.locator}
-        />
-      </FormField>
-
-      <FormField
-        error={fieldErrors.protection}
-        hint="Added to the prompt of every evaluation run that uses this fixture."
-        id={fieldId("protection")}
-        label="Rules for evaluation runs"
-      >
-        <Textarea
-          aria-invalid={!!fieldErrors.protection}
-          className="min-h-20"
-          id={fieldId("protection")}
-          maxLength={FIXTURE_PROTECTION_MAX_LENGTH}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              protection: event.target.value,
-            }))
-          }
-          value={form.protection}
-        />
-      </FormField>
-
-      <section className="grid gap-3 border-t border-border pt-5">
-        <SectionHeading count={form.convergeSteps.length}>
-          Converge steps
-        </SectionHeading>
-        <p className="-mt-1 text-sm text-muted-foreground">
-          Ordered, idempotent steps an agent follows to bring the fixture to its
-          expected state.
-        </p>
-        <InlineError message={fieldErrors.convergeSteps} />
-        {form.convergeSteps.length === 0 ? (
-          <p className="py-2 text-sm text-muted-foreground">
-            No converge steps yet.
-          </p>
-        ) : (
-          <div className="divide-y divide-border border-y border-border">
-            {form.convergeSteps.map((step, index) => {
-              const label = `converge step ${index + 1}`
-              const errorKey = `convergeSteps.${index}`
-
-              return (
-                <div
-                  className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-2 py-3"
-                  key={step.key}
-                >
-                  <span className="pt-2 font-mono text-xs text-muted-foreground">
-                    {index + 1}
-                  </span>
-                  <div className="grid gap-1">
-                    <Input
-                      aria-invalid={!!fieldErrors[`${errorKey}.name`]}
-                      aria-label={`Converge step ${index + 1} name`}
-                      maxLength={120}
-                      onChange={(event) =>
-                        updateStep(step.key, { name: event.target.value })
-                      }
-                      placeholder="Step name"
-                      value={step.name}
-                    />
-                    <InlineError message={fieldErrors[`${errorKey}.name`]} />
-                  </div>
-                  <ReorderButtons
-                    baseId={reorderId("steps", step.key)}
-                    index={index}
-                    label={label}
-                    length={form.convergeSteps.length}
-                    onMove={(to, direction) => {
-                      setForm((current) => ({
-                        ...current,
-                        convergeSteps: moveItem(
-                          current.convergeSteps,
-                          index,
-                          to
-                        ),
-                      }))
-                      requestFocus("steps", step.key, direction)
-                    }}
-                    onRemove={() =>
-                      setForm((current) => ({
-                        ...current,
-                        convergeSteps: current.convergeSteps.filter(
-                          (item) => item.key !== step.key
-                        ),
-                      }))
-                    }
-                  />
-                  <div className="col-start-2 col-end-4 grid gap-1">
-                    <Textarea
-                      aria-invalid={!!fieldErrors[`${errorKey}.instructions`]}
-                      aria-label={`Converge step ${index + 1} instructions`}
-                      className="min-h-20"
-                      maxLength={FIXTURE_INSTRUCTIONS_MAX_LENGTH}
-                      onChange={(event) =>
-                        updateStep(step.key, {
-                          instructions: event.target.value,
-                        })
-                      }
-                      placeholder="What to do in the app."
-                      value={step.instructions}
-                    />
-                    <InlineError
-                      message={fieldErrors[`${errorKey}.instructions`]}
-                    />
-                  </div>
-                  <div className="col-start-2 col-end-4 grid gap-1">
-                    <Textarea
-                      aria-invalid={!!fieldErrors[`${errorKey}.doneWhen`]}
-                      aria-label={`Converge step ${index + 1} done when`}
-                      className="[field-sizing:content] max-h-[4.75rem] min-h-9 resize-none overflow-y-auto"
-                      maxLength={FIXTURE_DONE_WHEN_MAX_LENGTH}
-                      onChange={(event) =>
-                        updateStep(step.key, { doneWhen: event.target.value })
-                      }
-                      placeholder="Done when: the observable result of this step."
-                      value={step.doneWhen}
-                    />
-                    <InlineError
-                      message={fieldErrors[`${errorKey}.doneWhen`]}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-        <Button
-          className="justify-self-start"
-          disabled={form.convergeSteps.length >= FIXTURE_MAX_STEPS}
-          onClick={() =>
-            setForm((current) => ({
-              ...current,
-              convergeSteps: [
-                ...current.convergeSteps,
-                {
-                  key: newDraftKey(),
-                  id: null,
-                  name: "",
-                  instructions: "",
-                  doneWhen: "",
-                },
-              ],
-            }))
-          }
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <Plus />
-          Add step
-        </Button>
-      </section>
-
-      <section className="grid gap-3 border-t border-border pt-5">
-        <SectionHeading count={form.healthChecks.length}>
-          Health checks
-        </SectionHeading>
-        <p className="-mt-1 text-sm text-muted-foreground">
-          A verify passes when every check holds.
-        </p>
-        <InlineError message={fieldErrors.healthChecks} />
-        {form.healthChecks.length === 0 ? (
-          <p className="py-2 text-sm text-muted-foreground">
-            No health checks yet.
-          </p>
-        ) : (
-          <div className="divide-y divide-border border-y border-border">
-            {form.healthChecks.map((check, index) => {
-              const label = `health check ${index + 1}`
-              const errorKey = `healthChecks.${index}`
-
-              return (
-                <div
-                  className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-2 py-3"
-                  key={check.key}
-                >
-                  <span className="pt-2 font-mono text-xs text-muted-foreground">
-                    {index + 1}
-                  </span>
-                  <div className="grid gap-1">
-                    <Input
-                      aria-invalid={!!fieldErrors[`${errorKey}.name`]}
-                      aria-label={`Health check ${index + 1} name`}
-                      maxLength={120}
-                      onChange={(event) =>
-                        updateCheck(check.key, { name: event.target.value })
-                      }
-                      placeholder="Check name"
-                      value={check.name}
-                    />
-                    <InlineError message={fieldErrors[`${errorKey}.name`]} />
-                  </div>
-                  <ReorderButtons
-                    baseId={reorderId("checks", check.key)}
-                    index={index}
-                    label={label}
-                    length={form.healthChecks.length}
-                    onMove={(to, direction) => {
-                      setForm((current) => ({
-                        ...current,
-                        healthChecks: moveItem(current.healthChecks, index, to),
-                      }))
-                      requestFocus("checks", check.key, direction)
-                    }}
-                    onRemove={() =>
-                      setForm((current) => ({
-                        ...current,
-                        healthChecks: current.healthChecks.filter(
-                          (item) => item.key !== check.key
-                        ),
-                      }))
-                    }
-                  />
-                  <div className="col-start-2 col-end-4 grid gap-1">
-                    <Textarea
-                      aria-invalid={!!fieldErrors[`${errorKey}.expectation`]}
-                      aria-label={`Health check ${index + 1} expectation`}
-                      className="[field-sizing:content] max-h-[4.75rem] min-h-9 resize-none overflow-y-auto"
-                      maxLength={2000}
-                      onChange={(event) =>
-                        updateCheck(check.key, {
-                          expectation: event.target.value,
-                        })
-                      }
-                      placeholder="Describe the observable condition that must be true."
-                      value={check.expectation}
-                    />
-                    <InlineError
-                      message={fieldErrors[`${errorKey}.expectation`]}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-        <Button
-          className="justify-self-start"
-          disabled={form.healthChecks.length >= FIXTURE_MAX_HEALTH_CHECKS}
-          onClick={() =>
-            setForm((current) => ({
-              ...current,
-              healthChecks: [
-                ...current.healthChecks,
-                { key: newDraftKey(), id: null, name: "", expectation: "" },
-              ],
-            }))
-          }
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <Plus />
-          Add check
-        </Button>
-      </section>
-
-      <section className="grid gap-3 border-t border-border pt-5">
         <FormField
-          error={fieldErrors.resetInstructions}
-          hint="Optional. How an agent restores the fixture after a run that mutates it."
-          id={fieldId("reset")}
-          label="Reset instructions"
+          error={fieldErrors.description}
+          id={fieldId("description")}
+          label="Description"
         >
           <Textarea
-            aria-invalid={!!fieldErrors.resetInstructions}
+            aria-invalid={!!fieldErrors.description}
             className="min-h-20"
-            id={fieldId("reset")}
-            maxLength={FIXTURE_INSTRUCTIONS_MAX_LENGTH}
+            id={fieldId("description")}
+            maxLength={FIXTURE_DESCRIPTION_MAX_LENGTH}
             onChange={(event) =>
               setForm((current) => ({
                 ...current,
-                resetInstructions: event.target.value,
+                description: event.target.value,
               }))
             }
-            value={form.resetInstructions}
+            placeholder="What this data is and which scenarios rely on it."
+            value={form.description}
           />
         </FormField>
-      </section>
+
+        <FormField
+          error={fieldErrors.locator}
+          hint="Where the fixture lives in the app."
+          id={fieldId("locator")}
+          label="How to find it"
+        >
+          <Textarea
+            aria-invalid={!!fieldErrors.locator}
+            className="min-h-20"
+            id={fieldId("locator")}
+            maxLength={FIXTURE_LOCATOR_MAX_LENGTH}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                locator: event.target.value,
+              }))
+            }
+            value={form.locator}
+          />
+        </FormField>
+
+        <FormField
+          error={fieldErrors.protection}
+          hint="Added to the prompt of every evaluation run that uses this fixture."
+          id={fieldId("protection")}
+          label="Rules for evaluation runs"
+        >
+          <Textarea
+            aria-invalid={!!fieldErrors.protection}
+            className="min-h-20"
+            id={fieldId("protection")}
+            maxLength={FIXTURE_PROTECTION_MAX_LENGTH}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                protection: event.target.value,
+              }))
+            }
+            value={form.protection}
+          />
+        </FormField>
+
+        <section className="grid gap-3 border-t border-border pt-5">
+          <SectionHeading count={form.convergeSteps.length}>
+            Converge steps
+          </SectionHeading>
+          <p className="-mt-1 text-sm text-muted-foreground">
+            Ordered, idempotent steps an agent follows to bring the fixture to
+            its expected state.
+          </p>
+          <InlineError message={fieldErrors.convergeSteps} />
+          {form.convergeSteps.length === 0 ? (
+            <p className="py-2 text-sm text-muted-foreground">
+              No converge steps yet.
+            </p>
+          ) : (
+            <div className="divide-y divide-border border-y border-border">
+              {form.convergeSteps.map((step, index) => {
+                const label = `converge step ${index + 1}`
+                const errorKey = `convergeSteps.${index}`
+
+                return (
+                  <div
+                    className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-2 py-3"
+                    key={step.key}
+                  >
+                    <span className="pt-2 font-mono text-xs text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <div className="grid gap-1">
+                      <Input
+                        aria-invalid={!!fieldErrors[`${errorKey}.name`]}
+                        aria-label={`Converge step ${index + 1} name`}
+                        maxLength={120}
+                        onChange={(event) =>
+                          updateStep(step.key, { name: event.target.value })
+                        }
+                        placeholder="Step name"
+                        value={step.name}
+                      />
+                      <InlineError message={fieldErrors[`${errorKey}.name`]} />
+                    </div>
+                    <ReorderButtons
+                      baseId={reorderId("steps", step.key)}
+                      index={index}
+                      label={label}
+                      length={form.convergeSteps.length}
+                      onMove={(to, direction) => {
+                        setForm((current) => ({
+                          ...current,
+                          convergeSteps: moveItem(
+                            current.convergeSteps,
+                            index,
+                            to
+                          ),
+                        }))
+                        requestFocus("steps", step.key, direction)
+                      }}
+                      onRemove={() =>
+                        setForm((current) => ({
+                          ...current,
+                          convergeSteps: current.convergeSteps.filter(
+                            (item) => item.key !== step.key
+                          ),
+                        }))
+                      }
+                    />
+                    <div className="col-start-2 col-end-4 grid gap-1">
+                      <Textarea
+                        aria-invalid={!!fieldErrors[`${errorKey}.instructions`]}
+                        aria-label={`Converge step ${index + 1} instructions`}
+                        className="min-h-20"
+                        maxLength={FIXTURE_INSTRUCTIONS_MAX_LENGTH}
+                        onChange={(event) =>
+                          updateStep(step.key, {
+                            instructions: event.target.value,
+                          })
+                        }
+                        placeholder="What to do in the app."
+                        value={step.instructions}
+                      />
+                      <InlineError
+                        message={fieldErrors[`${errorKey}.instructions`]}
+                      />
+                    </div>
+                    <div className="col-start-2 col-end-4 grid gap-1">
+                      <Textarea
+                        aria-invalid={!!fieldErrors[`${errorKey}.doneWhen`]}
+                        aria-label={`Converge step ${index + 1} done when`}
+                        className="[field-sizing:content] max-h-[4.75rem] min-h-9 resize-none overflow-y-auto"
+                        maxLength={FIXTURE_DONE_WHEN_MAX_LENGTH}
+                        onChange={(event) =>
+                          updateStep(step.key, { doneWhen: event.target.value })
+                        }
+                        placeholder="Done when: the observable result of this step."
+                        value={step.doneWhen}
+                      />
+                      <InlineError
+                        message={fieldErrors[`${errorKey}.doneWhen`]}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <Button
+            className="justify-self-start"
+            disabled={form.convergeSteps.length >= FIXTURE_MAX_STEPS}
+            onClick={() =>
+              setForm((current) => ({
+                ...current,
+                convergeSteps: [
+                  ...current.convergeSteps,
+                  {
+                    key: newDraftKey(),
+                    id: null,
+                    name: "",
+                    instructions: "",
+                    doneWhen: "",
+                  },
+                ],
+              }))
+            }
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Plus />
+            Add step
+          </Button>
+        </section>
+
+        <section className="grid gap-3 border-t border-border pt-5">
+          <SectionHeading count={form.healthChecks.length}>
+            Health checks
+          </SectionHeading>
+          <p className="-mt-1 text-sm text-muted-foreground">
+            A verify passes when every check holds.
+          </p>
+          <InlineError message={fieldErrors.healthChecks} />
+          {form.healthChecks.length === 0 ? (
+            <p className="py-2 text-sm text-muted-foreground">
+              No health checks yet.
+            </p>
+          ) : (
+            <div className="divide-y divide-border border-y border-border">
+              {form.healthChecks.map((check, index) => {
+                const label = `health check ${index + 1}`
+                const errorKey = `healthChecks.${index}`
+
+                return (
+                  <div
+                    className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-2 py-3"
+                    key={check.key}
+                  >
+                    <span className="pt-2 font-mono text-xs text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <div className="grid gap-1">
+                      <Input
+                        aria-invalid={!!fieldErrors[`${errorKey}.name`]}
+                        aria-label={`Health check ${index + 1} name`}
+                        maxLength={120}
+                        onChange={(event) =>
+                          updateCheck(check.key, { name: event.target.value })
+                        }
+                        placeholder="Check name"
+                        value={check.name}
+                      />
+                      <InlineError message={fieldErrors[`${errorKey}.name`]} />
+                    </div>
+                    <ReorderButtons
+                      baseId={reorderId("checks", check.key)}
+                      index={index}
+                      label={label}
+                      length={form.healthChecks.length}
+                      onMove={(to, direction) => {
+                        setForm((current) => ({
+                          ...current,
+                          healthChecks: moveItem(
+                            current.healthChecks,
+                            index,
+                            to
+                          ),
+                        }))
+                        requestFocus("checks", check.key, direction)
+                      }}
+                      onRemove={() =>
+                        setForm((current) => ({
+                          ...current,
+                          healthChecks: current.healthChecks.filter(
+                            (item) => item.key !== check.key
+                          ),
+                        }))
+                      }
+                    />
+                    <div className="col-start-2 col-end-4 grid gap-1">
+                      <Textarea
+                        aria-invalid={!!fieldErrors[`${errorKey}.expectation`]}
+                        aria-label={`Health check ${index + 1} expectation`}
+                        className="[field-sizing:content] max-h-[4.75rem] min-h-9 resize-none overflow-y-auto"
+                        maxLength={2000}
+                        onChange={(event) =>
+                          updateCheck(check.key, {
+                            expectation: event.target.value,
+                          })
+                        }
+                        placeholder="Describe the observable condition that must be true."
+                        value={check.expectation}
+                      />
+                      <InlineError
+                        message={fieldErrors[`${errorKey}.expectation`]}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <Button
+            className="justify-self-start"
+            disabled={form.healthChecks.length >= FIXTURE_MAX_HEALTH_CHECKS}
+            onClick={() =>
+              setForm((current) => ({
+                ...current,
+                healthChecks: [
+                  ...current.healthChecks,
+                  { key: newDraftKey(), id: null, name: "", expectation: "" },
+                ],
+              }))
+            }
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Plus />
+            Add check
+          </Button>
+        </section>
+
+        <section className="grid gap-3 border-t border-border pt-5">
+          <FormField
+            error={fieldErrors.resetInstructions}
+            hint="Optional. How an agent restores the fixture after a run that mutates it."
+            id={fieldId("reset")}
+            label="Reset instructions"
+          >
+            <Textarea
+              aria-invalid={!!fieldErrors.resetInstructions}
+              className="min-h-20"
+              id={fieldId("reset")}
+              maxLength={FIXTURE_INSTRUCTIONS_MAX_LENGTH}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  resetInstructions: event.target.value,
+                }))
+              }
+              value={form.resetInstructions}
+            />
+          </FormField>
+        </section>
+      </fieldset>
 
       <FixtureRequirementsSection
         fixture={fixture}

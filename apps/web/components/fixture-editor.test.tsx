@@ -343,6 +343,36 @@ describe("fixture editor", () => {
     expect(name.value).toBe("Renamed fixture")
   })
 
+  it("locks the definition while a save is pending so no edit is lost", async () => {
+    const user = userEvent.setup()
+    let finish: (value: FixtureDetail) => void = () => undefined
+    const updateFixture = vi.fn(
+      () =>
+        new Promise<FixtureDetail>((resolve) => {
+          finish = resolve
+        })
+    )
+    renderEditor({ updateFixture: updateFixture as never })
+
+    const name = screen.getByLabelText("Name") as HTMLInputElement
+    fireEvent.change(name, { target: { value: "Renamed fixture" } })
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(updateFixture).toHaveBeenCalledOnce()
+    expect(name.matches(":disabled")).toBe(true)
+    expect(
+      screen.getByRole("button", { name: "Add step" }).matches(":disabled")
+    ).toBe(true)
+    expect(
+      (screen.getByRole("button", { name: /Delete/ }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true)
+
+    finish({ ...createFixture(), name: "Renamed fixture", updatedAt: 99 })
+    await waitFor(() => expect(name.matches(":disabled")).toBe(false))
+    expect(name.value).toBe("Renamed fixture")
+  })
+
   it("requires a mutation scope for mutating requirements", async () => {
     const user = userEvent.setup()
     const { setRequirement } = renderEditor()

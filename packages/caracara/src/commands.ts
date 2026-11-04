@@ -879,6 +879,16 @@ export async function runCommand(options: RunCommandOptions) {
   if (runnerType === "codex") {
     process.stdout.write(`${formatRunModel(runModel)}\n`)
   }
+  if (
+    (runModel.model !== undefined &&
+      createRunResponse.run.model !== runModel.model) ||
+    (runModel.modelReasoningEffort !== undefined &&
+      createRunResponse.run.reasoningEffort !== runModel.modelReasoningEffort)
+  ) {
+    process.stderr.write(
+      "Warning: the server did not record this run's model settings. Update the Caracara web app to store them.\n"
+    )
+  }
   if (executionSource.suite) {
     process.stdout.write(
       `Suite ${executionSource.suite.name} (${executionSource.suite.slug})\n`

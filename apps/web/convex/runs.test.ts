@@ -10,6 +10,7 @@ import {
   canCorrectScenarioInterruption,
   getRunCreationState,
   matchesScenarioExecutionAttempt,
+  matchesRunModel,
   matchesTerminalRun,
   parseRunEnvironment,
   parseRunModel,
@@ -81,6 +82,15 @@ describe("run model", () => {
     expect(() =>
       parseRunModel({ runnerType: "codex", reasoningEffort: "HIGH" })
     ).toThrow("lowercase token")
+  })
+
+  it("only lets a creation retry reuse the original model settings", () => {
+    const stored = { model: "gpt-6.1-sol", reasoningEffort: "high" }
+    expect(matchesRunModel(stored, { ...stored })).toBe(true)
+    expect(matchesRunModel({}, {})).toBe(true)
+    expect(matchesRunModel(stored, { model: "gpt-6.1-terra" })).toBe(false)
+    expect(matchesRunModel(stored, {})).toBe(false)
+    expect(matchesRunModel({}, { model: "gpt-6.1-sol" })).toBe(false)
   })
 })
 

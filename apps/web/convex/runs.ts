@@ -121,6 +121,16 @@ export function parseRunModel(input: {
   }
 }
 
+export function matchesRunModel(
+  run: { model?: string; reasoningEffort?: string },
+  runModel: { model?: string; reasoningEffort?: string }
+) {
+  return (
+    run.model === runModel.model &&
+    run.reasoningEffort === runModel.reasoningEffort
+  )
+}
+
 export function addRunEnvironmentName(names: string[], environment: string) {
   return names.includes(environment) ? names : [...names, environment].sort()
 }
@@ -339,6 +349,11 @@ export const create = mutation({
         )
         .unique()
       if (existing) {
+        if (!matchesRunModel(existing, runModel)) {
+          invalidRunModel(
+            "Run creation retry does not match the original model settings."
+          )
+        }
         const creationState = getRunCreationState(args.interruptedAt)
         if (
           creationState.status === "interrupted" &&

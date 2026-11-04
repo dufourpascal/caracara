@@ -63,7 +63,7 @@ When the user is in the scenarios workspace without a selected scenario, the rig
 ### LAYOUT_13
 Left-side navigation panels are resizable and use the shared resizable component.
 
-The main left-side navigation panel for scenarios, suites, phases, and runs should be horizontally resizable. The run-details second-tier left-side navigation should also use the same resizable layout pattern when present. Resizable behavior should be implemented with the shared in-house resizable component in `packages/ui` (`ResizablePanelGroup`, `ResizablePanel`, `ResizableHandle`) rather than per-screen resize code or a third-party panel library. Handles support pointer drag and keyboard resizing, and panel widths are persisted per project and workspace in pixels.
+The main left-side navigation panel for scenarios, suites, fixtures, phases, and runs should be horizontally resizable. The run-details second-tier left-side navigation should also use the same resizable layout pattern when present. Resizable behavior should be implemented with the shared in-house resizable component in `packages/ui` (`ResizablePanelGroup`, `ResizablePanel`, `ResizableHandle`) rather than per-screen resize code or a third-party panel library. Handles support pointer drag and keyboard resizing, and panel widths are persisted per project and workspace in pixels.
 
 ### LAYOUT_14
 Primary layout state uses a route shape that maps cleanly to the breadcrumb structure.
@@ -84,7 +84,7 @@ This keeps the breadcrumb aligned to project and primary selection while still r
 ### LAYOUT_15
 Resizable panel defaults are fixed for v1 desktop layouts.
 
-The primary left-side navigation panel for scenarios, suites, phases, and runs should default to `320px`, with a minimum width of `260px` and a maximum width of `420px`. The second-tier run-details navigation panel should default to `280px`, with a minimum width of `220px` and a maximum width of `360px`.
+The primary left-side navigation panel for scenarios, suites, fixtures, phases, and runs should default to `320px`, with a minimum width of `260px` and a maximum width of `420px`. The second-tier run-details navigation panel should default to `280px`, with a minimum width of `220px` and a maximum width of `360px`.
 
 ### LAYOUT_16
 The v1 layout is desktop-first and does not define a mobile experience.

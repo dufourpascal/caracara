@@ -15,6 +15,7 @@ import {
   CircleDashed,
   CircleHelp,
   Copy,
+  Database,
   FolderCode,
   GitBranch,
   History,
@@ -92,12 +93,20 @@ import {
 } from "@workspace/ui/components/tooltip"
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
+import { FixtureEditor } from "@/components/fixture-editor"
+import {
+  countRunFixtures,
+  FixtureHealthBadges,
+  hasRunFixtures,
+  RunFixturesDetail,
+} from "@/components/fixture-status"
 import { ScenarioGraph } from "@/components/scenario-graph"
 import { getErrorMessage } from "@/lib/errors"
 import { usePersistedPanelLayout } from "@/lib/panel-layout"
 import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
-type WorkspaceKind = "project" | "suites" | "scenarios" | "runs" | "phases"
+type WorkspaceKind =
+  "project" | "suites" | "fixtures" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
 const SIDEBAR_PAGE_SIZES = [10, 20, 50] as const
 const UNTITLED_SCENARIO_SLUG_PATTERN = /^untitled(?:-\d+)?$/
@@ -114,6 +123,7 @@ const RUN_DETAIL_NAV_PANEL_SIZES = {
 const WORKSPACE_NAVIGATION_ORDER = [
   "project",
   "suites",
+  "fixtures",
   "phases",
   "scenarios",
   "runs",
@@ -135,6 +145,8 @@ function getWorkspaceHref({
       return `/projects/${projectSlug}/runs`
     case "suites":
       return `/projects/${projectSlug}/suites`
+    case "fixtures":
+      return `/projects/${projectSlug}/fixtures`
     case "phases":
       return `/projects/${projectSlug}/phases`
     case "scenarios":
@@ -154,6 +166,8 @@ function getWorkspaceIcon(workspace: WorkspaceKind) {
       return TableOfContents
     case "suites":
       return ListChecks
+    case "fixtures":
+      return Database
     case "scenarios":
       return Pencil
     case "runs":
@@ -978,6 +992,11 @@ function AuthenticatedProjectWorkspace({
   const createSuite = useMutation(api.suites.create)
   const updateSuite = useMutation(api.suites.update)
   const removeSuite = useMutation(api.suites.remove)
+  const createFixture = useMutation(api.fixtures.create)
+  const updateFixture = useMutation(api.fixtures.update)
+  const removeFixture = useMutation(api.fixtures.remove)
+  const setFixtureRequirement = useMutation(api.fixtures.setRequirement)
+  const removeFixtureRequirement = useMutation(api.fixtures.removeRequirement)
   const createScenario = useMutation(api.scenarios.create)
   const ensureScenarioNavigationMetadata = useMutation(
     api.scenarios.ensureNavigationMetadataForProject
@@ -992,6 +1011,10 @@ function AuthenticatedProjectWorkspace({
   const suites = useQuery(
     api.suites.listForProject,
     !hasDeletedProject && workspace === "suites" ? { projectSlug } : "skip"
+  )
+  const fixtures = useQuery(
+    api.fixtures.listForProject,
+    !hasDeletedProject && workspace === "fixtures" ? { projectSlug } : "skip"
   )
   const [scenarioSearch, setScenarioSearch] = useState("")
   const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
@@ -1010,6 +1033,20 @@ function AuthenticatedProjectWorkspace({
   const [phaseError, setPhaseError] = useState<string | null>(null)
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null)
   const [suiteError, setSuiteError] = useState<string | null>(null)
+  const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(
+    null
+  )
+  const [fixtureError, setFixtureError] = useState<string | null>(null)
+  const selectedFixture =
+    fixtures?.find((fixture) => fixture.id === selectedFixtureId) ??
+    fixtures?.[0] ??
+    null
+  const fixtureOperations = useQuery(
+    api.fixtures.listOperationsForFixture,
+    !hasDeletedProject && workspace === "fixtures" && selectedFixture
+      ? { projectSlug, fixtureId: selectedFixture.id }
+      : "skip"
+  )
   const normalizedScenarioSearch = scenarioSearch.trim()
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
@@ -1079,7 +1116,9 @@ function AuthenticatedProjectWorkspace({
   const scenarioSummaries = useQuery(
     api.scenarios.listSummariesForProject,
     !hasDeletedProject &&
-      (workspace === "phases" || (workspace === "scenarios" && mode === "edit"))
+      (workspace === "phases" ||
+        workspace === "fixtures" ||
+        (workspace === "scenarios" && mode === "edit"))
       ? { projectSlug }
       : "skip"
   )
@@ -1122,6 +1161,12 @@ function AuthenticatedProjectWorkspace({
       ? { projectSlug, runId: selectedRunId as Id<"runs"> }
       : "skip"
   )
+  const runFixtureOperations = useQuery(
+    api.fixtures.listOperationsForRun,
+    !hasDeletedProject && workspace === "runs" && selectedRunId
+      ? { projectSlug, runId: selectedRunId as Id<"runs"> }
+      : "skip"
+  )
   const scenarioListPanelId = getPanelLayoutToken({
     projectSlug,
     workspace: "scenarios",
@@ -1140,6 +1185,16 @@ function AuthenticatedProjectWorkspace({
   const suiteDetailPanelId = getPanelLayoutToken({
     projectSlug,
     workspace: "suites",
+    scope: "detail",
+  })
+  const fixtureListPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "fixtures",
+    scope: "list",
+  })
+  const fixtureDetailPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "fixtures",
     scope: "detail",
   })
   const runListPanelId = getPanelLayoutToken({
@@ -1177,6 +1232,14 @@ function AuthenticatedProjectWorkspace({
       scope: "layout",
     }),
     [suiteListPanelId]
+  )
+  const fixturePanelLayout = usePersistedPanelLayout(
+    getPanelLayoutToken({
+      projectSlug,
+      workspace: "fixtures",
+      scope: "layout",
+    }),
+    [fixtureListPanelId]
   )
   const runPanelLayout = usePersistedPanelLayout(
     getPanelLayoutToken({
@@ -2011,6 +2074,129 @@ function AuthenticatedProjectWorkspace({
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
+      ) : workspace === "fixtures" ? (
+        <ResizablePanelGroup
+          className="flex-1"
+          defaultLayout={fixturePanelLayout.defaultLayout}
+          key={fixturePanelLayout.storageKey}
+          onLayoutChanged={fixturePanelLayout.onLayoutChanged}
+          orientation="horizontal"
+        >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={fixtureListPanelId}>
+            <div className="flex h-full flex-col border-r border-border">
+              <div className="border-b border-border bg-muted/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                    Fixture registry
+                  </p>
+                  <Button
+                    aria-label="Create fixture"
+                    size="icon-sm"
+                    onClick={async () => {
+                      await runWithErrorMessage(async () => {
+                        const created = await createFixture({
+                          projectId: project.id as never,
+                          name: `Fixture ${(fixtures?.length ?? 0) + 1}`,
+                        })
+                        setSelectedFixtureId(created.id)
+                      }, setFixtureError)
+                    }}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
+                {fixtureError ? (
+                  <p className="mt-3 text-sm text-destructive" role="alert">
+                    {fixtureError}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex-1 overflow-auto px-3 py-3">
+                {fixtures === undefined ? (
+                  <div className="px-2 py-2 text-sm text-muted-foreground">
+                    Loading fixtures...
+                  </div>
+                ) : fixtures.length === 0 ? (
+                  <NavigationEmptyState
+                    description="Create a fixture for persistent test data that evaluation runs rely on and must not break."
+                    icon={Database}
+                    title="No fixtures yet"
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          await runWithErrorMessage(async () => {
+                            const created = await createFixture({
+                              projectId: project.id as never,
+                              name: "Fixture 1",
+                            })
+                            setSelectedFixtureId(created.id)
+                          }, setFixtureError)
+                        }}
+                      >
+                        <Plus />
+                        Create fixture
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <div className="grid gap-2">
+                    {fixtures.map((fixture) => (
+                      <button
+                        aria-pressed={fixture.id === selectedFixture?.id}
+                        className={cn(
+                          "grid w-full gap-2 border border-border px-3 py-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                          fixture.id === selectedFixture?.id
+                            ? "bg-muted/40"
+                            : "bg-background hover:bg-muted/20"
+                        )}
+                        key={fixture.id}
+                        onClick={() => setSelectedFixtureId(fixture.id)}
+                        type="button"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            {fixture.name}
+                          </span>
+                          <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
+                            {fixture.slug}
+                          </span>
+                        </span>
+                        <FixtureHealthBadges health={fixture.health} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel id={fixtureDetailPanelId}>
+            {selectedFixture ? (
+              <FixtureEditor
+                fixture={selectedFixture}
+                key={`${selectedFixture.id}:${selectedFixture.updatedAt}`}
+                onDeleted={() => setSelectedFixtureId(null)}
+                operations={fixtureOperations}
+                phases={phases ?? []}
+                projectId={project.id}
+                removeFixture={removeFixture}
+                removeRequirement={removeFixtureRequirement}
+                scenarios={scenarioSummaries ?? []}
+                setRequirement={setFixtureRequirement}
+                updateFixture={updateFixture}
+              />
+            ) : (
+              <BlankDetailPanel
+                description="Choose a fixture to edit its definition, converge steps, health checks, and the phases and scenarios that use it."
+                icon={Database}
+                title="Select a fixture"
+              />
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
       ) : workspace === "phases" ? (
         <ResizablePanelGroup
           className="flex-1"
@@ -2484,6 +2670,47 @@ function AuthenticatedProjectWorkspace({
                       </div>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto">
+                      {hasRunFixtures(
+                        runDetail.run.fixturePreflight,
+                        runFixtureOperations
+                      ) ? (
+                        <button
+                          aria-pressed={!selectedRunScenarioSlug}
+                          className={cn(
+                            "grid w-full grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 border-b-2 border-border px-4 py-3 text-left transition-colors",
+                            !selectedRunScenarioSlug
+                              ? "bg-muted/40"
+                              : "hover:bg-muted/20"
+                          )}
+                          onClick={() => {
+                            setSelectedRunScenarioSlug(undefined)
+                            window.history.pushState(
+                              null,
+                              "",
+                              getRunHref({
+                                environment: runEnvironment,
+                                projectSlug,
+                                runId: runDetail.run.id,
+                              })
+                            )
+                          }}
+                          type="button"
+                        >
+                          <Database
+                            aria-hidden
+                            className="size-4 justify-self-center text-muted-foreground"
+                          />
+                          <span className="truncate text-sm text-foreground">
+                            Fixtures
+                          </span>
+                          <Badge className="font-mono" variant="outline">
+                            {countRunFixtures(
+                              runDetail.run.fixturePreflight,
+                              runFixtureOperations
+                            )}
+                          </Badge>
+                        </button>
+                      ) : null}
                       {runDetail.results.map((result) => (
                         <button
                           key={result.id}
@@ -2550,6 +2777,14 @@ function AuthenticatedProjectWorkspace({
                             result.scenarioSlug === selectedRunScenarioSlug
                         ) ?? null
                       }
+                    />
+                  ) : hasRunFixtures(
+                      runDetail.run.fixturePreflight,
+                      runFixtureOperations
+                    ) ? (
+                    <RunFixturesDetail
+                      operations={runFixtureOperations}
+                      preflight={runDetail.run.fixturePreflight}
                     />
                   ) : (
                     <BlankDetailPanel

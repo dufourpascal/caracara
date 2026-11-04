@@ -535,11 +535,35 @@ export function buildBlockedRetryPrompt(input: {
 
 /** Progress text, toasts and running states disappear, so their screenshots must be taken when seen. */
 const transientFailureEvidence =
-  "Some failures are transient: progress or status text, toasts, loading states and running jobs. When you observe one, follow the screenshot steps below for that check right away, because the state may be gone by the end of the scenario."
+  "Some failures are transient: progress or status text, toasts, loading states and running jobs. When you observe one, save its screenshot to the listed failure path immediately, before previewing, because the state may vanish within seconds. Afterwards you may preview and overwrite the same path if you find a clearer view."
+
+/** Appended to evidence whose screenshot was only captured in the correction turn. */
+export const LATE_SCREENSHOT_NOTE =
+  "Screenshot captured after the scenario; a transient state may no longer be visible in it."
+
+/** Marks checks whose screenshot came from the correction turn, keeping evidence within the 2,000 character limit. */
+export function annotateLateScreenshots(
+  execution: RunnerExecution,
+  lateCheckIds: string[]
+): RunnerExecution {
+  const late = new Set(lateCheckIds)
+  return {
+    ...execution,
+    checkResults: execution.checkResults.map((result) => {
+      if (!late.has(result.checkId)) return result
+      const room = 2_000 - LATE_SCREENSHOT_NOTE.length - 1
+      const base =
+        result.evidence.length > room
+          ? `${result.evidence.slice(0, room - 1)}…`
+          : result.evidence
+      return { ...result, evidence: `${base} ${LATE_SCREENSHOT_NOTE}` }
+    }),
+  }
+}
 
 /** A correction turn cannot bring back a transient state, so it captures where the failure appeared instead of failing the run. */
 const transientFailureCorrection =
-  "If the failure was transient and can no longer be shown, capture the closest view of where it appeared, such as the finished row, status area or the control that started it."
+  "If the failure was transient and can no longer be shown, this replaces the rule about repeating until the defect is visible: save the closest view of where it appeared, such as the finished row, status area or the control that started it. Caracara notes on that check that its screenshot was taken afterwards."
 
 export function buildMissingScreenshotPrompt(input: {
   scenario: OrderedScenario
@@ -1098,6 +1122,7 @@ class CodexRunner implements RunnerAdapter {
               checkIds: failedCheckIds,
             })
 
+            const lateScreenshotCheckIds = screenshots.missingCheckIds
             if (screenshots.missingCheckIds.length > 0) {
               waitingForUsage = true
               const correction = await thread.run(
@@ -1131,7 +1156,10 @@ class CodexRunner implements RunnerAdapter {
 
             return {
               ...redactRunnerExecution(
-                redactEvidenceDirectory(validated, evidenceDirectory),
+                redactEvidenceDirectory(
+                  annotateLateScreenshots(validated, lateScreenshotCheckIds),
+                  evidenceDirectory
+                ),
                 input.secrets
               ),
               screenshotEvidence: screenshots.evidence,

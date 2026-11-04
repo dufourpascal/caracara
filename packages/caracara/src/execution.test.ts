@@ -14,6 +14,8 @@ import {
   buildExecutionResultSchema,
   buildMissingScreenshotPrompt,
   buildRunnerPrompt,
+  annotateLateScreenshots,
+  LATE_SCREENSHOT_NOTE,
   buildWindowsTaskkillArgs,
   formatRunnerUsage,
   hasWebpSignature,
@@ -651,5 +653,42 @@ describe("runner usage", () => {
       reasoningOutputTokens: 0,
       estimatedCostUsd: 0.0123,
     })
+  })
+})
+
+describe("late screenshot evidence", () => {
+  it("notes only checks whose screenshot came from the correction turn", () => {
+    const annotated = annotateLateScreenshots(
+      {
+        executionSummary: "Exported once.",
+        checkResults: [
+          {
+            checkId: "a",
+            verdict: "failed",
+            evidence: "Progress said Getting things ready twice.",
+            blockedReason: null,
+          },
+          {
+            checkId: "b",
+            verdict: "failed",
+            evidence: "x".repeat(2_000),
+            blockedReason: null,
+          },
+          {
+            checkId: "c",
+            verdict: "failed",
+            evidence: "Captured in time.",
+            blockedReason: null,
+          },
+        ],
+      },
+      ["a", "b"]
+    )
+    expect(annotated.checkResults[0]?.evidence).toBe(
+      `Progress said Getting things ready twice. ${LATE_SCREENSHOT_NOTE}`
+    )
+    expect(annotated.checkResults[1]?.evidence.length).toBeLessThanOrEqual(2_000)
+    expect(annotated.checkResults[1]?.evidence.endsWith(LATE_SCREENSHOT_NOTE)).toBe(true)
+    expect(annotated.checkResults[2]?.evidence).toBe("Captured in time.")
   })
 })

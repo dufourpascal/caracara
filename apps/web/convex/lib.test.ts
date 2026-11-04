@@ -10,6 +10,7 @@ import {
   validateCompletedCheckResults,
   validateFailedCheckEvidence,
   validateRunnerMatch,
+  validateTokenUsage,
 } from "./lib"
 
 describe("convex response mappers", () => {
@@ -235,6 +236,26 @@ describe("convex response mappers", () => {
       { id: "phase-4", name: "Demo", order: 4 },
     ])
     expect(Number.isInteger(run.createdAt)).toBe(true)
+    expect(run.requestedPhaseOrders).toBeNull()
+    expect(
+      toRun({
+        _id: "run-id",
+        _creationTime: 1,
+        projectId: "project-id",
+        ownerUserId: "user-id",
+        name: "steady-hawk-20260308-120000",
+        status: "running",
+        mode: "phases",
+        requestedScenarioSlug: null,
+        requestedPhaseOrders: [1, 3],
+        runnerType: "codex",
+        passedCheckCount: 0,
+        totalCheckCount: 0,
+        startedAt: 1,
+        finishedAt: null,
+        updatedAt: 1,
+      } as never).requestedPhaseOrders
+    ).toEqual([1, 3])
     expect(result.submittedAt).toBe(2345)
     expect(Number.isInteger(result.submittedAt)).toBe(true)
     expect(result.status).toBe("completed")
@@ -392,5 +413,118 @@ describe("convex response mappers", () => {
         scenarioId: "scenario-c",
       }),
     ])
+  })
+})
+
+describe("scenario token usage", () => {
+  it("treats token usage as part of an exact terminal result retry", () => {
+    const result = {
+      status: "completed",
+      checkResults: [{ checkId: "a", verdict: "passed", evidence: "Visible" }],
+      executionSummary: "Complete",
+      failureDetail: null,
+      finishedAt: 123,
+    }
+    const usage = {
+      inputTokens: 10,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 0,
+      outputTokens: 2,
+      reasoningOutputTokens: 0,
+      complete: true,
+    }
+    expect(
+      matchesTerminalScenarioResult(
+        { ...result, tokenUsage: usage },
+        { ...result, tokenUsage: { ...usage } }
+      )
+    ).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(
+        { ...result, tokenUsage: usage },
+        { ...result, tokenUsage: { ...usage, outputTokens: 3 } }
+      )
+    ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult({ ...result, tokenUsage: usage }, result)
+    ).toBe(false)
+    expect(
+      matchesTerminalScenarioResult(result, { ...result, tokenUsage: usage })
+    ).toBe(false)
+    const interrupted = { ...result, status: "interrupted", checkResults: [] }
+    expect(
+      matchesTerminalScenarioResult(
+        { ...interrupted, tokenUsage: usage },
+        interrupted
+      )
+    ).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(
+        { ...interrupted, tokenUsage: usage },
+        { ...interrupted, tokenUsage: { ...usage, outputTokens: 3 } }
+      )
+    ).toBe(false)
+  })
+
+  const usage = {
+    inputTokens: 1_000,
+    cachedInputTokens: 600,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 50,
+    complete: true,
+  }
+  const baseResult = {
+    _id: "result-id",
+    _creationTime: 2000,
+    runId: "run-id",
+    scenarioId: "scenario-id",
+    scenarioSlug: "demo-scenario",
+    scenarioName: "Demo scenario",
+    executionInstructions: "Do the thing",
+    evaluationChecks: [],
+    checkResults: [],
+    sequenceIndex: 0,
+    status: "completed",
+    runnerType: "codex",
+    executionSummary: "Output",
+    failureDetail: null,
+    startedAt: 1000,
+    finishedAt: 1100,
+  }
+
+  it("maps stored usage and defaults older results to null", () => {
+    expect(toScenarioResult(baseResult as never).tokenUsage).toBeNull()
+    expect(
+      toScenarioResult({ ...baseResult, tokenUsage: usage } as never).tokenUsage
+    ).toEqual(usage)
+  })
+
+  it("accepts omitted usage and non-negative integer counts", () => {
+    expect(() => validateTokenUsage("completed", undefined)).not.toThrow()
+    expect(() => validateTokenUsage("runner_failed", usage)).not.toThrow()
+    expect(() =>
+      validateTokenUsage("interrupted", { ...usage, complete: false })
+    ).not.toThrow()
+  })
+
+  it.each([
+    ["a negative count", { ...usage, outputTokens: -1 }],
+    ["a fractional count", { ...usage, inputTokens: 1.5 }],
+    ["a non-finite count", { ...usage, cachedInputTokens: Number.NaN }],
+  ])("rejects %s", (_, tokenUsage) => {
+    expect(() => validateTokenUsage("completed", tokenUsage)).toThrow(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "validation_error" }),
+      })
+    )
+  })
+
+  it("rejects usage on scenarios that never ran", () => {
+    expect(() => validateTokenUsage("dependency_failed", usage)).toThrow(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "validation_error" }),
+      })
+    )
   })
 })

@@ -28,4 +28,18 @@ export type RunCommandOptions = {
   throughPhase?: string
   /** check (default), repair, or skip */
   fixtures?: string
+  phases?: string
+  keepGoing?: boolean
+  json?: boolean
+  quiet?: boolean
+  plain?: boolean
+  heartbeat?: string
+  failOn?: string
+}
+
+export type ResultsCommandOptions = {
+  apiBaseUrl?: string
+  project?: string
+  environment?: string
+  json?: boolean
 }

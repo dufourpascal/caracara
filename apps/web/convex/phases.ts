@@ -2,7 +2,6 @@ import { ConvexError, v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
 import {
-  assertProjectAuthoringUnlocked,
   deleteDependenciesTouchingScenarioIds,
   deleteFixtureRequirementsForTarget,
   ensurePhaseOwnership,
@@ -44,7 +43,6 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const phaseId = await ctx.db.insert("phases", {
@@ -71,12 +69,11 @@ export const update = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const { project, phase } = await ensurePhaseOwnership(
+    const { phase } = await ensurePhaseOwnership(
       ctx,
       args.phaseId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     await ctx.db.patch(phase._id, {
       name: args.name,
       updatedAt: Date.now(),
@@ -98,7 +95,6 @@ export const reorder = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
 
     if (phases.length !== args.phaseIds.length) {
@@ -152,7 +148,6 @@ export const remove = mutation({
       args.phaseId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const [scenarios, suites] = await Promise.all([
       getProjectScenarios(ctx, project._id),
       getProjectSuites(ctx, project._id),

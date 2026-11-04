@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  assertProjectAuthoringUnlocked,
+  assertNoRunningProjectRun,
   ensurePhaseOwnership,
   ensureScenarioDependenciesReusable,
   ensureScenarioOwnership,
@@ -46,20 +46,27 @@ function contextWithRun(run: { name: string } | null) {
   } as never
 }
 
-describe("authoring lock", () => {
-  it("allows writes without a running project run", async () => {
+describe("running-run guard", () => {
+  it("allows the action without a running project run", async () => {
     await expect(
-      assertProjectAuthoringUnlocked(contextWithRun(null), "project-1" as never)
+      assertNoRunningProjectRun(
+        contextWithRun(null),
+        "project-1" as never,
+        "Project deletion"
+      )
     ).resolves.toBeUndefined()
   })
 
-  it("blocks writes while a project run is running", async () => {
+  it("names the action and the running run when it blocks", async () => {
     await expect(
-      assertProjectAuthoringUnlocked(
+      assertNoRunningProjectRun(
         contextWithRun({ name: "swift-heron-20260825-120000" }),
-        "project-1" as never
+        "project-1" as never,
+        "Scenario deletion"
       )
-    ).rejects.toThrow(/swift-heron-20260825-120000/)
+    ).rejects.toThrow(
+      "Scenario deletion is unavailable while run swift-heron-20260825-120000 is running. Finish or delete that run to continue."
+    )
   })
 })
 

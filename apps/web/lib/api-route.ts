@@ -659,6 +659,7 @@ export async function createRun(
       targetUrl: payload.targetUrl,
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
+      requestedPhaseOrders: payload.requestedPhaseOrders ?? null,
       requestedSuiteSlug: payload.requestedSuiteSlug ?? null,
       startedAt: payload.startedAt,
       ...(payload.creationAttemptId
@@ -712,6 +713,31 @@ export async function submitScenarioResult(args: {
     },
     { token: args.token }
   )
+}
+
+export async function getRunResults(args: {
+  token: string
+  projectSlug: string
+  runRef: string
+  environment?: string
+}) {
+  const response = await fetchQuery(
+    api.runs.getResults,
+    {
+      projectSlug: args.projectSlug,
+      runRef: args.runRef,
+      ...(args.environment !== undefined
+        ? { environment: args.environment }
+        : {}),
+    },
+    { token: args.token }
+  )
+
+  if (!response) {
+    throw new ApiRouteError(404, "not_found", "Run not found.")
+  }
+
+  return response
 }
 
 export async function startScenarioExecution(args: {

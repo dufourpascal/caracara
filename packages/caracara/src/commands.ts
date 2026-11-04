@@ -5,7 +5,9 @@ import {
   CONVEX_TOKEN_TEMPLATE,
   API_NAMESPACE,
   formatRunName,
+  MAX_REQUESTED_PHASE_ORDERS,
   type AuthoringRequest,
+  type CheckResult,
   type Fixture,
   type OrderedScenario,
   type RunnablePhase,
@@ -17,6 +19,7 @@ import {
   fetchFixtures,
   finalizeRun,
   fetchProjects,
+  fetchRunResults,
   fetchSingleScenario,
   fetchWhoAmI,
   startScenarioExecution,
@@ -39,6 +42,7 @@ import {
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
+import { writeDiagnostic } from "./diagnostics.js"
 import {
   formatRunnerUsage,
   getRunnerAdapter,
@@ -67,7 +71,31 @@ import {
   type FixturePreflightEntry,
   type FixtureRuntime,
 } from "./fixtures.js"
-import type { InitCommandOptions, RunCommandOptions } from "./types.js"
+import {
+  parseHeartbeat,
+  resolveOutputMode,
+  RunProgress,
+  type ProgressIo,
+} from "./run-progress.js"
+import {
+  buildRunReport,
+  buildScenarioReport,
+  parseFailOn,
+  resolveRunExitCode,
+  type RunReportScenario,
+  type ScenarioOutcome,
+} from "./run-report.js"
+import {
+  assertResultsEnvironmentFilter,
+  buildRunResultsReport,
+  formatRunResultsTable,
+  toTokenUsageField,
+} from "./results.js"
+import type {
+  InitCommandOptions,
+  ResultsCommandOptions,
+  RunCommandOptions,
+} from "./types.js"
 import { CLI_VERSION } from "./version.js"
 
 const CLIENT_ID = "caracara-cli"
@@ -517,6 +545,72 @@ function parsePhaseOrder(value: string | undefined, flagName: string) {
   return parsed
 }
 
+/**
+ * Parses a phase list such as `1-7,9,10` into sorted, unique phase orders.
+ * Ranges are checked before they are expanded.
+ */
+export function parsePhaseList(value: string) {
+  const tokens = value.split(",").map((token) => token.trim())
+  if (tokens.some((token) => token === "")) {
+    throw new Error(
+      "--phases must be a comma-separated list of phase numbers or ranges, such as 1-7,9,10."
+    )
+  }
+  const orders = new Set<number>()
+  for (const token of tokens) {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(token)
+    if (!match) {
+      throw new Error(
+        `--phases has an invalid entry "${token}". Use phase numbers or ranges, such as 1-7,9,10.`
+      )
+    }
+    const start = Number(match[1])
+    const end = match[2] === undefined ? start : Number(match[2])
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+      throw new Error(`--phases entry "${token}" is too large.`)
+    }
+    if (start <= 0 || end <= 0) {
+      throw new Error("--phases entries must be positive phase numbers.")
+    }
+    if (end < start) {
+      throw new Error(`--phases range "${token}" must go from low to high.`)
+    }
+    if (end - start + 1 > MAX_REQUESTED_PHASE_ORDERS) {
+      throw new Error(
+        `--phases can select at most ${MAX_REQUESTED_PHASE_ORDERS} phases.`
+      )
+    }
+    for (let order = start; order <= end; order += 1) {
+      orders.add(order)
+      if (orders.size > MAX_REQUESTED_PHASE_ORDERS) {
+        throw new Error(
+          `--phases can select at most ${MAX_REQUESTED_PHASE_ORDERS} phases.`
+        )
+      }
+    }
+  }
+  return [...orders].sort((left, right) => left - right)
+}
+
+/** Formats sorted phase orders compactly, for example `1-7, 9, 10`. */
+export function formatPhaseList(orders: readonly number[]) {
+  const parts: string[] = []
+  let index = 0
+  while (index < orders.length) {
+    let end = index
+    while (end + 1 < orders.length && orders[end + 1] === orders[end]! + 1) {
+      end += 1
+    }
+    parts.push(
+      end - index >= 2
+        ? `${orders[index]}-${orders[end]}`
+        : orders.slice(index, end + 1).join(", ")
+    )
+    index = end + 1
+  }
+  return parts.join(", ")
+}
+
 export function resolveRunMode(options: RunCommandOptions) {
   const requestedPhaseOrder = parsePhaseOrder(options.phase, "--phase")
   const requestedThroughPhaseOrder = parsePhaseOrder(
@@ -529,57 +623,131 @@ export function resolveRunMode(options: RunCommandOptions) {
     options.suite ? "--suite" : null,
     requestedPhaseOrder !== null ? "--phase" : null,
     requestedThroughPhaseOrder !== null ? "--through-phase" : null,
+    options.phases !== undefined ? "--phases" : null,
   ].filter((selector): selector is string => selector !== null)
 
   if (selectors.length > 1) {
     throw new Error(`${selectors.join(", ")} cannot be combined.`)
   }
 
+  const none = {
+    requestedScenarioSlug: null,
+    requestedPhaseOrder: null,
+    requestedPhaseOrders: null,
+    requestedSuiteSlug: null,
+  }
+
   if (options.scenario) {
     return {
+      ...none,
       mode: "single" as const,
       requestedScenarioSlug: options.scenario,
-      requestedPhaseOrder: null,
-      requestedSuiteSlug: null,
     }
   }
 
   if (options.suite) {
     return {
+      ...none,
       mode: "suite" as const,
-      requestedScenarioSlug: null,
-      requestedPhaseOrder: null,
       requestedSuiteSlug: options.suite,
     }
   }
 
+  if (options.phases !== undefined) {
+    const orders = parsePhaseList(options.phases)
+    return orders.length === 1
+      ? { ...none, mode: "phase" as const, requestedPhaseOrder: orders[0]! }
+      : { ...none, mode: "phases" as const, requestedPhaseOrders: orders }
+  }
+
   if (requestedPhaseOrder !== null) {
     return {
+      ...none,
       mode: "phase" as const,
-      requestedScenarioSlug: null,
       requestedPhaseOrder,
-      requestedSuiteSlug: null,
     }
   }
 
   if (requestedThroughPhaseOrder !== null) {
     return {
+      ...none,
       mode: "through_phase" as const,
-      requestedScenarioSlug: null,
       requestedPhaseOrder: requestedThroughPhaseOrder,
-      requestedSuiteSlug: null,
     }
   }
 
-  return {
-    mode: "all" as const,
-    requestedScenarioSlug: null,
-    requestedPhaseOrder: null,
-    requestedSuiteSlug: null,
+  return { ...none, mode: "all" as const }
+}
+
+type RunSelection = ReturnType<typeof resolveRunMode>
+
+export function describeRunSelection(selection: RunSelection) {
+  switch (selection.mode) {
+    case "single":
+      return `scenario ${selection.requestedScenarioSlug}`
+    case "suite":
+      return `suite ${selection.requestedSuiteSlug}`
+    case "phase":
+      return `phase ${selection.requestedPhaseOrder}`
+    case "through_phase":
+      return `phases 1-${selection.requestedPhaseOrder}`
+    case "phases":
+      return `phases ${formatPhaseList(selection.requestedPhaseOrders)}`
+    case "all":
+      return "all phases"
   }
 }
 
-export async function runCommand(options: RunCommandOptions) {
+type SuitePhaseSnapshot = { id: string; name: string; order: number }
+
+const suitePhaseKey = (phase: SuitePhaseSnapshot) =>
+  JSON.stringify([phase.id, phase.name, phase.order])
+
+// Suite runs snapshot their phases when the run is created, before the CLI
+// fetches the plan. Authoring stays open during runs, so refuse to execute a
+// plan whose suite phases (membership, names or order) changed in between
+// instead of labeling the run with phases it did not run.
+export function assertSuitePlanMatchesRun(args: {
+  suiteSlug: string
+  runPhases: SuitePhaseSnapshot[]
+  planPhases: SuitePhaseSnapshot[]
+}) {
+  const runPhases = new Set(args.runPhases.map(suitePhaseKey))
+  const planPhases = new Set(args.planPhases.map(suitePhaseKey))
+  if (
+    runPhases.size !== planPhases.size ||
+    [...planPhases].some((phase) => !runPhases.has(phase))
+  ) {
+    throw new Error(
+      `Suite "${args.suiteSlug}" changed while the run was starting. Run it again.`
+    )
+  }
+}
+
+export async function runCommand(
+  options: RunCommandOptions,
+  ioOverrides: Partial<ProgressIo> = {}
+) {
+  const io: ProgressIo = {
+    stdout: process.stdout,
+    stderr: process.stderr,
+    env: process.env,
+    now: Date.now,
+    ...ioOverrides,
+  }
+  const outputMode = resolveOutputMode({
+    json: options.json,
+    quiet: options.quiet,
+    plain: options.plain,
+    stdout: io.stdout,
+    stderr: io.stderr,
+    env: io.env,
+  })
+  const heartbeatMs = parseHeartbeat(options.heartbeat)
+  const failOn = parseFailOn(options.failOn)
+  const runSelection = resolveRunMode(options)
+  const selection = describeRunSelection(runSelection)
+  const fixtureMode = parseFixtureMode(options.fixtures)
   const cwd = process.cwd()
   const [config, secrets] = await Promise.all([
     readResolvedConfig(
@@ -606,7 +774,6 @@ export async function runCommand(options: RunCommandOptions) {
     options.environment,
     process.env
   )
-  const fixtureMode = parseFixtureMode(options.fixtures)
   // Hooks are local only. They are read when the selection requires
   // fixtures, so a broken fixtures.json cannot block unrelated runs.
   let hooksConfig: FixtureHooksConfig | null = null
@@ -617,11 +784,27 @@ export async function runCommand(options: RunCommandOptions) {
       fixtureHooks = getProjectFixtureHooks(hooksConfig, projectSlug)
     }
   }
+  // Fixture preflight and post-run maintenance happen outside the live panel.
+  // JSON and quiet output keep stdout for their own format, so fixture lines
+  // (and hook output) go to stderr there.
+  const writeFixtureOutput = (text: string) => {
+    if (outputMode === "json" || outputMode === "quiet") {
+      io.stderr.write(text)
+    } else {
+      io.stdout.write(text)
+    }
+  }
+  // Fixture operations are not scenarios, so their token usage is reported on
+  // its own instead of in the run's scenario totals.
+  const printFixtureUsage = (label: string, report: RunnerUsageReport) => {
+    if (report.usage || !report.complete) {
+      writeFixtureOutput(`\n${label}\n${formatRunnerUsage(report)}\n`)
+    }
+  }
 
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   await runner.preflight?.()
-  const runSelection = resolveRunMode(options)
   const runStartedAt = Date.now()
   const creationAttemptId = crypto.randomUUID()
   const finalizationAttemptId = crypto.randomUUID()
@@ -660,13 +843,7 @@ export async function runCommand(options: RunCommandOptions) {
   }
   const reportInterruptedFinalizationError = (error: unknown) => {
     const message = error instanceof Error ? error.message : "Unknown error"
-    process.stderr.write(`Failed to finalize interrupted run: ${message}\n`)
-  }
-  let runUsage: RunnerUsageReport = { complete: true }
-  const printUsage = (report: RunnerUsageReport) => {
-    if (report.usage || !report.complete) {
-      process.stdout.write(`\n${formatRunnerUsage(report)}\n`)
-    }
+    writeDiagnostic(`Failed to finalize interrupted run: ${message}\n`)
   }
   // One runner session serves preflight agent operations and the run.
   const sessions = createLazyRunnerSession(() =>
@@ -712,9 +889,7 @@ export async function runCommand(options: RunCommandOptions) {
       }
     },
     recordUsage,
-    write: (text) => {
-      process.stdout.write(text)
-    },
+    write: writeFixtureOutput,
   })
   const warnAboutUnknownHooks = async () => {
     if (Object.keys(fixtureHooks).length === 0) {
@@ -733,7 +908,7 @@ export async function runCommand(options: RunCommandOptions) {
         fixtures.map((fixture) => fixture.slug)
       )
       if (unknown.length > 0) {
-        process.stderr.write(
+        writeDiagnostic(
           `Warning: ${hooksConfig?.path ?? ".caracara/fixtures.json"} configures hooks for ${unknown.join(", ")}, which ${unknown.length === 1 ? "is not a fixture" : "are not fixtures"} of project ${projectSlug}.\n`
         )
       }
@@ -744,7 +919,7 @@ export async function runCommand(options: RunCommandOptions) {
   let fixturePreflight: FixturePreflightEntry[] = []
   /**
    * Verifies the selection's fixtures before the run exists. Returns false
-   * when the command must stop: a signal, or an unhealthy fixture (exit 3).
+   * when the command must stop: a signal, or an unhealthy fixture (exit 4).
    */
   const runPreflightBeforeCreation = async (source: {
     project: { projectPrompt: string }
@@ -757,16 +932,16 @@ export async function runCommand(options: RunCommandOptions) {
       return true
     }
     listenForInterrupts()
+    let preflightUsage: RunnerUsageReport = { complete: true }
     const cleanUp = async () => {
       try {
         await sessions.close()
       } catch (error) {
-        process.stderr.write(
+        writeDiagnostic(
           `Failed to close the runner: ${error instanceof Error ? error.message : "Unknown error"}\n`
         )
       }
       stopListeningForInterrupts()
-      printUsage(runUsage)
     }
     let result: Awaited<ReturnType<typeof runFixturePreflight>>
     try {
@@ -776,7 +951,7 @@ export async function runCommand(options: RunCommandOptions) {
       }
       result = await runFixturePreflight(
         createFixtureRuntime(source.project.projectPrompt, (usage) => {
-          runUsage = mergeRunnerUsage(runUsage, usage)
+          preflightUsage = mergeRunnerUsage(preflightUsage, usage)
         }),
         required,
         fixtureMode,
@@ -784,17 +959,19 @@ export async function runCommand(options: RunCommandOptions) {
       )
     } catch (error) {
       await cleanUp()
+      printFixtureUsage("Fixture preflight usage", preflightUsage)
       if (setSignalExitCode()) {
         return false
       }
       throw error
     }
+    printFixtureUsage("Fixture preflight usage", preflightUsage)
     if (!result.ok) {
       await cleanUp()
-      process.stdout.write(
+      writeFixtureOutput(
         `\n${formatPreflightAbort(result.unhealthy, fixtureMode, environment.name)}`
       )
-      process.exitCode = 3
+      process.exitCode = 4
       return false
     }
     if (interruptedSignal) {
@@ -816,6 +993,9 @@ export async function runCommand(options: RunCommandOptions) {
         mode: runSelection.mode,
         requestedScenarioSlug: runSelection.requestedScenarioSlug,
         requestedPhaseOrder: runSelection.requestedPhaseOrder,
+        ...(runSelection.requestedPhaseOrders
+          ? { requestedPhaseOrders: runSelection.requestedPhaseOrders }
+          : {}),
         requestedSuiteSlug: runSelection.requestedSuiteSlug,
         runnerType,
         environment: environment.name,
@@ -853,15 +1033,60 @@ export async function runCommand(options: RunCommandOptions) {
         status: "interrupted",
         finishedAt,
         finalizationAttemptId,
-        ...(interruptedScenarioResultId
-          ? { interruptedScenarioResultId }
-          : {}),
+        ...(interruptedScenarioResultId ? { interruptedScenarioResultId } : {}),
         ...(interruptedScenarioAttemptId
           ? { interruptedScenarioAttemptId }
           : {}),
       },
       signal: AbortSignal.timeout(10_000),
     })
+  const signalExitCode = () => (interruptedSignal === "SIGINT" ? 130 : 143)
+  // Reports a run that was created but ended before any scenario started,
+  // so JSON consumers still get run.finished and text output a summary.
+  const reportRunEndedEarly = (
+    run: { id: string; name: string },
+    exitCode: number,
+    queue: ReadonlyArray<{
+      phase: { id: string; order: number; name: string } | null
+    }> = []
+  ) => {
+    const progress = new RunProgress(outputMode, io, 0)
+    try {
+      const finishedAt = Date.now()
+      progress.runFinished(
+        buildRunReport({
+          run: {
+            id: run.id,
+            name: run.name,
+            url: buildRunUrl(config.apiBaseUrl, projectSlug, run.id),
+            status: "interrupted",
+            mode: runSelection.mode,
+            selection,
+            environment: environment.name,
+            targetUrl: environment.targetUrl,
+            runnerType,
+            model: config.model ?? null,
+            modelReasoningEffort: config.model_reasoning_effort ?? null,
+            startedAt: runStartedAt,
+            finishedAt,
+            exitCode,
+          },
+          queue: queue.map((item) => ({
+            phase: item.phase
+              ? {
+                  id: item.phase.id,
+                  order: item.phase.order,
+                  name: item.phase.name,
+                }
+              : null,
+          })),
+          scenarios: [],
+        })
+      )
+    } finally {
+      progress.dispose()
+    }
+  }
   const finishSignalInterruption = async (runId: string) => {
     try {
       await finalizeInterruptedRun(
@@ -876,45 +1101,11 @@ export async function runCommand(options: RunCommandOptions) {
     }
     setSignalExitCode()
   }
-  /** Finalizes a created run as failed before any scenario started. */
-  const failRunBeforeExecution = async (runId: string) => {
-    try {
-      await finalizeRun({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId,
-        payload: {
-          status: "failed",
-          finishedAt: Date.now(),
-          finalizationAttemptId,
-        },
-        signal: runAbortController.signal,
-      })
-      if (interruptedSignal) {
-        await finalizeInterruptedRun(runId)
-      }
-    } catch (error) {
-      try {
-        if (!interruptedSignal) {
-          throw error
-        }
-        await finalizeInterruptedRun(runId)
-      } catch (finalError) {
-        process.stderr.write(
-          `Failed to finalize run: ${finalError instanceof Error ? finalError.message : "Unknown error"}\n`
-        )
-      }
-    } finally {
-      stopListeningForInterrupts()
-      await closeSessionQuietly()
-    }
-  }
   let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
   if (runSelection.mode === "suite") {
-    // The suite plan is read-only; the run that locks authoring is created
-    // only after its fixtures pass preflight.
+    // Suite runs snapshot their phases at creation, so the run is created
+    // before the plan it executes is fetched. Preflight checks the suite's
+    // fixtures first, from a plan fetched only for that.
     const preflightPlan = await fetchExecutionPlan({
       apiBaseUrl: config.apiBaseUrl,
       accessToken,
@@ -945,10 +1136,49 @@ export async function runCommand(options: RunCommandOptions) {
     }
     if (interruptedSignal) {
       await finishSignalInterruption(createRunResponse.run.id)
+      reportRunEndedEarly(createRunResponse.run, signalExitCode())
       return
     }
   }
-  const fetchExecutionSource = () =>
+  // Ends a command that stops before any scenario started: a created run is
+  // finalized as interrupted and reported, then the error is rethrown (or
+  // the signal exit code is set).
+  const endBeforeExecution = async (
+    error: unknown,
+    queue: ReadonlyArray<{
+      phase: { id: string; order: number; name: string } | null
+    }> = []
+  ) => {
+    let finalizationError: unknown = null
+    try {
+      if (createRunResponse) {
+        await finalizeInterruptedRun(createRunResponse.run.id)
+      }
+    } catch (cleanupError) {
+      finalizationError = cleanupError
+    } finally {
+      stopListeningForInterrupts()
+      await closeSessionQuietly()
+    }
+    if (createRunResponse) {
+      reportRunEndedEarly(
+        createRunResponse.run,
+        interruptedSignal ? signalExitCode() : 1,
+        queue
+      )
+    }
+    if (setSignalExitCode()) {
+      if (finalizationError) {
+        reportInterruptedFinalizationError(finalizationError)
+      }
+      return null
+    }
+    if (finalizationError) {
+      throw finalizationError
+    }
+    throw error
+  }
+  const executionSource = await (
     runSelection.mode === "single"
       ? fetchSingleScenario({
           apiBaseUrl: config.apiBaseUrl,
@@ -982,6 +1212,14 @@ export async function runCommand(options: RunCommandOptions) {
           signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
+          if (runSelection.mode === "suite" && createRunResponse) {
+            assertSuitePlanMatchesRun({
+              suiteSlug: runSelection.requestedSuiteSlug,
+              runPhases: createRunResponse.run.requestedSuitePhases ?? [],
+              planPhases: response.phases,
+            })
+          }
+          const requestedOrders = runSelection.requestedPhaseOrders
           const selectedPhases =
             runSelection.mode === "phase"
               ? response.phases.filter(
@@ -991,7 +1229,22 @@ export async function runCommand(options: RunCommandOptions) {
                 ? response.phases.filter(
                     (phase) => phase.order <= runSelection.requestedPhaseOrder
                   )
-                : response.phases
+                : requestedOrders
+                  ? response.phases.filter((phase) =>
+                      requestedOrders.includes(phase.order)
+                    )
+                  : response.phases
+
+          if (requestedOrders) {
+            const missing = requestedOrders.filter(
+              (order) => !response.phases.some((phase) => phase.order === order)
+            )
+            if (missing.length > 0) {
+              throw new Error(
+                `${missing.length === 1 ? "Phase" : "Phases"} ${missing.join(", ")} ${missing.length === 1 ? "does" : "do"} not exist in project ${projectSlug}.`
+              )
+            }
+          }
 
           if (
             (runSelection.mode === "phase" ||
@@ -1015,66 +1268,25 @@ export async function runCommand(options: RunCommandOptions) {
             ),
           }
         })
-  const handleExecutionSourceError = async (error: unknown) => {
-    let finalizationError: unknown = null
-    try {
-      if (createRunResponse) {
-        await finalizeInterruptedRun(createRunResponse.run.id)
-      }
-    } catch (cleanupError) {
-      finalizationError = cleanupError
-    } finally {
-      stopListeningForInterrupts()
-      await closeSessionQuietly()
-    }
-    if (setSignalExitCode()) {
-      if (finalizationError) {
-        reportInterruptedFinalizationError(finalizationError)
-      }
-      return null
-    }
-    if (finalizationError) {
-      throw finalizationError
-    }
-    throw error
-  }
+  ).catch((error: unknown) => endBeforeExecution(error))
 
-  const initialSource = await fetchExecutionSource().catch(
-    handleExecutionSourceError
-  )
-  if (!initialSource) {
+  if (!executionSource) {
     return
   }
-  let executionSource = initialSource
 
   if (executionSource.queue.length === 0) {
-    let finalizationError: unknown = null
-    try {
-      if (createRunResponse) {
-        await finalizeInterruptedRun(createRunResponse.run.id)
-      }
-    } catch (error) {
-      finalizationError = error
-    } finally {
-      stopListeningForInterrupts()
-      await closeSessionQuietly()
-    }
-    if (setSignalExitCode()) {
-      if (finalizationError) {
-        reportInterruptedFinalizationError(finalizationError)
-      }
-      return
-    }
-    if (finalizationError) {
-      throw finalizationError
-    }
-    throw new Error(
-      runSelection.mode === "phase"
-        ? `Phase ${runSelection.requestedPhaseOrder} has no active scenarios to run.`
-        : runSelection.mode === "suite"
-          ? `Suite "${runSelection.requestedSuiteSlug}" has no active scenarios to run.`
-          : "No runnable scenarios found."
+    await endBeforeExecution(
+      new Error(
+        runSelection.mode === "phase"
+          ? `Phase ${runSelection.requestedPhaseOrder} has no active scenarios to run.`
+          : runSelection.mode === "phases"
+            ? `Phases ${formatPhaseList(runSelection.requestedPhaseOrders)} have no active scenarios to run.`
+            : runSelection.mode === "suite"
+              ? `Suite "${runSelection.requestedSuiteSlug}" has no active scenarios to run.`
+              : "No runnable scenarios found."
+      )
     )
+    return
   }
 
   if (!createRunResponse) {
@@ -1100,49 +1312,50 @@ export async function runCommand(options: RunCommandOptions) {
     }
     if (interruptedSignal) {
       await finishSignalInterruption(createRunResponse.run.id)
+      reportRunEndedEarly(
+        createRunResponse.run,
+        signalExitCode(),
+        executionSource.queue
+      )
       return
     }
   }
 
-  // Requirements can change while preflight runs. The run now holds the
-  // authoring lock, so execute the plan as it is now and confirm that it
-  // still matches the fixture snapshot the server stored on the run.
+  // The CLI executes only the plan it fetched, while authoring stays open.
+  // Fixture requirements can change between that fetch (or preflight) and run
+  // creation, so the plan must still match the fixture snapshot the server
+  // stored on the run; otherwise the run ends before any scenario starts.
   const runFixtureSnapshot = createRunResponse.run.fixturePreflight ?? []
   if (fixturePreflight.length > 0 || runFixtureSnapshot.length > 0) {
-    if (runSelection.mode !== "suite") {
-      const refreshed = await fetchExecutionSource().catch(
-        handleExecutionSourceError
-      )
-      if (!refreshed) {
-        return
-      }
-      executionSource = refreshed
-    }
     const mismatch = describeFixtureSnapshotMismatch(
       executionSource.queue.map((item) => item.scenario),
       executionSource.fixtures,
       runFixtureSnapshot
     )
     if (mismatch) {
-      await failRunBeforeExecution(createRunResponse.run.id)
-      if (setSignalExitCode()) {
-        return
-      }
-      throw new Error(
-        `Fixture requirements changed during preflight (${mismatch}). Run ${createRunResponse.run.name} was marked failed without executing scenarios; rerun.`
+      await endBeforeExecution(
+        new Error(
+          `Fixture requirements changed while the run was starting (${mismatch}). Run it again.`
+        ),
+        executionSource.queue
       )
+      return
     }
   }
 
-  process.stdout.write(`Run ${createRunResponse.run.name}\n`)
-  process.stdout.write(
-    `Environment ${environment.name} (${environment.targetUrl})\n`
+  const runId = createRunResponse.run.id
+  const queue = executionSource.queue
+  const queuePhases = queue.map((item) =>
+    item.phase
+      ? { id: item.phase.id, order: item.phase.order, name: item.phase.name }
+      : null
   )
-  if (executionSource.suite) {
-    process.stdout.write(
-      `Suite ${executionSource.suite.name} (${executionSource.suite.slug})\n`
-    )
-  }
+  const phaseIds = [
+    ...new Set(queue.flatMap((item) => (item.phase ? [item.phase.id] : []))),
+  ]
+  const keepGoing = options.keepGoing ?? phaseIds.length > 1
+  const progress = new RunProgress(outputMode, io, heartbeatMs)
+  const scenarioReports: RunReportScenario[] = []
 
   const buildScenarioSnapshot = (args: {
     phase: RunnablePhase | null
@@ -1162,317 +1375,485 @@ export async function runCommand(options: RunCommandOptions) {
     runnerType,
     startedAt: args.startedAt,
   })
+  const recordScenario = (args: {
+    sequenceIndex: number
+    status: ScenarioOutcome
+    startedAt: number
+    checkResults?: CheckResult[]
+    usage?: RunnerUsageReport | null
+    failureDetail?: string | null
+  }) => {
+    const item = queue[args.sequenceIndex]!
+    const snapshot = buildScenarioSnapshot({
+      phase: item.phase,
+      scenario: item.scenario,
+      sequenceIndex: args.sequenceIndex,
+      startedAt: args.startedAt,
+    })
+    const report = buildScenarioReport({
+      sequenceIndex: args.sequenceIndex,
+      scenario: item.scenario,
+      phase:
+        snapshot.phaseOrder !== null && snapshot.phaseName !== null
+          ? {
+              id: snapshot.phaseId,
+              order: snapshot.phaseOrder,
+              name: snapshot.phaseName,
+            }
+          : null,
+      status: args.status,
+      startedAt: args.startedAt,
+      finishedAt: Date.now(),
+      checkResults: args.checkResults ?? [],
+      usage: args.usage ?? null,
+      failureDetail: args.failureDetail ?? null,
+    })
+    scenarioReports.push(report)
+    progress.scenarioFinished(report)
+  }
 
   let runFailed = false
+  // Every remaining scenario is skipped (no keep-going, or the session broke).
+  let stopRemaining = false
+  // With keep-going, the rest of this phase is skipped after an error.
+  let skippedPhaseId: string | null = null
+  let consecutiveFirstScenarioFailures = 0
+  let executedInCurrentPhase = 0
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
   let closeError: unknown = null
   let finalizationError: unknown = null
   let runError: unknown = null
+  let runSession: Awaited<ReturnType<typeof sessions.get>> | null = null
+  // Scenarios handed to the runner; their mutating fixtures are reset after.
   const executedScenarios: OrderedScenario[] = []
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
+  let activeScenarioIndex: number | null = null
+  let activeScenarioUsage: RunnerUsageReport | null = null
   let activeScenarioResultId: string | null = null
   let activeScenarioAttemptId: string | null = null
-  let lastPrintedPhaseId: string | null = null
+  let lastPhaseId: string | null = null
+  let exitCode = 0
 
   try {
-    runAbortController.signal.throwIfAborted()
-    for (const [sequenceIndex, item] of executionSource.queue.entries()) {
+    progress.runStarted({
+      runId,
+      runName: createRunResponse.run.name,
+      runUrl: buildRunUrl(config.apiBaseUrl, projectSlug, runId),
+      startedAt: runStartedAt,
+      environment: environment.name,
+      targetUrl: environment.targetUrl,
+      runnerType,
+      model: config.model ?? null,
+      modelReasoningEffort: config.model_reasoning_effort ?? null,
+      suite: executionSource.suite
+        ? {
+            name: executionSource.suite.name,
+            slug: executionSource.suite.slug,
+          }
+        : null,
+      selection,
+      scenarioCount: queue.length,
+      phaseCount: phaseIds.length,
+      keepGoing,
+      liveActivity: runnerType === "codex",
+    })
+
+    try {
       runAbortController.signal.throwIfAborted()
-      const startedAt = Date.now()
-      const scenarioSnapshot = buildScenarioSnapshot({
-        phase: item.phase,
-        scenario: item.scenario,
-        sequenceIndex,
-        startedAt,
-      })
-
-      if (item.phase && item.phase.id !== lastPrintedPhaseId) {
-        process.stdout.write(
-          `\nPhase ${item.phase.order}: ${item.phase.name}\n`
-        )
-        lastPrintedPhaseId = item.phase.id
-      }
-
-      process.stdout.write(
-        `Executing ${item.scenario.slug} with ${runnerType}\n`
-      )
-
-      activeScenario = scenarioSnapshot
-      activeScenarioAttemptId = crypto.randomUUID()
-      const startedScenario = await startScenarioExecution({
-        apiBaseUrl: config.apiBaseUrl,
-        accessToken,
-        version: CLI_VERSION,
-        projectSlug,
-        runId: createRunResponse.run.id,
-        payload: {
-          runId: createRunResponse.run.id,
-          result: {
-            ...scenarioSnapshot,
-            executionAttemptId: activeScenarioAttemptId,
-          },
-        },
-        signal: runAbortController.signal,
-      })
-      activeScenarioResultId = startedScenario.result.id
-      runAbortController.signal.throwIfAborted()
-
-      if (runFailed) {
-        await submitScenarioResult({
-          apiBaseUrl: config.apiBaseUrl,
-          accessToken,
-          version: CLI_VERSION,
-          projectSlug,
-          runId: createRunResponse.run.id,
-          payload: {
-            runId: createRunResponse.run.id,
-            result: {
-              scenarioId: scenarioSnapshot.scenarioId,
-              status: "dependency_failed",
-              checkResults: [],
-              executionSummary: null,
-              failureDetail:
-                "Dependency chain stopped after an earlier failure.",
-              finishedAt: Date.now(),
-              ...(activeScenarioAttemptId
-                ? { executionAttemptId: activeScenarioAttemptId }
-                : {}),
-            },
-          },
-          signal: runAbortController.signal,
-        })
+      for (const [sequenceIndex, item] of queue.entries()) {
         runAbortController.signal.throwIfAborted()
-        activeScenario = null
-        activeScenarioResultId = null
-        activeScenarioAttemptId = null
-        continue
-      }
-
-      try {
-        const runSession = await sessions.get()
-        runAbortController.signal.throwIfAborted()
-
-        const fixtures = resolveProtectedFixtures(
-          item.scenario.fixtureRequirements,
-          executionSource.fixtures
-        )
-        executedScenarios.push(item.scenario)
-        const execution = await runSession.executeScenario({
-          cwd,
-          environment: environment.name,
-          targetUrl: environment.targetUrl,
-          projectPrompt: executionSource.project.projectPrompt,
+        const startedAt = Date.now()
+        const scenarioSnapshot = buildScenarioSnapshot({
+          phase: item.phase,
           scenario: item.scenario,
-          fixtures,
-          signal: runAbortController.signal,
+          sequenceIndex,
+          startedAt,
         })
-        runUsage = mergeRunnerUsage(
-          runUsage,
-          execution.usage ?? { complete: false }
-        )
 
-        if (
-          createRunResponse.run.evidencePolicy === "failed_check_screenshot"
-        ) {
-          if (!createRunResponse.evidenceUploadUrl) {
-            throw new Error("Screenshot evidence upload is not configured.")
-          }
-          const screenshots = execution.screenshotEvidence ?? []
-          for (const screenshot of screenshots) {
-            await uploadRunEvidence({
-              uploadUrl: createRunResponse.evidenceUploadUrl,
-              accessToken,
-              runId: createRunResponse.run.id,
-              scenarioResultId: startedScenario.result.id,
-              checkId: screenshot.checkId,
-              sha256: screenshot.sha256,
-              bytes: screenshot.bytes,
-              signal: runAbortController.signal,
-            })
-          }
+        if (item.phase && item.phase.id !== lastPhaseId) {
+          lastPhaseId = item.phase.id
+          executedInCurrentPhase = 0
+          progress.phaseStarted({
+            order: item.phase.order,
+            name: item.phase.name,
+            index: phaseIds.indexOf(item.phase.id) + 1,
+            scenarioCount: queue.filter(
+              (entry) => entry.phase?.id === item.phase?.id
+            ).length,
+          })
         }
-        const finishedAt = Date.now()
 
-        await submitScenarioResult({
+        progress.scenarioStarted({
+          index: sequenceIndex + 1,
+          slug: item.scenario.slug,
+          phaseOrder: item.phase?.order ?? null,
+        })
+
+        activeScenario = scenarioSnapshot
+        activeScenarioIndex = sequenceIndex
+        activeScenarioUsage = null
+        activeScenarioAttemptId = crypto.randomUUID()
+        const startedScenario = await startScenarioExecution({
           apiBaseUrl: config.apiBaseUrl,
           accessToken,
           version: CLI_VERSION,
           projectSlug,
-          runId: createRunResponse.run.id,
+          runId,
           payload: {
-            runId: createRunResponse.run.id,
+            runId,
             result: {
-              scenarioId: scenarioSnapshot.scenarioId,
-              status: "completed",
-              checkResults: execution.checkResults,
-              executionSummary: execution.executionSummary,
-              failureDetail: null,
-              finishedAt,
-              ...(activeScenarioAttemptId
-                ? { executionAttemptId: activeScenarioAttemptId }
-                : {}),
+              ...scenarioSnapshot,
+              executionAttemptId: activeScenarioAttemptId,
             },
           },
           signal: runAbortController.signal,
         })
+        activeScenarioResultId = startedScenario.result.id
         runAbortController.signal.throwIfAborted()
-        activeScenario = null
-        activeScenarioResultId = null
-        activeScenarioAttemptId = null
-        const passed = execution.checkResults.filter(
-          (result) => result.verdict === "passed"
-        ).length
-        process.stdout.write(
-          `  ${passed}/${execution.checkResults.length} checks passed\n`
-        )
-      } catch (error) {
-        if (error instanceof RunnerExecutionError) {
-          runUsage = mergeRunnerUsage(runUsage, error.usage)
-        }
-        if (runAbortController.signal.aborted) {
-          throw error
-        }
-        runFailed = true
-        await submitScenarioResult({
-          apiBaseUrl: config.apiBaseUrl,
-          accessToken,
-          version: CLI_VERSION,
-          projectSlug,
-          runId: createRunResponse.run.id,
-          payload: {
-            runId: createRunResponse.run.id,
-            result: {
-              scenarioId: scenarioSnapshot.scenarioId,
-              status: "runner_failed",
-              checkResults: [],
-              executionSummary: null,
-              failureDetail:
-                error instanceof Error ? error.message : "Runner failed",
-              finishedAt: Date.now(),
-              ...(activeScenarioAttemptId
-                ? { executionAttemptId: activeScenarioAttemptId }
-                : {}),
-            },
-          },
-          signal: runAbortController.signal,
-        })
-        runAbortController.signal.throwIfAborted()
-        activeScenario = null
-        activeScenarioResultId = null
-        activeScenarioAttemptId = null
-        process.stdout.write(
-          `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
-        )
-      }
-    }
-    runAbortController.signal.throwIfAborted()
-    finalRunStatus = runFailed ? "failed" : "completed"
-    finalFinishedAt = Date.now()
-  } catch (error) {
-    runError = error
-    if (activeScenario) {
-      interruptedScenarioResultId = activeScenarioResultId
-      interruptedScenarioAttemptId = activeScenarioAttemptId
-      try {
-        await submitScenarioResult({
-          apiBaseUrl: config.apiBaseUrl,
-          accessToken,
-          version: CLI_VERSION,
-          projectSlug,
-          runId: createRunResponse.run.id,
-          payload: {
-            runId: createRunResponse.run.id,
-            result: {
-              scenarioId: activeScenario.scenarioId,
-              status: "interrupted",
-              checkResults: [],
-              executionSummary: null,
-              failureDetail: interruptedSignal
-                ? `Execution interrupted by ${interruptedSignal}.`
-                : error instanceof Error
-                  ? error.message
-                  : "Execution interrupted",
-              finishedAt: Date.now(),
-              ...(activeScenarioAttemptId
-                ? { executionAttemptId: activeScenarioAttemptId }
-                : {}),
-            },
-          },
-          signal: AbortSignal.timeout(10_000),
-        })
-      } catch {
-        // Preserve the original interruption error from the run loop.
-      }
-      activeScenario = null
-      activeScenarioResultId = null
-      activeScenarioAttemptId = null
-    }
-    finalRunStatus = "interrupted"
-    finalFinishedAt = Date.now()
-  } finally {
-    try {
-      await sessions.close()
-    } catch (error) {
-      closeError = error
-    }
 
-    printUsage(runUsage)
-
-    if (interruptedSignal) {
-      finalRunStatus = "interrupted"
-      finalFinishedAt = Date.now()
-    }
-
-    try {
-      if (finalRunStatus && finalFinishedAt !== null) {
-        try {
-          await finalizeRun({
+        const skipDetail = stopRemaining
+          ? "Dependency chain stopped after an earlier failure."
+          : skippedPhaseId !== null && item.phase?.id === skippedPhaseId
+            ? "Skipped after an execution error earlier in this phase."
+            : null
+        if (skipDetail) {
+          await submitScenarioResult({
             apiBaseUrl: config.apiBaseUrl,
             accessToken,
             version: CLI_VERSION,
             projectSlug,
-            runId: createRunResponse.run.id,
+            runId,
             payload: {
-              status: finalRunStatus,
-              finishedAt: finalFinishedAt,
-              finalizationAttemptId,
-              ...(interruptedScenarioResultId
-                ? { interruptedScenarioResultId }
-                : {}),
-              ...(interruptedScenarioAttemptId
-                ? { interruptedScenarioAttemptId }
-                : {}),
+              runId,
+              result: {
+                scenarioId: scenarioSnapshot.scenarioId,
+                status: "dependency_failed",
+                checkResults: [],
+                executionSummary: null,
+                failureDetail: skipDetail,
+                finishedAt: Date.now(),
+                ...(activeScenarioAttemptId
+                  ? { executionAttemptId: activeScenarioAttemptId }
+                  : {}),
+              },
             },
             signal: runAbortController.signal,
           })
-          if (interruptedSignal && finalRunStatus !== "interrupted") {
-            await finalizeInterruptedRun(createRunResponse.run.id)
+          runAbortController.signal.throwIfAborted()
+          activeScenario = null
+          activeScenarioIndex = null
+          activeScenarioResultId = null
+          activeScenarioAttemptId = null
+          recordScenario({
+            sequenceIndex,
+            status: "dependency_failed",
+            startedAt,
+            failureDetail: skipDetail,
+          })
+          continue
+        }
+
+        const firstInPhase = executedInCurrentPhase === 0
+        executedInCurrentPhase += 1
+        try {
+          runSession = await sessions.get()
+          runAbortController.signal.throwIfAborted()
+
+          const fixtures = resolveProtectedFixtures(
+            item.scenario.fixtureRequirements,
+            executionSource.fixtures
+          )
+          executedScenarios.push(item.scenario)
+          activeScenarioUsage = { complete: false }
+          const execution = await runSession.executeScenario({
+            cwd,
+            environment: environment.name,
+            targetUrl: environment.targetUrl,
+            projectPrompt: executionSource.project.projectPrompt,
+            scenario: item.scenario,
+            fixtures,
+            signal: runAbortController.signal,
+            onActivity: (activity) => progress.activity(activity),
+          })
+          activeScenarioUsage = execution.usage ?? { complete: false }
+
+          if (
+            createRunResponse.run.evidencePolicy === "failed_check_screenshot"
+          ) {
+            if (!createRunResponse.evidenceUploadUrl) {
+              throw new Error("Screenshot evidence upload is not configured.")
+            }
+            const screenshots = execution.screenshotEvidence ?? []
+            for (const screenshot of screenshots) {
+              await uploadRunEvidence({
+                uploadUrl: createRunResponse.evidenceUploadUrl,
+                accessToken,
+                runId,
+                scenarioResultId: startedScenario.result.id,
+                checkId: screenshot.checkId,
+                sha256: screenshot.sha256,
+                bytes: screenshot.bytes,
+                signal: runAbortController.signal,
+              })
+            }
           }
+          const finishedAt = Date.now()
+
+          await submitScenarioResult({
+            apiBaseUrl: config.apiBaseUrl,
+            accessToken,
+            version: CLI_VERSION,
+            projectSlug,
+            runId,
+            payload: {
+              runId,
+              result: {
+                scenarioId: scenarioSnapshot.scenarioId,
+                status: "completed",
+                checkResults: execution.checkResults,
+                executionSummary: execution.executionSummary,
+                failureDetail: null,
+                finishedAt,
+                ...(activeScenarioAttemptId
+                  ? { executionAttemptId: activeScenarioAttemptId }
+                  : {}),
+                ...toTokenUsageField(activeScenarioUsage),
+              },
+            },
+            signal: runAbortController.signal,
+          })
+          runAbortController.signal.throwIfAborted()
+          activeScenario = null
+          activeScenarioIndex = null
+          activeScenarioResultId = null
+          activeScenarioAttemptId = null
+          if (firstInPhase) {
+            consecutiveFirstScenarioFailures = 0
+          }
+          recordScenario({
+            sequenceIndex,
+            status: "completed",
+            startedAt,
+            checkResults: execution.checkResults,
+            usage: activeScenarioUsage,
+          })
+          activeScenarioUsage = null
         } catch (error) {
-          if (!interruptedSignal) {
-            finalizationError = error
+          if (error instanceof RunnerExecutionError) {
+            activeScenarioUsage = error.usage
+          }
+          if (runAbortController.signal.aborted) {
+            throw error
+          }
+          runFailed = true
+          if (item.phase && firstInPhase) {
+            consecutiveFirstScenarioFailures += 1
+          }
+          const sessionBroken =
+            runSession === null || runSession.isHealthy?.() === false
+          if (
+            keepGoing &&
+            item.phase &&
+            !sessionBroken &&
+            consecutiveFirstScenarioFailures < 2
+          ) {
+            skippedPhaseId = item.phase.id
           } else {
-            try {
-              await finalizeInterruptedRun(
-                createRunResponse.run.id,
-                finalRunStatus === "interrupted"
-                  ? finalFinishedAt
-                  : undefined
-              )
-            } catch (correctionError) {
-              finalizationError = correctionError
+            stopRemaining = true
+          }
+          const failureDetail =
+            error instanceof Error ? error.message : "Runner failed"
+          await submitScenarioResult({
+            apiBaseUrl: config.apiBaseUrl,
+            accessToken,
+            version: CLI_VERSION,
+            projectSlug,
+            runId,
+            payload: {
+              runId,
+              result: {
+                scenarioId: scenarioSnapshot.scenarioId,
+                status: "runner_failed",
+                checkResults: [],
+                executionSummary: null,
+                failureDetail,
+                finishedAt: Date.now(),
+                ...(activeScenarioAttemptId
+                  ? { executionAttemptId: activeScenarioAttemptId }
+                  : {}),
+                // No usage report yet means the runner never ran: nothing used.
+                ...toTokenUsageField(activeScenarioUsage ?? { complete: true }),
+              },
+            },
+            signal: runAbortController.signal,
+          })
+          runAbortController.signal.throwIfAborted()
+          activeScenario = null
+          activeScenarioIndex = null
+          activeScenarioResultId = null
+          activeScenarioAttemptId = null
+          recordScenario({
+            sequenceIndex,
+            status: "runner_failed",
+            startedAt,
+            usage: activeScenarioUsage,
+            failureDetail,
+          })
+          activeScenarioUsage = null
+        }
+      }
+      runAbortController.signal.throwIfAborted()
+      finalRunStatus = runFailed ? "failed" : "completed"
+      finalFinishedAt = Date.now()
+    } catch (error) {
+      runError = error
+      if (activeScenario) {
+        interruptedScenarioResultId = activeScenarioResultId
+        interruptedScenarioAttemptId = activeScenarioAttemptId
+        const failureDetail = interruptedSignal
+          ? `Execution interrupted by ${interruptedSignal}.`
+          : error instanceof Error
+            ? error.message
+            : "Execution interrupted"
+        try {
+          await submitScenarioResult({
+            apiBaseUrl: config.apiBaseUrl,
+            accessToken,
+            version: CLI_VERSION,
+            projectSlug,
+            runId,
+            payload: {
+              runId,
+              result: {
+                scenarioId: activeScenario.scenarioId,
+                status: "interrupted",
+                checkResults: [],
+                executionSummary: null,
+                failureDetail,
+                finishedAt: Date.now(),
+                ...(activeScenarioAttemptId
+                  ? { executionAttemptId: activeScenarioAttemptId }
+                  : {}),
+                // No usage report yet means the runner never ran: nothing used.
+                ...toTokenUsageField(activeScenarioUsage ?? { complete: true }),
+              },
+            },
+            signal: AbortSignal.timeout(10_000),
+          })
+        } catch {
+          // Preserve the original interruption error from the run loop.
+        }
+        if (activeScenarioIndex !== null) {
+          recordScenario({
+            sequenceIndex: activeScenarioIndex,
+            status: "interrupted",
+            startedAt: activeScenario.startedAt,
+            usage: activeScenarioUsage,
+            failureDetail,
+          })
+        }
+        activeScenario = null
+        activeScenarioIndex = null
+        activeScenarioResultId = null
+        activeScenarioAttemptId = null
+        activeScenarioUsage = null
+      }
+      finalRunStatus = "interrupted"
+      finalFinishedAt = Date.now()
+    } finally {
+      try {
+        await sessions.close()
+      } catch (error) {
+        closeError = error
+      }
+
+      if (interruptedSignal) {
+        finalRunStatus = "interrupted"
+        finalFinishedAt = Date.now()
+      }
+
+      try {
+        if (finalRunStatus && finalFinishedAt !== null) {
+          try {
+            await finalizeRun({
+              apiBaseUrl: config.apiBaseUrl,
+              accessToken,
+              version: CLI_VERSION,
+              projectSlug,
+              runId,
+              payload: {
+                status: finalRunStatus,
+                finishedAt: finalFinishedAt,
+                finalizationAttemptId,
+                ...(interruptedScenarioResultId
+                  ? { interruptedScenarioResultId }
+                  : {}),
+                ...(interruptedScenarioAttemptId
+                  ? { interruptedScenarioAttemptId }
+                  : {}),
+              },
+              signal: runAbortController.signal,
+            })
+            if (interruptedSignal && finalRunStatus !== "interrupted") {
+              await finalizeInterruptedRun(runId)
+            }
+          } catch (error) {
+            if (!interruptedSignal) {
+              finalizationError = error
+            } else {
+              try {
+                await finalizeInterruptedRun(
+                  runId,
+                  finalRunStatus === "interrupted" ? finalFinishedAt : undefined
+                )
+              } catch (correctionError) {
+                finalizationError = correctionError
+              }
             }
           }
         }
+      } finally {
+        stopListeningForInterrupts()
       }
-    } finally {
-      stopListeningForInterrupts()
     }
+
+    exitCode = interruptedSignal
+      ? signalExitCode()
+      : finalizationError || runError || closeError
+        ? 1
+        : resolveRunExitCode({ scenarios: scenarioReports, failOn })
+    progress.runFinished(
+      buildRunReport({
+        run: {
+          id: runId,
+          name: createRunResponse.run.name,
+          url: buildRunUrl(config.apiBaseUrl, projectSlug, runId),
+          status: interruptedSignal
+            ? "interrupted"
+            : (finalRunStatus ?? "interrupted"),
+          mode: runSelection.mode,
+          selection,
+          environment: environment.name,
+          targetUrl: environment.targetUrl,
+          runnerType,
+          model: config.model ?? null,
+          modelReasoningEffort: config.model_reasoning_effort ?? null,
+          startedAt: runStartedAt,
+          finishedAt: finalFinishedAt ?? Date.now(),
+          exitCode,
+        },
+        queue: queuePhases.map((phase) => ({ phase })),
+        scenarios: scenarioReports,
+      })
+    )
+  } finally {
+    progress.dispose()
   }
 
-  // Restore fixtures the run was allowed to change. Not after an
-  // interruption, and not when preflight was skipped.
+  // Restore fixtures the run was allowed to change, after the summary and
+  // outside the live panel. Not after an interruption, and not when
+  // preflight was skipped. Failures here never change the run or exit code.
   if (
     fixtureMode !== "skip" &&
     !interruptedSignal &&
@@ -1480,7 +1861,7 @@ export async function runCommand(options: RunCommandOptions) {
     (finalRunStatus === "completed" || finalRunStatus === "failed")
   ) {
     await runPostRunFixtureMaintenance({
-      runId: createRunResponse.run.id,
+      runId,
       executedScenarios,
       fixtures: executionSource.fixtures,
       createRuntime: async (recordUsage) => {
@@ -1494,7 +1875,8 @@ export async function runCommand(options: RunCommandOptions) {
       listenForInterrupts,
       stopListeningForInterrupts,
       closeSession: () => sessions.close(),
-      printUsage,
+      printUsage: (usage) =>
+        printFixtureUsage("Post-run fixture maintenance usage", usage),
     })
   }
 
@@ -1516,6 +1898,49 @@ export async function runCommand(options: RunCommandOptions) {
   if (closeError) {
     throw closeError
   }
+
+  if (exitCode !== 0) {
+    process.exitCode = exitCode
+  }
+}
+
+/** Web app page for a run. The API is served by the web app's origin. */
+export function buildRunUrl(
+  apiBaseUrl: string,
+  projectSlug: string,
+  runId: string
+) {
+  try {
+    return new URL(
+      `projects/${encodeURIComponent(projectSlug)}/runs/${encodeURIComponent(runId)}`,
+      apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`
+    ).toString()
+  } catch {
+    return null
+  }
+}
+
+export async function resultsCommand(
+  runRef: string,
+  options: ResultsCommandOptions
+) {
+  assertResultsEnvironmentFilter(runRef, options.environment)
+  const context = await getAuthoringContext(options)
+  const response = await fetchRunResults({
+    apiBaseUrl: context.apiBaseUrl,
+    accessToken: context.accessToken,
+    version: CLI_VERSION,
+    projectSlug: context.projectSlug,
+    runRef,
+    environment: options.environment,
+  })
+  const report = buildRunResultsReport(response)
+
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : formatRunResultsTable(report)
+  )
 }
 
 async function runPostRunFixtureMaintenance(args: {

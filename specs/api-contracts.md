@@ -52,7 +52,7 @@ The CLI should report each scenario result back to the hosted service immediatel
 
 Run finalization includes a per-execution attempt ID. The backend may correct a completed or failed run to interrupted only when the correction carries the same attempt ID as the request that finalized it, covering a signal race without allowing unrelated stale clients to rewrite terminal runs. Scenario start similarly includes a per-execution attempt ID. An interrupted finalization may identify the active scenario-result record and matching attempt ID so the same transaction can correct a terminal result whose response was lost during cancellation without trusting a result ID alone.
 
-Run creation accepts a client-generated attempt ID and is idempotent for that project and attempt. A bounded recovery request may also carry an interruption timestamp; the creation mutation then atomically creates the run as interrupted or interrupts the matching running run. A lost recovery response therefore cannot leave a duplicate or running authoring lock behind.
+Run creation accepts a client-generated attempt ID and is idempotent for that project and attempt. A bounded recovery request may also carry an interruption timestamp; the creation mutation then atomically creates the run as interrupted or interrupts the matching running run. A lost recovery response therefore cannot leave a duplicate or stuck running run behind.
 
 ### API_09
 
@@ -72,7 +72,7 @@ Contract responses should clearly separate malformed requests, authentication fa
 
 API v3 exposes one narrow authoring operation endpoint.
 
-`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eighteen supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. A running-run authoring lock returns `conflict` rather than queuing the write.
+`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eighteen supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. Writes apply immediately, including while a project run is running; that run keeps executing the definitions it fetched when it started. Writes that a running run or fixture operation blocks (AUTHORING_13, AUTHORING_15) return `conflict` rather than queuing.
 
 ### API_12
 
@@ -84,22 +84,28 @@ The environment name and target URL must be supplied together. The backend valid
 
 The execution API supports suite filtering without suite authoring operations.
 
-`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running authoring lock. The CLI creates that suite run before fetching the execution plan. There are no suite authoring REST operations.
+`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running run. The CLI creates that suite run before fetching the execution plan and refuses to execute (finalizing the run as interrupted) when the fetched plan's suite phases differ from the run's phase snapshot, because authoring stays open in between. There are no suite authoring REST operations.
 
 ### API_14
+
+The CLI can read a run's results back.
+
+`GET /api/v3/projects/:projectSlug/runs/:runRef` returns the run and its ordered scenario results, including check snapshots, verdicts, timing, and token usage, but not the owner ID or execution instructions. `runRef` is a run ID, an exact run name, or `latest`, the most recently started run of the project. With `latest`, an optional `?environment=` filter selects the latest run in that environment. A run outside the owned project, or no match, returns `not_found`. A name shared by several runs returns `conflict`. Result submission accepts an optional `tokenUsage` object, which older CLIs omit.
+
+### API_15
 
 Execution responses include fixture requirements.
 
 Each ordered scenario in the execution plan and single-scenario responses carries its merged `fixtureRequirements`; both responses include the referenced fixture definitions as `fixtures`. Clients default both to empty for older servers. Run creation accepts an optional `fixturePreflight` and returns the stored snapshot.
 
-### API_15
+### API_16
 
 `GET /api/v3/projects/:projectSlug/fixtures` lists fixture details.
 
 Each fixture includes its definition, requirements, and per-environment health with the deciding operation, check time, and a busy flag.
 
-### API_16
+### API_17
 
 Fixture operations are started and finished through two endpoints.
 
-`POST /api/v3/projects/:projectSlug/fixture-operations` starts an operation from a fixture ID, kind, executor, environment, target URL, optional run ID, attempt ID, and optional interruption time. `POST /api/v3/projects/:projectSlug/fixture-operations/:operationId/finish` records the terminal status, check results, and summary for the same attempt. Both return `{ operation }`; lease and attempt violations return `conflict`. Fixture operations do not take the project authoring lock.
+`POST /api/v3/projects/:projectSlug/fixture-operations` starts an operation from a fixture ID, kind, executor, environment, target URL, optional run ID, attempt ID, and optional interruption time. `POST /api/v3/projects/:projectSlug/fixture-operations/:operationId/finish` records the terminal status, check results, and summary for the same attempt. Both return `{ operation }`; lease and attempt violations return `conflict`. Fixture operations are not blocked by running runs except as EXEC_19 describes.

@@ -39,9 +39,12 @@ import {
 import { type CSSProperties, useEffect, useRef, useState } from "react"
 import {
   environmentNameSchema,
+  getTokenTotals,
   normalizeSlug,
   projectInputSchema,
   suiteInputSchema,
+  sumRunTokenUsage,
+  type TokenUsage,
 } from "@workspace/contracts"
 import { z } from "zod"
 
@@ -557,6 +560,27 @@ export function formatRunDuration(
   ]
     .filter(Boolean)
     .join(" ")
+}
+
+const tokenNumberFormat = new Intl.NumberFormat("en-US")
+
+/** Total tokens, with a trailing "+" when usage is incomplete (a lower bound). */
+export function formatTokenTotal(tokenUsage: TokenUsage | null | undefined) {
+  if (!tokenUsage) {
+    return "n/a"
+  }
+  const totals = getTokenTotals(tokenUsage)
+  return `${tokenNumberFormat.format(totals.total)}${totals.complete ? "" : "+"}`
+}
+
+export function formatTokenBreakdown(
+  tokenUsage: TokenUsage | null | undefined
+) {
+  if (!tokenUsage) {
+    return null
+  }
+  const totals = getTokenTotals(tokenUsage)
+  return `${tokenNumberFormat.format(totals.uncachedInput)} uncached in · ${tokenNumberFormat.format(totals.cachedInput)} cached in · ${tokenNumberFormat.format(totals.output)} out${totals.complete ? "" : " · partial"}`
 }
 
 export function getCheckPassRate(passed: number, total: number) {
@@ -2626,6 +2650,23 @@ function AuthenticatedProjectWorkspace({
                             value={runDetail.run.passRate}
                           />
                         </div>
+                        <div className="bg-background px-3 py-2">
+                          <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                            Duration
+                          </p>
+                          <p className="mt-1 font-mono text-sm text-foreground">
+                            {formatRunDuration(
+                              runDetail.run.startedAt,
+                              runDetail.run.finishedAt
+                            )}
+                          </p>
+                        </div>
+                        <RunTokenSummary
+                          tokenUsage={sumRunTokenUsage({
+                            runStatus: runDetail.run.status,
+                            results: runDetail.results,
+                          })}
+                        />
                         <div className="col-span-2 bg-background px-3 py-2">
                           <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                             Environment
@@ -3947,6 +3988,7 @@ function RunResultDetail({
     }>
     executionSummary: string | null
     failureDetail: string | null
+    tokenUsage?: TokenUsage | null
     runnerType: string
     startedAt: number
     finishedAt: number | null
@@ -4016,6 +4058,11 @@ function RunResultDetail({
           <RunHeaderMeta
             label="Duration"
             value={formatRunDuration(result.startedAt, result.finishedAt)}
+          />
+          <RunHeaderMeta
+            detail={formatTokenBreakdown(result.tokenUsage)}
+            label="Tokens"
+            value={formatTokenTotal(result.tokenUsage)}
           />
         </dl>
       </div>
@@ -4274,7 +4321,15 @@ function useCoarsePointer() {
   return coarsePointer
 }
 
-function RunHeaderMeta({ label, value }: { label: string; value: string }) {
+function RunHeaderMeta({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string
+  detail?: string | null
+}) {
   return (
     <div className="min-w-[10rem]">
       <dt className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
@@ -4283,6 +4338,29 @@ function RunHeaderMeta({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 font-mono text-[12px] leading-5 text-foreground">
         {value}
       </dd>
+      {detail ? (
+        <dd className="font-mono text-[11px] leading-4 text-muted-foreground">
+          {detail}
+        </dd>
+      ) : null}
+    </div>
+  )
+}
+
+function RunTokenSummary({ tokenUsage }: { tokenUsage: TokenUsage | null }) {
+  const breakdown = formatTokenBreakdown(tokenUsage)
+
+  return (
+    <div className="bg-background px-3 py-2">
+      <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+        Tokens
+      </p>
+      <p
+        className="mt-1 font-mono text-sm text-foreground"
+        title={breakdown ?? "Token usage was not recorded for this run."}
+      >
+        {formatTokenTotal(tokenUsage)}
+      </p>
     </div>
   )
 }

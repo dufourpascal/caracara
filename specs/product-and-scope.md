@@ -70,7 +70,7 @@ Users can treat scenarios, checks, dependencies, and run outcomes as persistent 
 
 The initial version keeps scenario authoring under direct user control.
 
-Users can author scenarios in the web app or direct an interactive AI agent to invoke the narrow CLI authoring commands. Evaluation agents cannot author while their project has a running run.
+Users can author scenarios in the web app or direct an interactive AI agent to invoke the narrow CLI authoring commands. Authoring stays open while a project run is running; the run executes the definitions it fetched at start, so edits made during it, including by an evaluation agent, only affect later runs.
 
 ### SCOPE_13
 

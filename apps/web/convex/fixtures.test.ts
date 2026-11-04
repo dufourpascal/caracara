@@ -130,9 +130,10 @@ async function setup() {
 
   const createRun = async (
     overrides: Partial<{
-      mode: "all" | "single" | "phase" | "through_phase" | "suite"
+      mode: "all" | "single" | "phase" | "through_phase" | "suite" | "phases"
       requestedScenarioSlug: string
       requestedPhaseOrder: number
+      requestedPhaseOrders: number[]
       environment: string
       targetUrl: string
       creationAttemptId: string
@@ -156,6 +157,9 @@ async function setup() {
       ...(overrides.requestedPhaseOrder === undefined
         ? {}
         : { requestedPhaseOrder: overrides.requestedPhaseOrder }),
+      ...(overrides.requestedPhaseOrders === undefined
+        ? {}
+        : { requestedPhaseOrders: overrides.requestedPhaseOrders }),
       ...(overrides.creationAttemptId === undefined
         ? {}
         : { creationAttemptId: overrides.creationAttemptId }),
@@ -351,21 +355,66 @@ describe("fixture definitions", () => {
     )
   })
 
-  it("respects the running-run authoring lock", async () => {
+  it("stays open for authoring while a run is running", async () => {
     const { ctx, projectId, setupPhase, createRun, createFixture } = await setup()
     const fixture = await createFixture()
     await createRun()
-    await expectError(createFixture(), "conflict", /Authoring is unavailable/)
+
+    await createFixture("Second fixture")
+    await call(fixtures.updateDetails, ctx, {
+      projectId,
+      fixtureId: fixture.id as Id<"fixtures">,
+      description: "Edited during a run.",
+    })
+    await call(fixtures.setRequirement, ctx, {
+      projectId,
+      fixtureId: fixture.id,
+      phaseId: setupPhase,
+      access: "read",
+    })
+    // The running run does not hold this fixture, so it can be deleted.
+    await call(fixtures.remove, ctx, {
+      projectId,
+      fixtureId: fixture.id as Id<"fixtures">,
+    })
+  })
+
+  it("blocks deleting a fixture that a running run holds until the run ends", async () => {
+    const { ctx, projectId, setupPhase, createRun, createFixture, finalize } =
+      await setup()
+    const fixture = await createFixture()
+    await call(fixtures.setRequirement, ctx, {
+      projectId,
+      fixtureId: fixture.id,
+      phaseId: setupPhase,
+      access: "read",
+    })
+    const run = await createRun({
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "skipped", operationId: null },
+      ],
+    })
+
+    // Other writes to the held fixture stay open.
+    await call(fixtures.updateDetails, ctx, {
+      projectId,
+      fixtureId: fixture.id as Id<"fixtures">,
+      locator: "Projects > Moved",
+    })
     await expectError(
-      call(fixtures.setRequirement, ctx, {
+      call(fixtures.remove, ctx, {
         projectId,
-        fixtureId: fixture.id,
-        phaseId: setupPhase,
-        access: "read",
+        fixtureId: fixture.id as Id<"fixtures">,
       }),
       "conflict",
-      /Authoring is unavailable/
+      /Fixture deletion is unavailable while run .* is running with fixture study-fixture/
     )
+
+    await finalize(run.id)
+    await call(fixtures.remove, ctx, {
+      projectId,
+      fixtureId: fixture.id as Id<"fixtures">,
+    })
   })
 
   it("rejects fixtures from another owner", async () => {
@@ -808,11 +857,11 @@ describe("run creation with fixtures", () => {
 
   it("rejects old clients and stale selections only when fixtures are required", async () => {
     const { createRun, fixture, createFixture } = await requiredSetup()
-    await expectError(createRun(), "conflict", /0\.7\.0 or newer/)
+    await expectError(createRun(), "conflict", /0\.8\.0 or newer/)
     await expectError(
       createRun({ mode: "single", requestedScenarioSlug: "analysis" }),
       "conflict",
-      /0\.7\.0 or newer/
+      /0\.8\.0 or newer/
     )
     const other = await createFixture("Other")
     await expectError(
@@ -831,6 +880,60 @@ describe("run creation with fixtures", () => {
       "conflict",
       /changed since preflight/
     )
+  })
+
+  it("requires the fixtures of every phase in a phases run", async () => {
+    const { ctx, projectId, createRun, fixture } = await requiredSetup()
+    const thirdPhase = (await ctx.db.insert("phases", {
+      projectId,
+      name: "Export",
+      order: 3,
+      createdAt: 1,
+      updatedAt: 1,
+    })) as Id<"phases">
+    await ctx.db.insert("scenarios", {
+      projectId,
+      name: "export",
+      slug: "export",
+      status: "active",
+      instructions: "Export.",
+      evaluationChecks: [{ id: uuid(901), name: "Works", expectation: "Yes." }],
+      phaseId: thirdPhase,
+      updatedAt: 1,
+    })
+
+    // Phase 1 requires the fixture, so any phases run that includes it does.
+    await expectError(
+      createRun({ mode: "phases", requestedPhaseOrders: [1, 3] }),
+      "conflict",
+      /0\.8\.0 or newer/
+    )
+    const run = await createRun({
+      mode: "phases",
+      requestedPhaseOrders: [1, 3],
+      fixturePreflight: [
+        { fixtureId: fixture.id, outcome: "skipped", operationId: null },
+      ],
+    })
+    expect(run.requestedPhaseOrders).toEqual([1, 3])
+    expect(run.fixturePreflight).toEqual([
+      expect.objectContaining({ fixtureId: fixture.id, access: "read" }),
+    ])
+
+    // Phases 2 and 3 require nothing: a preflight entry is stale there.
+    await expectError(
+      createRun({
+        mode: "phases",
+        requestedPhaseOrders: [2, 3],
+        fixturePreflight: [
+          { fixtureId: fixture.id, outcome: "skipped", operationId: null },
+        ],
+      }),
+      "conflict",
+      /changed since preflight/
+    )
+    const plain = await createRun({ mode: "phases", requestedPhaseOrders: [2, 3] })
+    expect(plain.fixturePreflight).toEqual([])
   })
 
   it("accepts skipped fixtures and stores the server-side snapshot", async () => {

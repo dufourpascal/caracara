@@ -1,6 +1,8 @@
 import { z } from "zod"
 
 import {
+  MAX_REQUESTED_PHASE_ORDERS,
+  MIN_REQUESTED_PHASE_ORDERS,
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
   PROJECT_PROMPT_MAX_LENGTH,
@@ -30,6 +32,7 @@ export const runModeSchema = z.enum([
   "phase",
   "through_phase",
   "suite",
+  "phases",
 ])
 export const evidencePolicySchema = z.enum([
   "text_only",
@@ -174,6 +177,22 @@ export const checkResultSchema = z
     }
   })
 
+const tokenCountSchema = z.number().int().nonnegative()
+
+/**
+ * Agent runtime token usage for one scenario execution. `inputTokens`
+ * includes cached and cache-write input tokens. `complete` is false when at
+ * least one runner turn did not report usage, so the counts are a lower bound.
+ */
+export const tokenUsageSchema = z.object({
+  inputTokens: tokenCountSchema,
+  cachedInputTokens: tokenCountSchema,
+  cacheWriteInputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  reasoningOutputTokens: tokenCountSchema,
+  complete: z.boolean(),
+})
+
 export const projectSchema = z.object({
   id: z.string(),
   ownerUserId: z.string().min(1),
@@ -266,6 +285,19 @@ export const fixturePreflightEntrySchema = z.object({
   outcome: fixturePreflightOutcomeSchema,
   operationId: z.string().min(1).nullable(),
 })
+export const requestedPhaseOrdersSchema = z
+  .array(z.number().int().positive())
+  .min(MIN_REQUESTED_PHASE_ORDERS, {
+    error: `A phases run needs at least ${MIN_REQUESTED_PHASE_ORDERS} phases.`,
+  })
+  .max(MAX_REQUESTED_PHASE_ORDERS, {
+    error: `A phases run can include at most ${MAX_REQUESTED_PHASE_ORDERS} phases.`,
+  })
+  .refine(
+    (orders) =>
+      orders.every((order, index) => index === 0 || order > orders[index - 1]!),
+    { error: "Requested phase orders must be sorted and unique." }
+  )
 
 export const runSchema = z.object({
   id: z.string(),
@@ -276,6 +308,10 @@ export const runSchema = z.object({
   mode: runModeSchema,
   requestedScenarioSlug: slugSchema.nullable(),
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+  requestedPhaseOrders: z
+    .array(z.number().int().positive())
+    .nullable()
+    .optional(),
   requestedSuiteSlug: slugSchema.nullable().optional(),
   requestedSuiteName: z
     .string()
@@ -315,6 +351,7 @@ export const scenarioResultSchema = z.object({
   runnerType: runnerTypeSchema,
   executionSummary: nullableStringSchema,
   failureDetail: nullableStringSchema,
+  tokenUsage: tokenUsageSchema.nullable().optional(),
   startedAt: timestampSchema,
   finishedAt: timestampSchema.nullable(),
   submittedAt: timestampSchema,
@@ -332,6 +369,7 @@ export type EvaluationCheck = z.infer<typeof evaluationCheckSchema>
 export type BlockedReason = z.infer<typeof blockedReasonSchema>
 export type CheckVerdict = z.infer<typeof checkVerdictSchema>
 export type CheckResult = z.infer<typeof checkResultSchema>
+export type TokenUsage = z.infer<typeof tokenUsageSchema>
 export type RunnerType = z.infer<typeof runnerTypeSchema>
 export type RunMode = z.infer<typeof runModeSchema>
 export type EvidencePolicy = z.infer<typeof evidencePolicySchema>

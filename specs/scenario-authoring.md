@@ -74,18 +74,20 @@ Commands do not create proposals, authored versions, delayed activations, or und
 
 ### AUTHORING_13
 
-Authoring is locked while a project run is running.
+Authoring stays open while a project run is running, and edits never change a running run.
 
-Every phase and scenario write is rejected while the project has a running run. Changes apply immediately when no run is active. This server-side rule applies to both web and CLI callers so an evaluation agent cannot change its own requirements.
+Phase, scenario, check, suite, fixture, fixture requirement, and project prompt writes apply immediately, also while the project has a running run. The CLI fetches the execution plan, including the project prompt and fixture definitions, once when the run starts and executes only that copy. Each scenario result stores the scenario name, slug, phase, instructions, and checks it was executed and scored against, so verdict validation and run results never read the live definitions. Edits made during a run therefore apply to later runs only, which also means an evaluation agent cannot change the requirements of the run it is part of.
+
+Writes that would cut a running run off from its project stay blocked while it runs, on both web and CLI callers: deleting a scenario, changing the project slug, deleting the project, and deleting a fixture in the run's fixture preflight snapshot.
 
 ### AUTHORING_14
 
 Suite authoring is frontend-only and direct.
 
-The frontend supports direct suite create, update, and delete operations using a name, slug, and phase membership checkboxes. Suite writes use the same running-run authoring lock. These operations are intentionally absent from the CLI authoring API.
+The frontend supports direct suite create, update, and delete operations using a name, slug, and phase membership checkboxes. Suite writes stay open during runs like other authoring writes. These operations are intentionally absent from the CLI authoring API.
 
 ### AUTHORING_15
 
 Fixtures are authored in the web app and through narrow CLI commands.
 
-The web editor saves the whole definition at once, keeping the IDs of existing steps and checks and assigning IDs to new ones, and can delete a fixture. Requirements are managed from the fixture ("Used by") and the CLI; phase and scenario editors do not edit them. Fixture writes use the running-run authoring lock and are also rejected while an operation for that fixture is running with an unexpired lease.
+The web editor saves the whole definition at once, keeping the IDs of existing steps and checks and assigning IDs to new ones, and can delete a fixture. Requirements are managed from the fixture ("Used by") and the CLI; phase and scenario editors do not edit them. Fixture and requirement writes stay open during runs like other authoring writes (AUTHORING_13), but a write to a fixture is rejected with `conflict` while an operation for that fixture is running with an unexpired lease. Deleting a fixture is also rejected while a running run holds it in its fixture preflight snapshot, because that run resets and verifies its fixtures after its scenarios.

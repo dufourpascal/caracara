@@ -231,6 +231,7 @@ async function runHookOperation(
     timeoutMs: (hook.timeoutMinutes ?? DEFAULT_HOOK_TIMEOUT_MINUTES) * 60_000,
     signal: runtime.signal,
     outputPrefix: `  [${fixture.slug} ${kind}] `,
+    stdout: (text) => runtime.write(text),
   })
 }
 
@@ -565,9 +566,10 @@ export function collectRequiredFixtureAccess(
 }
 
 /**
- * Compares the plan fetched after run creation, when authoring is locked,
- * with the fixture snapshot the server stored on the run. Returns a
- * description of the differences, or null when they match.
+ * Compares the plan the CLI executes with the fixture snapshot the server
+ * stored on the run when it was created. Authoring stays open during runs, so
+ * requirements may have changed in between. Returns a description of the
+ * differences, or null when they match.
  */
 export function describeFixtureSnapshotMismatch(
   scenarios: Array<{ fixtureRequirements: EffectiveFixtureRequirement[] }>,

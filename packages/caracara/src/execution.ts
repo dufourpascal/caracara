@@ -24,12 +24,14 @@ import {
   getCodexVersion,
   resolveCodexExecutable,
   type CodexClientOptions,
+  type CodexItemEvent,
   type CodexSandboxMode,
   type CodexThreadOptions,
   type CodexUsage,
 } from "./codex-exec.js"
 import { startCdpWindowProxy } from "./cdp-proxy.js"
 import type { ModelReasoningEffort } from "./config.js"
+import { writeDiagnostic } from "./diagnostics.js"
 import {
   buildProtectedFixturesSection,
   type ProtectedFixture,
@@ -39,6 +41,7 @@ import {
   terminateChildProcess,
 } from "./process-control.js"
 import { collectSecretValues, redactValues } from "./redaction.js"
+import { toSingleLine, truncateToWidth } from "./terminal-text.js"
 
 export { buildWindowsTaskkillArgs, terminateChildProcess }
 
@@ -80,6 +83,16 @@ export type ScreenshotEvidence = {
   sha256: string
 }
 
+/** One step of the agent's work, reduced to a short, redacted label. */
+export type RunnerActivity = {
+  /** Runner item ID, so a step that starts and completes counts once. */
+  id: string | null
+  label: string
+  /** Commands, MCP tools, web searches and file edits. */
+  toolCall: boolean
+  status: "started" | "completed"
+}
+
 export type RunnerScenarioInput = {
   cwd: string
   environment: string
@@ -89,6 +102,8 @@ export type RunnerScenarioInput = {
   /** Fixtures the scenario requires, shown as protected in the prompt. */
   fixtures?: ProtectedFixture[]
   signal?: AbortSignal
+  /** Called for agent steps when the runner can report them live. */
+  onActivity?: (activity: RunnerActivity) => void
 }
 
 /** One single-turn fixture maintenance task (verify, a converge step, or reset). */
@@ -127,6 +142,8 @@ export interface RunnerSession {
   executeScenario(input: RunnerScenarioInput): Promise<RunnerExecution>
   /** Runs one fixture maintenance turn: no blocked retry and no screenshots. */
   executeFixtureTask(input: FixtureTaskInput): Promise<FixtureTaskExecution>
+  /** False once the session can no longer run scenarios (browser exited). */
+  isHealthy?(): boolean
   close(): Promise<void>
 }
 
@@ -783,6 +800,86 @@ export function redactSecretValues(text: string, secrets: RunnerSecrets) {
     )
 }
 
+const COMMAND_LABEL_WIDTH = 80
+const SHELL_WRAPPER =
+  /^(?:\S*\/)?(?:bash|sh|zsh)\s+-l?c\s+(['"])([\s\S]*)\1\s*$/
+
+function redactForDisplay(text: string, secrets: RunnerSecrets) {
+  const encoded = Object.fromEntries(
+    Object.entries(secrets).map(([name, value]) => [
+      `${name}__encoded`,
+      encodeURIComponent(value),
+    ])
+  )
+  return redactSecretValues(text, { ...secrets, ...encoded })
+}
+
+/**
+ * Short label for a shell command. The whole command is redacted before it
+ * is unwrapped or cut, so a secret is never split by truncation.
+ */
+export function formatCommandLabel(command: string, secrets: RunnerSecrets) {
+  const redacted = redactForDisplay(command, secrets)
+  const unwrapped = SHELL_WRAPPER.exec(redacted.trim())?.[2] ?? redacted
+  const firstLine =
+    unwrapped
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line !== "") ?? ""
+  return `$ ${truncateToWidth(toSingleLine(firstLine), COMMAND_LABEL_WIDTH)}`
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() !== ""
+    ? toSingleLine(value)
+    : null
+}
+
+/**
+ * Maps a Codex item event to a runner activity. Only the item type and, for
+ * tools, the tool name or redacted command are used; arguments, outputs and
+ * reasoning text never leave this function.
+ */
+export function describeCodexItemEvent(
+  event: CodexItemEvent,
+  secrets: RunnerSecrets
+): RunnerActivity | null {
+  const { item } = event
+  const status = event.type === "item.completed" ? "completed" : "started"
+  const id = typeof item.id === "string" ? item.id : null
+  const activity = (label: string, toolCall: boolean): RunnerActivity => ({
+    id,
+    label: truncateToWidth(label, COMMAND_LABEL_WIDTH + 2),
+    toolCall,
+    status,
+  })
+
+  switch (item.type) {
+    case "mcp_tool_call": {
+      const server = readString(item.server)
+      const tool = readString(item.tool)
+      return activity(
+        server && tool ? `${server}.${tool}` : (tool ?? "tool call"),
+        true
+      )
+    }
+    case "command_execution": {
+      const command = typeof item.command === "string" ? item.command : ""
+      return activity(formatCommandLabel(command, secrets), true)
+    }
+    case "web_search":
+      return activity("web search", true)
+    case "file_change":
+      return activity("editing files", true)
+    case "reasoning":
+      return activity("thinking", false)
+    case "agent_message":
+      return activity("writing result", false)
+    default:
+      return null
+  }
+}
+
 export function redactRunnerExecution(
   execution: RunnerExecution,
   secrets: RunnerSecrets
@@ -1116,12 +1213,15 @@ async function launchSharedChromium(input: {
     return {
       wsEndpoint: proxy.wsEndpoint,
       chromeDevtoolsLogPath,
+      isRunning() {
+        return browser.exitCode === null && browser.signalCode === null
+      },
       async close() {
         await proxy.close()
         await terminateBrowserProcess(browser)
         if (process.env.CARACARA_KEEP_RUN_DIR === "1") {
           // The profile holds the run's session cookies; delete it when done.
-          process.stderr.write(`Kept browser run directory: ${runDir}\n`)
+          writeDiagnostic(`Kept browser run directory: ${runDir}\n`)
           return
         }
         await rm(runDir, { recursive: true, force: true })
@@ -1144,7 +1244,7 @@ class CodexRunner implements RunnerAdapter {
       throw new Error(problem.message)
     }
     if (problem) {
-      process.stderr.write(`Warning: ${problem.message}\n`)
+      writeDiagnostic(`Warning: ${problem.message}\n`)
     }
   }
 
@@ -1182,6 +1282,15 @@ class CodexRunner implements RunnerAdapter {
           await mkdir(evidenceDirectory)
           let usage: RunnerUsageReport = { complete: true }
           let waitingForUsage = false
+          const { onActivity } = scenarioInput
+          const onItemEvent = onActivity
+            ? (event: CodexItemEvent) => {
+                const activity = describeCodexItemEvent(event, input.secrets)
+                if (activity) {
+                  onActivity(activity)
+                }
+              }
+            : undefined
           try {
             const thread = codex.startThread(
               buildCodexThreadOptions({
@@ -1202,6 +1311,7 @@ class CodexRunner implements RunnerAdapter {
                   scenarioInput.scenario
                 ),
                 signal: scenarioInput.signal,
+                onItemEvent,
               }
             )
             waitingForUsage = false
@@ -1237,6 +1347,7 @@ class CodexRunner implements RunnerAdapter {
                 {
                   outputSchema: buildBlockedRetryResultSchema(blockedCheckIds),
                   signal: scenarioInput.signal,
+                  onItemEvent,
                 }
               )
               waitingForUsage = false
@@ -1269,7 +1380,7 @@ class CodexRunner implements RunnerAdapter {
                   evidenceDirectory,
                   missingCheckIds: screenshots.missingCheckIds,
                 }),
-                { signal: scenarioInput.signal }
+                { signal: scenarioInput.signal, onItemEvent }
               )
               waitingForUsage = false
               const correctionUsage = toCodexRunnerUsage(
@@ -1339,6 +1450,9 @@ class CodexRunner implements RunnerAdapter {
           taskInput,
           input.secrets
         )
+      },
+      isHealthy() {
+        return sharedBrowser.isRunning()
       },
       async close() {
         await sharedBrowser.close()
@@ -1529,6 +1643,9 @@ class ClaudeRunner implements RunnerAdapter {
             runInput.secrets
           )
         )
+      },
+      isHealthy() {
+        return sharedBrowser.isRunning()
       },
       async close() {
         await sharedBrowser.close()

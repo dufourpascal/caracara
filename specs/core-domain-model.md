@@ -82,7 +82,7 @@ A fixture belongs to one project and has a name, project-unique slug, descriptio
 
 A fixture requirement attaches a fixture to exactly one phase or scenario.
 
-A requirement has `read` or `mutates` access; a mutating requirement names the only change it may make. There is at most one requirement per fixture and target. A scenario's effective requirements merge its own with its phase's per fixture: `mutates` wins and mutation scopes are joined.
+A requirement has `read` or `mutates` access; a mutating requirement names the only change it may make. There is at most one requirement per fixture and target. A scenario's effective requirements merge its own with its phase's per fixture: `mutates` wins and mutation scopes are joined. A run's required fixtures are the union of the effective requirements of the scenarios it selects, in every run mode. Requirements can change while a run is running; the run keeps the fixture snapshot taken when it was created.
 
 ### DOMAIN_15
 

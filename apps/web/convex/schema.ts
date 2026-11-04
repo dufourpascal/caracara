@@ -41,6 +41,15 @@ const fixturePreflightEntry = v.object({
   operationId: v.union(v.null(), v.string()),
 })
 
+const tokenUsage = v.object({
+  inputTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteInputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningOutputTokens: v.number(),
+  complete: v.boolean(),
+})
+
 export default defineSchema({
   projects: defineTable({
     ownerUserId: v.string(),
@@ -123,10 +132,12 @@ export default defineSchema({
       v.literal("single"),
       v.literal("phase"),
       v.literal("through_phase"),
-      v.literal("suite")
+      v.literal("suite"),
+      v.literal("phases")
     ),
     requestedScenarioSlug: v.union(v.null(), v.string()),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedPhaseOrders: v.optional(v.union(v.null(), v.array(v.number()))),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     requestedSuiteName: v.optional(v.union(v.null(), v.string())),
     requestedSuitePhases: v.optional(
@@ -164,7 +175,8 @@ export default defineSchema({
       "projectId",
       "creationAttemptId",
     ])
-    .index("by_project_status", ["projectId", "status"]),
+    .index("by_project_status", ["projectId", "status"])
+    .index("by_project_name", ["projectId", "name"]),
   scenarioResults: defineTable({
     runId: v.id("runs"),
     scenarioId: v.id("scenarios"),
@@ -188,6 +200,7 @@ export default defineSchema({
     executionAttemptId: v.optional(v.string()),
     executionSummary: v.union(v.null(), v.string()),
     failureDetail: v.union(v.null(), v.string()),
+    tokenUsage: v.optional(tokenUsage),
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
   })

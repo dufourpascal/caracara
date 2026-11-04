@@ -118,6 +118,25 @@ Run `caracara environments:list` to print every configured environment and mark 
 
 Each run stores the selected environment and normalized target URL so the web app can label and filter run history without changing older results when the local config changes. Runs created by older CLIs appear as `untracked`.
 
+## Running several phases and following a run
+
+`caracara run --phases 1-7,9,10` runs the listed phases, in project order, as one run. Ranges and single phase numbers can be mixed. It can't be combined with `--scenario`, `--suite`, `--phase` or `--through-phase`.
+
+When a run covers more than one phase, an execution error skips only the rest of that phase and the run continues with the next one. Pass `--no-keep-going` to stop the whole run instead, or `--keep-going` to continue in a single-phase run too. The run still stops when the browser session is gone, or when two phases in a row fail on their first scenario.
+
+In a terminal, `caracara run` keeps a status panel at the bottom with the current phase and scenario, elapsed time and ETA, check totals, tokens and the agent's current step. In CI, when output is redirected or piped (`> run.log`, `| tee run.log`), or with `--plain`, it prints timestamped lines instead, plus a heartbeat line every 5 minutes while a scenario runs (`--heartbeat 30s`, `--heartbeat 0` to turn it off). `--quiet` prints only a short summary; `--json` prints one JSON event per line (`run.started`, `phase.started`, `scenario.started`, `agent.action`, `scenario.finished`, `run.finished`).
+
+Every run ends with a summary: totals, a row per phase, the scenarios with failed or blocked checks, each failed or blocked check with its evidence, execution errors with a rerun command, tokens and a link to the run in the web app.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Every scenario ran. Failed checks are findings, not errors. |
+| 1 | The run stopped on a CLI, configuration or API error |
+| 2 | A scenario was recorded as a runner failure (including a result the API rejected) or was skipped |
+| 3 | `--fail-on failed`, `--fail-on blocked` or `--fail-on failed,blocked` matched a check |
+| 4 | Fixture preflight found an unhealthy fixture and created no run (see [Fixtures](#fixtures)) |
+| 130 / 143 | Interrupted by SIGINT / SIGTERM |
+
 ## Codex model configuration
 
 Set the Codex model and reasoning effort in `.caracara/config.json`:
@@ -136,6 +155,18 @@ Caracara runs the Codex CLI installed on your machine: the `codex` executable on
 
 When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
 
+## Run results
+
+`caracara results` prints the latest run of the selected project as a compact table: status, environment, duration, token totals, one row per scenario, and every check that did not pass with its reason.
+
+```bash
+caracara results                     # latest run
+caracara results latest --environment preview
+caracara results brave-heron-20261104-120000 --json
+```
+
+The run reference is a run ID, the run name that `caracara run` prints, or `latest`. `--json` prints a versioned report (`formatVersion: 1`) with run identity, status, environment, start and end, duration, model and reasoning effort (`null` until runs record them), token totals, and per scenario its phase, status, duration, tokens, and each check's name, verdict, and reason. Token usage is recorded per scenario from the runner (Codex or Claude Code) and summed per run. Runs from older CLIs have no token usage. The web app shows the same duration and token totals in the run detail.
+
 ## CLI scenario authoring
 
 The logged-in CLI can update the selected project directly:
@@ -149,7 +180,7 @@ caracara updateCheck --scenario complete-checkout --check "Receipt" --expectatio
 
 The scenario commands are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. The fixture commands are `createFixture`, `updateFixture`, `addFixtureStep`, `updateFixtureStep`, `removeFixtureStep`, `addFixtureCheck`, `updateFixtureCheck`, `removeFixtureCheck`, `requireFixture`, and `unrequireFixture` (see [Fixtures](#fixtures)). Phase references accept an ID, order, or exact name. Fixture references accept a slug. Step and check references accept an ID or exact name. Commands print one JSON result and fail if a name is ambiguous. The CLI cannot delete fixtures; use the web app.
 
-Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. The server rejects phase, scenario, and fixture writes while the project has a running run.
+Authoring commands update live records immediately and have no version, proposal, activation-delay, or undo workflow. They also work while a run is in progress: a running run keeps executing the scenarios, checks, and project prompt it fetched when it started, and its results show the scenarios and checks it ran. Edits apply to the next run. Deleting a scenario, changing the project slug, deleting the project, and deleting a fixture the run checked stay blocked until the run ends. A fixture that is being verified, converged, or reset cannot be edited until that operation finishes.
 
 ## Fixtures
 
@@ -166,7 +197,7 @@ caracara requireFixture --fixture het-vs-homo --scenario calculate-results --acc
 
 A requirement on a phase applies to all its scenarios. `read` is the default access. Evaluation prompts list the required fixtures as protected, and a `mutates` requirement allows changes only within its mutation scope.
 
-`caracara run` checks the selection's fixtures before it creates the run. `--fixtures check` (the default) verifies each one and stops with exit code 3 if any is unhealthy, so no run is created. `--fixtures repair` converges an unhealthy fixture and verifies it again. `--fixtures skip` runs no fixture operations. Once the run exists, the CLI fetches the plan again and runs that. If its fixture requirements no longer match what preflight checked, the CLI marks the run failed before any scenario starts, and you rerun. After a completed or failed run, the CLI resets and verifies each fixture that an executed scenario was allowed to change. A failure there prints a warning but does not change the run result.
+`caracara run` checks the selection's fixtures before it creates the run, in every mode including `--suite` and `--phases`. `--fixtures check` (the default) verifies each one and stops with exit code 4 if any is unhealthy, so no run is created. `--fixtures repair` converges an unhealthy fixture and verifies it again. `--fixtures skip` runs no fixture operations. The run executes the plan the CLI fetched at the start. If the fixture requirements changed before the server created the run, so that the plan no longer matches the fixtures the run recorded, the CLI ends the run as interrupted before any scenario starts and asks you to run it again. After a completed or failed run, and after the run summary, the CLI resets and verifies each fixture that an executed scenario was allowed to change. A failure there prints a warning but does not change the run result or exit code. Fixture lines print outside the live status panel, on stderr with `--json` or `--quiet`, and their agent token usage is shown separately from the run's scenario totals.
 
 Manage fixtures outside a run with:
 
@@ -177,7 +208,7 @@ caracara fixtures:converge <slug> [--environment <name>]
 caracara fixtures:reset <slug> [--environment <name>]
 ```
 
-Converge and reset always end with a verify. The commands exit with code 3 when the final verify is unhealthy.
+Converge and reset always end with a verify. The commands exit with code 4 when the final verify is unhealthy.
 
 Each operation runs a local hook when one is configured, otherwise the runner agent works from the fixture's definition. Hooks live in `.caracara/fixtures.json` next to `config.json` and never leave your machine. `caracara run` reads the file only when the selection requires fixtures:
 

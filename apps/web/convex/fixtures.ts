@@ -35,7 +35,6 @@ import {
   type QueryCtx,
 } from "./_generated/server"
 import {
-  assertProjectAuthoringUnlocked,
   getActiveFixtureOperations,
   getScenarioBySlug,
   requireProjectOwnerById,
@@ -206,16 +205,15 @@ async function ensureUniqueFixtureSlug(
 }
 
 /**
- * Fixture definition and requirement writes respect the running-run authoring
- * lock and wait for maintenance of that fixture in any environment.
+ * Fixture definition and requirement writes stay open while a run is running
+ * (the run executes the plan it fetched at start) but wait for maintenance of
+ * that fixture in any environment.
  */
 async function assertFixtureWritable(
   ctx: Ctx,
   projectId: Id<"projects">,
   fixture: Doc<"fixtures"> | null
 ) {
-  await assertProjectAuthoringUnlocked(ctx, projectId)
-
   if (!fixture) {
     return
   }
@@ -638,7 +636,7 @@ export async function validateRunFixturePreflight(
 
   if (args.preflight === undefined) {
     conflict(
-      "This selection requires fixtures; caracara 0.7.0 or newer is required to run it."
+      "This selection requires fixtures; caracara 0.8.0 or newer is required to run it."
     )
   }
 
@@ -1197,11 +1195,26 @@ export const updateDetails = mutation({
 export const remove = mutation({
   args: { projectId: v.id("projects"), fixtureId: v.id("fixtures") },
   handler: async (ctx, args) => {
-    const { fixture } = await loadWritableFixture(
+    const { project, fixture } = await loadWritableFixture(
       ctx,
       args.projectId,
       args.fixtureId
     )
+    // A running run resets and verifies the fixtures in its preflight snapshot
+    // after its scenarios, so the fixture must exist until that run ends.
+    const holder = (
+      await ctx.db
+        .query("runs")
+        .withIndex("by_project_status", (query) =>
+          query.eq("projectId", project._id).eq("status", "running")
+        )
+        .collect()
+    ).find((run) => holdsFixture(run, fixture._id, () => true))
+    if (holder) {
+      conflict(
+        `Fixture deletion is unavailable while run ${holder.name} is running with fixture ${fixture.slug}. Finish or delete that run to continue.`
+      )
+    }
     const [requirements, operations] = await Promise.all([
       getFixtureRequirements(ctx, fixture._id),
       ctx.db

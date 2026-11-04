@@ -309,6 +309,146 @@ describe("contracts", () => {
     ).toThrow(/target do not match/i)
   })
 
+  it("validates multi-phase run targets", () => {
+    const base = { runnerType: "codex", startedAt: 1 } as const
+    expect(
+      createRunRequestSchema.parse({
+        ...base,
+        mode: "phases",
+        requestedPhaseOrders: [1, 2, 3, 7],
+      }).requestedPhaseOrders
+    ).toEqual([1, 2, 3, 7])
+    expect(
+      createRunRequestSchema.parse({
+        ...base,
+        mode: "phases",
+        requestedPhaseOrders: Array.from({ length: 100 }, (_, i) => i + 1),
+      }).requestedPhaseOrders
+    ).toHaveLength(100)
+
+    for (const [requestedPhaseOrders, message] of [
+      [[3, 1], /sorted and unique/],
+      [[1, 2, 2], /sorted and unique/],
+      [[2], /at least 2 phases/],
+      [[], /at least 2 phases/],
+      [Array.from({ length: 101 }, (_, i) => i + 1), /at most 100 phases/],
+      [[0, 1], /too small|>0/i],
+      [[1, 2.5], /int/i],
+    ] as const) {
+      expect(() =>
+        createRunRequestSchema.parse({
+          ...base,
+          mode: "phases",
+          requestedPhaseOrders,
+        })
+      ).toThrow(message)
+    }
+
+    for (const body of [
+      { mode: "phases" },
+      { mode: "phases", requestedPhaseOrders: null },
+      { mode: "phases", requestedPhaseOrder: 2 },
+      {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2],
+        requestedScenarioSlug: "login",
+      },
+      {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2],
+        requestedPhaseOrder: 1,
+      },
+      {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2],
+        requestedSuiteSlug: "demo-only",
+      },
+      { mode: "all", requestedPhaseOrders: [1, 2] },
+      {
+        mode: "single",
+        requestedScenarioSlug: "login",
+        requestedPhaseOrders: [1, 2],
+      },
+      { mode: "phase", requestedPhaseOrder: 1, requestedPhaseOrders: [1, 2] },
+      {
+        mode: "through_phase",
+        requestedPhaseOrder: 2,
+        requestedPhaseOrders: [1, 2],
+      },
+      {
+        mode: "suite",
+        requestedSuiteSlug: "demo-only",
+        requestedPhaseOrders: [1, 2],
+      },
+    ]) {
+      expect(() => createRunRequestSchema.parse({ ...base, ...body })).toThrow(
+        /target do not match/i
+      )
+    }
+    for (const body of [
+      { mode: "all", requestedPhaseOrders: null },
+      { mode: "phase", requestedPhaseOrder: 1, requestedPhaseOrders: null },
+    ]) {
+      expect(
+        createRunRequestSchema.safeParse({ ...base, ...body }).success
+      ).toBe(true)
+    }
+
+    const run = {
+      id: "run-1",
+      projectId: "project-1",
+      ownerUserId: "user-1",
+      name: "calm-macaw-20260827-120000",
+      status: "running",
+      mode: "phases",
+      requestedScenarioSlug: null,
+      runnerType: "codex",
+      evidencePolicy: "failed_check_screenshot",
+      passedCheckCount: 0,
+      totalCheckCount: 0,
+      passRate: null,
+      startedAt: 1,
+      finishedAt: null,
+      createdAt: 1,
+      updatedAt: 1,
+    } as const
+    expect(
+      runSchema.parse({ ...run, requestedPhaseOrders: [1, 3] })
+        .requestedPhaseOrders
+    ).toEqual([1, 3])
+    expect(
+      runSchema.parse({ ...run, mode: "all", requestedPhaseOrders: null })
+        .requestedPhaseOrders
+    ).toBeNull()
+    expect(runSchema.parse({ ...run, mode: "all" })).not.toHaveProperty(
+      "requestedPhaseOrders"
+    )
+
+    const createdRun = {
+      id: run.id,
+      name: run.name,
+      status: run.status,
+      mode: run.mode,
+      runnerType: run.runnerType,
+      evidencePolicy: run.evidencePolicy,
+      requestedScenarioSlug: null,
+      startedAt: 1,
+    }
+    expect(
+      createRunResponseSchema.parse({
+        run: { ...createdRun, requestedPhaseOrders: [2, 4] },
+      }).run.requestedPhaseOrders
+    ).toEqual([2, 4])
+    expect(
+      createRunResponseSchema.parse({
+        run: { ...createdRun, mode: "all", requestedPhaseOrders: null },
+      }).run.requestedPhaseOrders
+    ).toBeNull()
+    expect(
+      createRunResponseSchema.parse({ run: { ...createdRun, mode: "all" } }).run
+    ).not.toHaveProperty("requestedPhaseOrders")
+  })
+
   it("validates environment-aware run creation", () => {
     expect(
       createRunRequestSchema.parse({

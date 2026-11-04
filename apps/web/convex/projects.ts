@@ -5,7 +5,7 @@ import { z } from "zod"
 import { mutation, query } from "./_generated/server"
 import {
   assertNoActiveFixtureOperations,
-  assertProjectAuthoringUnlocked,
+  assertNoRunningProjectRun,
   deleteProjectCascade,
   ensureUniqueProjectSlug,
   requireIdentity,
@@ -112,6 +112,14 @@ export const update = mutation({
       input.slug ?? input.name,
       project._id
     )
+    if (slug !== project.slug) {
+      // A running CLI addresses its run by project slug.
+      await assertNoRunningProjectRun(
+        ctx,
+        project._id,
+        "Changing the project slug"
+      )
+    }
 
     await ctx.db.patch(project._id, {
       name: input.name,
@@ -145,7 +153,7 @@ export const remove = mutation({
       })
     }
 
-    await assertProjectAuthoringUnlocked(ctx, project._id)
+    await assertNoRunningProjectRun(ctx, project._id, "Project deletion")
     await assertNoActiveFixtureOperations(ctx, project._id)
     const result = await deleteProjectCascade(ctx, project._id)
 

@@ -12,6 +12,7 @@ import {
   authorProject,
   createRun,
   finishFixtureOperation,
+  getRunResults,
   handleApiError,
   parseJsonBody,
   requireCliVersion,
@@ -678,6 +679,61 @@ describe("api-route helpers", () => {
     expect(fetchQuery).toHaveBeenCalledTimes(1)
   })
 
+  it("passes requested phase orders to the run creation mutation", async () => {
+    vi.mocked(fetchQuery).mockResolvedValue({
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "Demo",
+      slug: "demo",
+      description: "",
+      projectPrompt: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    vi.mocked(fetchMutation).mockResolvedValue({ id: "run-1" })
+
+    await createRun("token", {
+      projectSlug: "demo",
+      evidencePolicy: "text_only",
+      body: {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2, 5],
+        runnerType: "codex",
+        startedAt: 1,
+      },
+    })
+    await createRun("token", {
+      projectSlug: "demo",
+      evidencePolicy: "text_only",
+      body: { mode: "all", runnerType: "codex", startedAt: 1 },
+    })
+
+    expect(vi.mocked(fetchMutation).mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({
+        mode: "phases",
+        requestedPhaseOrders: [1, 2, 5],
+        requestedPhaseOrder: null,
+      }),
+      expect.objectContaining({ mode: "all", requestedPhaseOrders: null }),
+    ])
+  })
+
+  it("rejects unsorted requested phase orders before creating a run", async () => {
+    await expect(
+      createRun("token", {
+        projectSlug: "demo",
+        evidencePolicy: "text_only",
+        body: {
+          mode: "phases",
+          requestedPhaseOrders: [3, 1],
+          runnerType: "codex",
+          startedAt: 1,
+        },
+      })
+    ).rejects.toThrow(/sorted and unique/)
+    expect(fetchMutation).not.toHaveBeenCalled()
+  })
+
   it("maps stringified structured errors in messages to API responses", async () => {
     const response = handleApiError(
       new Error(
@@ -784,6 +840,40 @@ describe("api-route helpers", () => {
         "validation_error",
         "Run ID in URL does not match request body."
       )
+    )
+  })
+
+  it("passes run references and the environment filter to the results query", async () => {
+    vi.mocked(fetchQuery).mockResolvedValueOnce({ run: {}, results: [] })
+
+    await getRunResults({
+      token: "token",
+      projectSlug: "demo-project",
+      runRef: "latest",
+      environment: "staging",
+    })
+
+    expect(fetchQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      { projectSlug: "demo-project", runRef: "latest", environment: "staging" },
+      { token: "token" }
+    )
+  })
+
+  it("maps a missing run to not_found", async () => {
+    vi.mocked(fetchQuery).mockResolvedValueOnce(null)
+
+    await expect(
+      getRunResults({
+        token: "token",
+        projectSlug: "demo-project",
+        runRef: "brave-heron-20261104-120000",
+      })
+    ).rejects.toEqual(new ApiRouteError(404, "not_found", "Run not found."))
+    expect(fetchQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      { projectSlug: "demo-project", runRef: "brave-heron-20261104-120000" },
+      { token: "token" }
     )
   })
 })

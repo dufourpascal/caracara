@@ -298,7 +298,7 @@ function findFixturesBySlug(fixtures: FixtureDetail[], slugs: string[]) {
   })
 }
 
-const UNHEALTHY_EXIT_CODE = 3
+const UNHEALTHY_EXIT_CODE = 4
 
 export async function fixturesVerifyCommand(
   slugs: string[],

@@ -1250,6 +1250,14 @@ class CodexRunner implements RunnerAdapter {
                 if (scenarioInput.signal?.aborted) {
                   throw error
                 }
+                const message = (
+                  error instanceof Error ? error.message : "Codex failed."
+                )
+                  .split(evidenceDirectory)
+                  .join("[LOCAL_EVIDENCE_DIR]")
+                process.stderr.write(
+                  `  warning: screenshot follow-up turn failed: ${redactSecretValues(message, input.secrets)}\n`
+                )
                 waitingForUsage = false
                 usage = { ...usage, complete: false }
                 fallbackReason = SCREENSHOT_CORRECTION_FAILED_REASON

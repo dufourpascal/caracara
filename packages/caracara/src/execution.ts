@@ -553,7 +553,7 @@ export function buildMissingScreenshotPrompt(input: {
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`
     ),
-    "Use screenshotUnavailableReason only as a last resort, when no screenshot can show the failure or where it appeared, for example because a browser-native dialog blocks every capture. Then save nothing for that check and set a short, specific reason. For every check whose screenshot you saved, set it to null.",
+    "Use screenshotUnavailableReason only as a last resort, when no screenshot can show the failure or where it appeared, for example because the screenshot tool keeps failing. Then save nothing for that check and set a short, specific reason. For every check whose screenshot you saved, set it to null.",
     "Return JSON with exactly one checks entry per listed check ID.",
     "Do not include secret values, screenshot paths, or image bytes in your response.",
   ].join("\n")
@@ -596,6 +596,10 @@ export function buildMissingScreenshotResultSchema(missingCheckIds: string[]) {
 export const MISSING_SCREENSHOT_FALLBACK_REASON =
   "Caracara: no screenshot was saved and Codex gave no reason."
 
+/** Written by the CLI when the screenshot follow-up turn itself failed. */
+export const SCREENSHOT_CORRECTION_FAILED_REASON =
+  "Caracara: the screenshot follow-up turn failed before a screenshot was saved."
+
 /** Reads the reasons from a correction turn; an unreadable response yields none. */
 export function parseScreenshotUnavailableReasons(finalResponse: string) {
   const reasons = new Map<string, string>()
@@ -629,7 +633,8 @@ export function parseScreenshotUnavailableReasons(finalResponse: string) {
 export function applyEvidenceUnavailableReasons(
   execution: RunnerExecution,
   missingCheckIds: string[],
-  reasons: Map<string, string>
+  reasons: Map<string, string>,
+  fallbackReason = MISSING_SCREENSHOT_FALLBACK_REASON
 ): RunnerExecution {
   const missing = new Set(missingCheckIds)
   return {
@@ -641,17 +646,24 @@ export function applyEvidenceUnavailableReasons(
         ? {
             ...rest,
             evidenceUnavailableReason:
-              reasons.get(result.checkId) ?? MISSING_SCREENSHOT_FALLBACK_REASON,
+              reasons.get(result.checkId) ?? fallbackReason,
           }
         : rest
     }),
   }
 }
 
-function limitEvidenceUnavailableReason(reason: string) {
-  return reason.length > EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH
-    ? `${reason.slice(0, EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH - 1)}…`
-    : reason
+/** Limits UTF-16 length like the server, without leaving half a surrogate pair. */
+export function limitEvidenceUnavailableReason(reason: string) {
+  if (reason.length <= EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH) {
+    return reason
+  }
+  let end = EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH - 1
+  const last = reason.charCodeAt(end - 1)
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end -= 1
+  }
+  return `${reason.slice(0, end)}…`
 }
 
 const maxScreenshotBytes = 3 * 1024 * 1024
@@ -1204,29 +1216,44 @@ class CodexRunner implements RunnerAdapter {
             })
 
             if (screenshots.missingCheckIds.length > 0) {
-              waitingForUsage = true
-              const correction = await thread.run(
-                buildMissingScreenshotPrompt({
-                  scenario: scenarioInput.scenario,
-                  evidenceDirectory,
-                  missingCheckIds: screenshots.missingCheckIds,
-                }),
-                {
-                  outputSchema: buildMissingScreenshotResultSchema(
-                    screenshots.missingCheckIds
-                  ),
-                  signal: scenarioInput.signal,
+              let reasons = new Map<string, string>()
+              let fallbackReason = MISSING_SCREENSHOT_FALLBACK_REASON
+              try {
+                waitingForUsage = true
+                const correction = await thread.run(
+                  buildMissingScreenshotPrompt({
+                    scenario: scenarioInput.scenario,
+                    evidenceDirectory,
+                    missingCheckIds: screenshots.missingCheckIds,
+                  }),
+                  {
+                    outputSchema: buildMissingScreenshotResultSchema(
+                      screenshots.missingCheckIds
+                    ),
+                    signal: scenarioInput.signal,
+                  }
+                )
+                waitingForUsage = false
+                const correctionUsage = toCodexRunnerUsage(
+                  correction.usage,
+                  input.model
+                )
+                usage = mergeRunnerUsage(usage, {
+                  usage: correctionUsage,
+                  complete: correctionUsage !== undefined,
+                })
+                reasons = parseScreenshotUnavailableReasons(
+                  correction.finalResponse
+                )
+              } catch (error) {
+                // The verdicts already stand; only cancellation ends the scenario here.
+                if (scenarioInput.signal?.aborted) {
+                  throw error
                 }
-              )
-              waitingForUsage = false
-              const correctionUsage = toCodexRunnerUsage(
-                correction.usage,
-                input.model
-              )
-              usage = mergeRunnerUsage(usage, {
-                usage: correctionUsage,
-                complete: correctionUsage !== undefined,
-              })
+                waitingForUsage = false
+                usage = { ...usage, complete: false }
+                fallbackReason = SCREENSHOT_CORRECTION_FAILED_REASON
+              }
               screenshots = await readScreenshotEvidence({
                 evidenceDirectory,
                 checkIds: failedCheckIds,
@@ -1234,7 +1261,8 @@ class CodexRunner implements RunnerAdapter {
               validated = applyEvidenceUnavailableReasons(
                 validated,
                 screenshots.missingCheckIds,
-                parseScreenshotUnavailableReasons(correction.finalResponse)
+                reasons,
+                fallbackReason
               )
             }
 

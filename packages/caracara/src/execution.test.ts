@@ -15,8 +15,10 @@ import {
   buildMissingScreenshotPrompt,
   buildMissingScreenshotResultSchema,
   applyEvidenceUnavailableReasons,
+  limitEvidenceUnavailableReason,
   MISSING_SCREENSHOT_FALLBACK_REASON,
   parseScreenshotUnavailableReasons,
+  SCREENSHOT_CORRECTION_FAILED_REASON,
   buildRunnerPrompt,
   buildWindowsTaskkillArgs,
   formatRunnerUsage,
@@ -373,13 +375,18 @@ describe("Codex configuration", () => {
     expect(correction).toContain("visually inspect the returned image")
     expect(correction).toContain("Only after visually confirming the image")
     expect(correction).toContain("Valid article slug")
-    expect(correction).toContain(
-      "Use screenshotUnavailableReason only as a last resort"
-    )
-    expect(correction).toContain("browser-native dialog blocks every capture")
   })
 
   it("asks the correction turn for a reason per missing screenshot", () => {
+    const correction = buildMissingScreenshotPrompt({
+      scenario,
+      evidenceDirectory: "/tmp/caracara-evidence",
+      missingCheckIds: ["00000000-0000-4000-8000-000000000001"],
+    })
+    expect(correction).toContain(
+      "Use screenshotUnavailableReason only as a last resort"
+    )
+    expect(correction).toContain("exactly one checks entry per listed check ID")
     const schema = buildMissingScreenshotResultSchema(["a", "b"])
     expect(schema.properties.checks.minItems).toBe(2)
     expect(schema.properties.checks.maxItems).toBe(2)
@@ -451,6 +458,20 @@ describe("Codex configuration", () => {
     expect(result.checkResults[2]).not.toHaveProperty(
       "evidenceUnavailableReason"
     )
+    expect(
+      applyEvidenceUnavailableReasons(
+        result,
+        ["silent"],
+        new Map(),
+        SCREENSHOT_CORRECTION_FAILED_REASON
+      ).checkResults[1]?.evidenceUnavailableReason
+    ).toBe(SCREENSHOT_CORRECTION_FAILED_REASON)
+  })
+
+  it("limits reasons without splitting a surrogate pair", () => {
+    const limited = limitEvidenceUnavailableReason(`${"x".repeat(498)}😀tail`)
+    expect(limited).toBe(`${"x".repeat(498)}…`)
+    expect(limitEvidenceUnavailableReason("short")).toBe("short")
   })
 
   it("redacts and then limits evidence-unavailable reasons", () => {

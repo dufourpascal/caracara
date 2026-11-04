@@ -42,7 +42,7 @@ Scenario start snapshots the data that will be executed.
 
 The start request includes scenario identity, instructions, phase metadata, and checks. Result submission sends scenario ID, status, check results, summary or failure detail, and finish time. The backend validates result IDs against the stored snapshot.
 
-API v3 run creation snapshots an evidence policy and returns the authenticated Convex HTTP-action URL for screenshot uploads. The CLI uploads each failed-check screenshot after scenario start and before result submission. The backend rejects a completed Codex result under the screenshot policy unless every failed check has exactly one attached image.
+API v3 run creation snapshots an evidence policy and returns the authenticated Convex HTTP-action URL for screenshot uploads. The CLI uploads each failed-check screenshot after scenario start and before result submission. The backend rejects a completed Codex result under the screenshot policy unless every failed check has exactly one attached image, or none plus an `evidenceUnavailableReason` (1 to 500 characters). A stored screenshot for a check that carries a reason is removed, and only failed checks may carry a reason. Results outside the screenshot policy cannot carry a reason.
 
 ### API_08
 
@@ -79,6 +79,8 @@ API v3 exposes one narrow authoring operation endpoint.
 Run creation may include a target environment snapshot.
 
 The environment name and target URL must be supplied together. The backend validates the name and safe HTTP or HTTPS URL, then stores both on the run. Older clients may omit both and create an untracked run.
+
+Run creation may also include the Codex `model` and `reasoningEffort` the run uses. Both are optional and only accepted for Codex runs. The backend stores them as given (model: printable ASCII without spaces, up to 100 characters; reasoning effort: a short lowercase token, so newer CLI effort levels don't fail run creation). A run-creation retry with the same creation attempt ID must send the same model settings as the stored run, unless the stored run has none. Run responses return both fields, `null` when not recorded.
 
 ### API_13
 

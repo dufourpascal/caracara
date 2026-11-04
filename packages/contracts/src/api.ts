@@ -11,6 +11,8 @@ import {
   projectSchema,
   requestedPhaseOrdersSchema,
   runModeSchema,
+  runModelSchema,
+  runReasoningEffortSchema,
   runSchema,
   runnerTypeSchema,
   scenarioResultSchema,
@@ -478,6 +480,8 @@ export const createRunRequestSchema = z
     runnerType: runnerTypeSchema,
     environment: environmentNameSchema.optional(),
     targetUrl: targetUrlSchema.optional(),
+    model: runModelSchema.optional(),
+    reasoningEffort: runReasoningEffortSchema.optional(),
     requestedScenarioSlug: slugSchema.nullable().optional(),
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
     requestedPhaseOrders: requestedPhaseOrdersSchema.nullable().optional(),
@@ -529,6 +533,16 @@ export const createRunRequestSchema = z
       })
     }
     if (
+      value.runnerType !== "codex" &&
+      (value.model !== undefined || value.reasoningEffort !== undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Model settings are only supported for Codex runs.",
+        path: ["model"],
+      })
+    }
+    if (
       value.interruptedAt !== undefined &&
       value.creationAttemptId === undefined
     ) {
@@ -574,6 +588,8 @@ export const createRunResponseSchema = z.object({
     evidencePolicy: true,
     environment: true,
     targetUrl: true,
+    model: true,
+    reasoningEffort: true,
     requestedScenarioSlug: true,
     requestedPhaseOrder: true,
     requestedPhaseOrders: true,

@@ -13,6 +13,8 @@ import { parseEnv } from "node:util"
 import {
   cliConfigSchema,
   environmentNameSchema,
+  modelReasoningEffortSchema,
+  runModelSchema,
   runnerTypeSchema,
   slugSchema,
   targetUrlSchema,
@@ -35,16 +37,6 @@ const LOCAL_SECRETS_STUB = [
   "",
 ].join("\n")
 export const DEFAULT_API_BASE_URL = "https://caracara.renaissanceai.com"
-
-const modelReasoningEffortSchema = z.enum([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-])
 
 // Zod 4 records drop an own "__proto__" key (which JSON.parse creates) without
 // validating it, so reject it like any other invalid environment name.
@@ -217,6 +209,57 @@ export function resolveEnvironment(
 
   const targetUrl = config.environments[name]!
   return { name, targetUrl }
+}
+
+export type ResolvedRunModel = {
+  model?: string
+  modelReasoningEffort?: ModelReasoningEffort
+}
+
+/**
+ * Resolves the Codex model settings for one run. Flags override
+ * .caracara/config.json. The same values go to Codex and onto the run record.
+ */
+export function resolveRunModel(
+  config: Pick<ResolvedConfig, "runner" | "model" | "model_reasoning_effort">,
+  overrides: { model?: string; modelReasoningEffort?: string }
+): ResolvedRunModel {
+  if (config.runner !== "codex") {
+    if (
+      overrides.model !== undefined ||
+      overrides.modelReasoningEffort !== undefined
+    ) {
+      throw new Error(
+        "--model and --model-reasoning-effort are only supported with the codex runner."
+      )
+    }
+    return {}
+  }
+
+  const resolved: ResolvedRunModel = {}
+  const model = overrides.model ?? config.model
+  if (model !== undefined) {
+    const parsed = runModelSchema.safeParse(model)
+    if (!parsed.success) {
+      throw new Error(
+        `Invalid model ${JSON.stringify(model)}: ${parsed.error.issues[0]?.message ?? "invalid value"}`
+      )
+    }
+    resolved.model = parsed.data
+  }
+
+  const effort = overrides.modelReasoningEffort ?? config.model_reasoning_effort
+  if (effort !== undefined) {
+    const parsed = modelReasoningEffortSchema.safeParse(effort)
+    if (!parsed.success) {
+      throw new Error(
+        `Invalid model reasoning effort ${JSON.stringify(effort)}. Use one of: ${modelReasoningEffortSchema.options.join(", ")}.`
+      )
+    }
+    resolved.modelReasoningEffort = parsed.data
+  }
+
+  return resolved
 }
 
 export async function findLocalConfigPath(startDir = process.cwd()) {

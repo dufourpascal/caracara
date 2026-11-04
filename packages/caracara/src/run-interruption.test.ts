@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => {
             phaseId: "phase-1",
             phaseName: "Setup",
             phaseOrder: 1,
-            dependencyIds: [],
+            dependencyIds: [] as string[],
             fixtureRequirements: [],
           },
         ],
@@ -117,6 +117,7 @@ vi.mock("./execution.js", async (importOriginal) => ({
 }))
 
 import { runCommand } from "./commands.js"
+import { readResolvedConfig } from "./config.js"
 
 afterEach(() => {
   process.exitCode = undefined
@@ -962,6 +963,112 @@ describe("run interruption", () => {
   })
 })
 
+describe("run model", () => {
+  const configWithModel = {
+    accessToken: "token",
+    apiBaseUrl: "https://caracara.example.com",
+    defaultEnvironment: "development",
+    environments: { development: "http://localhost:3000/" },
+    expiresAt: null,
+    runner: "codex" as const,
+    selectedProjectSlug: "demo",
+    userEmail: "test@example.com",
+    model: "gpt-6.1-terra",
+    model_reasoning_effort: "low" as const,
+  }
+  const completedExecution = {
+    executionSummary: "Opened the application.",
+    checkResults: [],
+    usage: { complete: true },
+  }
+
+  it("sends the same flag overrides to run creation and to Codex", async () => {
+    vi.mocked(readResolvedConfig).mockResolvedValueOnce(configWithModel)
+    mocks.createRun.mockResolvedValueOnce({
+      run: {
+        ...mocks.createRunResponse.run,
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+      } as typeof mocks.createRunResponse.run,
+    })
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await runCommand({
+      model: " gpt-6.1-sol ",
+      modelReasoningEffort: "high",
+    })
+
+    expect(mocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          model: "gpt-6.1-sol",
+          reasoningEffort: "high",
+        }),
+      })
+    )
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-6.1-sol",
+        modelReasoningEffort: "high",
+      })
+    )
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining("codex · gpt-6.1-sol · high")
+    )
+    expect(stderr).not.toHaveBeenCalledWith(
+      expect.stringContaining("did not record")
+    )
+  })
+
+  it("uses the config defaults and warns when the server drops them", async () => {
+    vi.mocked(readResolvedConfig).mockResolvedValueOnce(configWithModel)
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(mocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          model: "gpt-6.1-terra",
+          reasoningEffort: "low",
+        }),
+      })
+    )
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-6.1-terra",
+        modelReasoningEffort: "low",
+      })
+    )
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining("did not record this run's model settings")
+    )
+  })
+
+  it("omits model fields when nothing is configured", async () => {
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    const payload = mocks.createRun.mock.calls[0]?.[0] as unknown as {
+      payload: Record<string, unknown>
+    }
+    expect(payload.payload).not.toHaveProperty("model")
+    expect(payload.payload).not.toHaveProperty("reasoningEffort")
+  })
+})
+
 describe("suite plan check during run start", () => {
   it("interrupts the run when the suite changed after run creation", async () => {
     // The first fetch is the fixture preflight plan, before the run exists.
@@ -1005,5 +1112,131 @@ describe("suite plan check during run start", () => {
         payload: expect.objectContaining({ status: "completed" }),
       })
     )
+  })
+})
+
+describe("run failures", () => {
+  const scenario = (id: string, phaseId: string, dependencyIds: string[]) => ({
+    id,
+    name: id,
+    slug: id,
+    status: "active",
+    instructions: `Run ${id}.`,
+    evaluationChecks: [],
+    phaseId,
+    phaseName: phaseId,
+    phaseOrder: phaseId === "phase-1" ? 1 : 2,
+    dependencyIds,
+    fixtureRequirements: [],
+  })
+  const originalPhases = mocks.executionPlan.phases
+
+  afterEach(() => {
+    mocks.executionPlan.phases = originalPhases
+    mocks.executeScenario.mockReset()
+    mocks.startRun.mockReset()
+  })
+
+  function useDependencyPlan() {
+    mocks.executionPlan.phases = [
+      {
+        id: "phase-1",
+        name: "Setup",
+        order: 1,
+        scenarios: [
+          scenario("create-item", "phase-1", []),
+          scenario("edit-item", "phase-1", ["create-item"]),
+          scenario("delete-item", "phase-1", ["edit-item"]),
+          scenario("open-settings", "phase-1", []),
+        ],
+      },
+      {
+        id: "phase-2",
+        name: "Reports",
+        order: 2,
+        scenarios: [scenario("export-report", "phase-2", [])],
+      },
+    ]
+  }
+
+  function submittedResults() {
+    return mocks.submitScenarioResult.mock.calls.map((call) => {
+      const args = call[0] as unknown as {
+        payload: {
+          result: {
+            scenarioId: string
+            status: string
+            failureDetail: string | null
+          }
+        }
+      }
+      const { scenarioId, status, failureDetail } = args.payload.result
+      return { scenarioId, status, failureDetail }
+    })
+  }
+
+  it("skips only scenarios that depend on a failed one", async () => {
+    useDependencyPlan()
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    mocks.startRun.mockImplementation(async () => ({
+      close: mocks.close,
+      executeScenario: mocks.executeScenario,
+    }))
+    mocks.executeScenario
+      .mockRejectedValueOnce(new Error("Codex crashed"))
+      .mockResolvedValue({ executionSummary: "Done.", checkResults: [] })
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      {
+        scenarioId: "create-item",
+        status: "runner_failed",
+        failureDetail: "Codex crashed",
+      },
+      {
+        scenarioId: "edit-item",
+        status: "dependency_failed",
+        failureDetail:
+          "Skipped because dependency create-item did not complete.",
+      },
+      {
+        scenarioId: "delete-item",
+        status: "dependency_failed",
+        failureDetail: "Skipped because dependency edit-item did not complete.",
+      },
+      { scenarioId: "open-settings", status: "completed", failureDetail: null },
+      { scenarioId: "export-report", status: "completed", failureDetail: null },
+    ])
+    expect(mocks.executeScenario).toHaveBeenCalledTimes(3)
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "failed" }),
+      })
+    )
+  })
+
+  it("skips the rest of the run when the runner cannot start", async () => {
+    useDependencyPlan()
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    mocks.startRun.mockRejectedValue(new Error("Chromium did not start"))
+
+    await runCommand({})
+
+    expect(mocks.startRun).toHaveBeenCalledOnce()
+    expect(submittedResults()).toEqual([
+      {
+        scenarioId: "create-item",
+        status: "runner_failed",
+        failureDetail: "Chromium did not start",
+      },
+      ...["edit-item", "delete-item", "open-settings", "export-report"].map(
+        (scenarioId) => ({
+          scenarioId,
+          status: "dependency_failed",
+          failureDetail: "Dependency chain stopped after an earlier failure.",
+        })
+      ),
+    ])
   })
 })

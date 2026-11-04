@@ -122,7 +122,7 @@ Each run stores the selected environment and normalized target URL so the web ap
 
 `caracara run --phases 1-7,9,10` runs the listed phases, in project order, as one run. Ranges and single phase numbers can be mixed. It can't be combined with `--scenario`, `--suite`, `--phase` or `--through-phase`.
 
-When a run covers more than one phase, an execution error skips only the rest of that phase and the run continues with the next one. Pass `--no-keep-going` to stop the whole run instead, or `--keep-going` to continue in a single-phase run too. The run still stops when the browser session is gone, or when two phases in a row fail on their first scenario.
+After an execution error, the run skips only the scenarios that depend on the failed one and continues with everything else, in the same phase and later ones. Pass `--no-keep-going` to stop the whole run instead. The run still stops when the browser session is gone, when two phases in a row fail on their first scenario, or after three runner failures in a row, in each case with no scenario completing in between.
 
 In a terminal, `caracara run` keeps a status panel at the bottom with the current phase and scenario, elapsed time and ETA, check totals, tokens and the agent's current step. In CI, when output is redirected or piped (`> run.log`, `| tee run.log`), or with `--plain`, it prints timestamped lines instead, plus a heartbeat line every 5 minutes while a scenario runs (`--heartbeat 30s`, `--heartbeat 0` to turn it off). `--quiet` prints only a short summary; `--json` prints one JSON event per line (`run.started`, `phase.started`, `scenario.started`, `agent.action`, `scenario.finished`, `run.finished`).
 
@@ -151,9 +151,19 @@ Set the Codex model and reasoning effort in `.caracara/config.json`:
 
 Both settings are optional. Without them, Codex uses its own configuration. You can also set them with `caracara init --model <model> --model-reasoning-effort <effort>`.
 
+Override either setting for one run without changing the config:
+
+```bash
+caracara run --model gpt-6.1-sol --model-reasoning-effort high
+```
+
+Flags take precedence over `.caracara/config.json`. Reasoning effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. The flags only apply to the `codex` runner.
+
+Each run stores the model and reasoning effort Caracara passed to Codex. `caracara run` prints them at the start, and the web app shows them in the run log and run detail. The stored value is the requested model; Caracara doesn't read back which model Codex reports. When neither the config nor a flag sets a model, Codex picks its own default and the run shows the model as "not recorded". Runs created by older CLIs also show "not recorded". If the web app is older than the CLI and drops the settings, `caracara run` prints a warning and continues.
+
 Caracara runs the Codex CLI installed on your machine: the `codex` executable on `PATH`, or the file named by `CARACARA_CODEX_PATH`. Install it with `npm install -g @openai/codex`; Caracara supports version 0.164.0 or newer and prints a warning for older versions. Updating `codex` updates the runtime Caracara uses. Codex uses your existing local Codex login, and Caracara starts a fresh Codex thread for each scenario while sharing one run-scoped browser session.
 
-When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
+When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. If no screenshot can show the failure, for example because a native browser dialog blocks every capture, the check is recorded as "evidence unavailable" with a reason, and the web app shows that reason instead. Run deletion also removes the stored screenshots.
 
 ## Run results
 

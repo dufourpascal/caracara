@@ -21,6 +21,7 @@ import {
   readLocalSecrets,
   resolveConfig,
   resolveEnvironment,
+  resolveRunModel,
   resolveRunner,
   writeLocalConfig,
 } from "./config.js"
@@ -451,5 +452,66 @@ describe("config", () => {
     expect(cliPaths.localConfigDirName).toBe(".caracara")
     expect(cliPaths.localConfigFileName).toBe("config.json")
     expect(cliPaths.localSecretsFileName).toBe("secrets.env")
+  })
+})
+
+describe("resolveRunModel", () => {
+  const codexConfig = {
+    runner: "codex" as const,
+    model: "gpt-6.1-terra",
+    model_reasoning_effort: "low" as const,
+  }
+
+  it("uses the config defaults when no flags are passed", () => {
+    expect(resolveRunModel(codexConfig, {})).toEqual({
+      model: "gpt-6.1-terra",
+      modelReasoningEffort: "low",
+    })
+    expect(resolveRunModel({ runner: "codex" }, {})).toEqual({})
+  })
+
+  it("lets flags override the config for one run", () => {
+    expect(
+      resolveRunModel(codexConfig, {
+        model: " gpt-6.1-sol ",
+        modelReasoningEffort: "high",
+      })
+    ).toEqual({ model: "gpt-6.1-sol", modelReasoningEffort: "high" })
+    expect(resolveRunModel(codexConfig, { model: "gpt-6.1-sol" })).toEqual({
+      model: "gpt-6.1-sol",
+      modelReasoningEffort: "low",
+    })
+  })
+
+  it("rejects invalid values before the run starts", () => {
+    expect(() => resolveRunModel(codexConfig, { model: "" })).toThrow(
+      /Invalid model ""/
+    )
+    expect(() => resolveRunModel(codexConfig, { model: "gpt 6" })).toThrow(
+      /Invalid model/
+    )
+    expect(() =>
+      resolveRunModel(codexConfig, { modelReasoningEffort: "extreme" })
+    ).toThrow(
+      'Invalid model reasoning effort "extreme". Use one of: none, minimal, low, medium, high, xhigh, max.'
+    )
+  })
+
+  it("keeps model settings to the codex runner", () => {
+    expect(
+      resolveRunModel({ ...codexConfig, runner: "claude-code" }, {})
+    ).toEqual({})
+    expect(() =>
+      resolveRunModel(
+        { ...codexConfig, runner: "claude-code" },
+        { model: "gpt-6.1-sol" }
+      )
+    ).toThrow(/only supported with the codex runner/)
+    expect(() =>
+      resolveRunModel(
+        { ...codexConfig, runner: "claude-code" },
+        { modelReasoningEffort: "high" }
+      )
+    ).toThrow(/only supported with the codex runner/)
   })
 })

@@ -310,6 +310,14 @@ program
   .option("--project <slug>")
   .option("--runner <runner>", "codex or claude-code", "codex")
   .option("--environment <name>")
+  .option(
+    "--model <model>",
+    "Codex model for this run (default: model in .caracara/config.json)"
+  )
+  .option(
+    "--model-reasoning-effort <effort>",
+    "Codex reasoning effort for this run: none, minimal, low, medium, high, xhigh or max (default: model_reasoning_effort in .caracara/config.json)"
+  )
   .option("--scenario <slug>")
   .option("--suite <slug>")
   .option("--phase <number>")
@@ -320,7 +328,7 @@ program
   )
   .option(
     "--keep-going",
-    "after an execution error, skip the rest of that phase and continue (default when the run covers several phases)"
+    "after an execution error, skip only the scenarios that depend on it and continue (default)"
   )
   .option("--no-keep-going", "stop the run after the first execution error")
   .option("--plain", "print timestamped lines instead of the live status panel")

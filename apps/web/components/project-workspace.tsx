@@ -20,6 +20,7 @@ import {
   GitBranch,
   History,
   ImageIcon,
+  ImageOff,
   LoaderCircle,
   ListChecks,
   Maximize2,
@@ -455,6 +456,29 @@ function createEmptyScenarioDraft({
 
 function formatRunDisplayName(name: string) {
   return name.replace(/-\d{8}-\d{6}$/, "").replaceAll("-", " ")
+}
+
+type RunModelInfo = {
+  model?: string | null
+  reasoningEffort?: string | null
+}
+
+export function formatRunModelLabel(run: RunModelInfo) {
+  if (!run.model) {
+    return null
+  }
+  return run.reasoningEffort
+    ? `${run.model} · ${run.reasoningEffort}`
+    : run.model
+}
+
+export function formatRunModelTitle(run: RunModelInfo) {
+  if (!run.model) {
+    return "Model not recorded"
+  }
+  return run.reasoningEffort
+    ? `Model: ${run.model}, reasoning effort: ${run.reasoningEffort}`
+    : `Model: ${run.model}`
 }
 
 export function RunEnvironmentFilter({
@@ -2513,6 +2537,15 @@ function AuthenticatedProjectWorkspace({
                               >
                                 {run.environment ?? "untracked"}
                               </Badge>
+                              {run.model ? (
+                                <Badge
+                                  className="max-w-full truncate font-mono tracking-normal normal-case"
+                                  title={formatRunModelTitle(run)}
+                                  variant="outline"
+                                >
+                                  {formatRunModelLabel(run)}
+                                </Badge>
+                              ) : null}
                               {run.mode === "single" &&
                               run.requestedScenarioSlug ? (
                                 <span
@@ -2683,6 +2716,29 @@ function AuthenticatedProjectWorkspace({
                             </p>
                           ) : null}
                         </div>
+                        {runDetail.run.runnerType !== "claude-code" ? (
+                          <div className="col-span-2 bg-background px-3 py-2">
+                            <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                              Model
+                            </p>
+                            <p
+                              className={cn(
+                                "mt-1 truncate font-mono text-sm",
+                                runDetail.run.model
+                                  ? "text-foreground"
+                                  : "text-muted-foreground"
+                              )}
+                              title={runDetail.run.model ?? undefined}
+                            >
+                              {runDetail.run.model ?? "not recorded"}
+                            </p>
+                            {runDetail.run.reasoningEffort ? (
+                              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                reasoning {runDetail.run.reasoningEffort}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {runDetail.run.mode === "suite" &&
                         runDetail.run.requestedSuiteSlug ? (
                           <div className="col-span-2 bg-background px-3 py-2">
@@ -3954,7 +4010,7 @@ function PhaseEditor({
   )
 }
 
-function RunResultDetail({
+export function RunResultDetail({
   result,
 }: {
   result: {
@@ -3976,6 +4032,7 @@ function RunResultDetail({
         | "environment_failure"
         | "tool_limit"
         | null
+      evidenceUnavailableReason?: string | null
     }>
     evidence: Array<{
       id: string
@@ -4134,6 +4191,11 @@ function RunResultDetail({
                   checkName={check.name}
                   key={screenshot.id}
                 />
+              ) : checkResult?.verdict === "failed" &&
+                checkResult.evidenceUnavailableReason ? (
+                <CheckEvidenceUnavailable
+                  reason={checkResult.evidenceUnavailableReason}
+                />
               ) : null}
             </article>
           )
@@ -4161,6 +4223,18 @@ function RunResultDetail({
           <CopyableTextBlock value={result.executionInstructions} />
         </Field>
       </div>
+    </div>
+  )
+}
+
+function CheckEvidenceUnavailable({ reason }: { reason: string }) {
+  return (
+    <div className="grid max-w-md gap-1 border border-border bg-muted/20 px-3 py-2">
+      <p className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+        <ImageOff aria-hidden className="size-3.5" />
+        Screenshot unavailable
+      </p>
+      <p className="text-sm text-foreground">{reason}</p>
     </div>
   )
 }

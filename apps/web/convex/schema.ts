@@ -24,6 +24,7 @@ const checkResult = v.object({
   ),
   evidence: v.string(),
   blockedReason: v.optional(v.union(v.null(), blockedReason)),
+  evidenceUnavailableReason: v.optional(v.union(v.null(), v.string())),
 })
 
 const fixtureAccess = v.union(v.literal("read"), v.literal("mutates"))
@@ -156,6 +157,8 @@ export default defineSchema({
     environment: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
     fixturePreflight: v.optional(v.array(fixturePreflightEntry)),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
     passedCheckCount: v.number(),
     totalCheckCount: v.number(),
     startedAt: v.number(),

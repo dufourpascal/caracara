@@ -50,7 +50,7 @@ Evaluation checks are executed in the same runner invocation as task instruction
 
 The runner receives the ordered authored checks and must return exactly one passed, failed, or blocked verdict with concrete browser evidence for every check. A blocked verdict includes one structured reason: `blocked_by_check`, `setup_incomplete`, `environment_failure`, or `tool_limit`. The runner retries only blocked checks once, using the current browser state, before returning their final verdicts. Historical `not_observed` verdicts remain readable for compatibility but are not emitted by current runners. It never returns a numeric score.
 
-For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same Codex thread if the screenshot is missing. A second miss is a runner failure.
+For API v3 Codex runs, every failed verdict also requires one visible-viewport WebP screenshot. Codex saves it to the check-specific path supplied by the CLI. The CLI validates the file and asks once more on the same Codex thread if the screenshot is missing. In that turn Codex either saves the screenshot or, as a last resort, returns a short reason no screenshot can show the failure, such as a screenshot tool that keeps failing. A check that still has no screenshot is recorded as evidence unavailable with that reason, or with a CLI-written reason when Codex gave none or the follow-up turn failed. The scenario still completes with its verdicts; a missing screenshot is never a runner failure.
 
 ### EXEC_08
 
@@ -68,7 +68,7 @@ The system distinguishes completed scenarios, runner failures, dependency failur
 
 The CLI handles `SIGINT` and `SIGTERM` as interrupted executions. It cancels the active local runner, reports any active scenario and enclosing run as interrupted, and only then exits with the conventional signal exit code.
 
-After a runner failure the CLI marks later scenarios as dependency failures. When the run's scenarios span more than one phase, the CLI keeps going by default: it skips only the rest of the failing phase and continues with the next phase. It stops the whole run when the runner session is unusable (the runner could not start or its browser exited) or when two phases in a row fail on their first scenario. `--no-keep-going` restores stopping after the first runner failure; `--keep-going` enables phase-level continuation for single-phase runs. Any runner failure still finalizes the run as failed.
+By default the CLI keeps going after a runner failure: it skips only the scenarios that declare a dependency on the failed one, directly or through another skipped scenario, and records them as dependency failures. Dependencies never cross phases, so other scenarios in the phase and later phases still run in the same shared browser, starting from whatever state the failed scenario left. The CLI stops the whole run when the runner session is unusable (the runner could not start or its browser exited) when two phases in a row fail on their first scenario, or after three runner failures in a row, in each case with no scenario completing in between. `--no-keep-going` restores stopping after the first runner failure. Any runner failure still finalizes the run as failed.
 
 ### EXEC_10
 
@@ -98,6 +98,8 @@ Each CLI run selects one named target environment.
 
 The nearest `.caracara/config.json` maps arbitrary lowercase environment names to HTTP or HTTPS application URLs and may set a default. `--environment` overrides `CARACARA_ENVIRONMENT`, which overrides the saved default. The CLI opens its shared browser at the selected URL and treats that origin as authoritative for every scenario in the run.
 
+The same config may set the default Codex `model` and `model_reasoning_effort`. `caracara run --model` and `--model-reasoning-effort` override them for one run and are rejected for the `claude-code` runner. The CLI validates the resolved values once, passes them to Codex and stores the same values on the run as `model` and `reasoningEffort`. These record the requested settings. When no model is configured, Codex uses its own default and the run records no model.
+
 ### EXEC_14
 
 The CLI can execute one named suite.
@@ -126,7 +128,7 @@ Runs check required fixtures before the run is created.
 
 `caracara run --fixtures check|repair|skip` (default `check`) verifies every fixture the selection requires before run creation, for every run mode, including `--phases` (the union of the selected phases' requirements). An unhealthy fixture aborts with exit code 4 and no run under `check`. `repair` converges and re-verifies it first. `skip` records the fixture as skipped. The CLI sends one preflight entry per required fixture. In the same mutation that creates the run, the server recomputes the selection's required fixtures, rejects a missing preflight (older CLIs), a changed fixture set, or a verify that is not a fresh, never-linked, succeeded verify of that fixture against the run's environment and target URL, finished within 6 hours, started after the fixture's last definition change and run against that definition (the CLI sends the definition version it executes, and starting an operation on an outdated version is rejected), followed in that fixture and environment only by succeeded or still-running verifies, and with no run that mutates the fixture running, started, or finished in that environment since the verify started. The run snapshots each fixture's slug, name, server-computed access, outcome, and verify operation, and the verify is linked to the run. Selections without fixture requirements are unaffected.
 
-The CLI executes only the plan it fetched when the run started (for suite runs, the plan fetched after creation). Because authoring stays open, it compares that plan's required fixtures and access with the run's fixture snapshot; on any difference it finalizes the run as interrupted before any scenario starts, asks the user to run it again, and exits non-zero. Fixture preflight and post-run maintenance print plain lines outside the live status panel, on stderr with `--json` or `--quiet`. Their agent token usage is reported separately and is not part of the run's scenario token totals.
+The CLI executes only the plan it fetched when the run started (for suite runs, the plan fetched after creation). Because authoring stays open, it compares that plan's required fixtures and access with the run's fixture snapshot; on any difference it finalizes the run as interrupted before any scenario starts, asks the user to run it again, and exits non-zero. Fixture preflight and post-run maintenance print plain lines outside the live status panel, on stderr with `--json` or `--quiet`. Their agent token usage is reported separately and is not part of the run's scenario token totals. Agent fixture tasks during a run share the run's runner session, so a run-level model override applies to them too.
 
 ### EXEC_18
 

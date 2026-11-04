@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values"
 
 import {
+  EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH,
   createUniqueSlug,
   formatRunName,
   normalizeSlug,
@@ -257,6 +258,8 @@ export function toRun(run: Doc<"runs">) {
     environment: run.environment ?? null,
     targetUrl: run.targetUrl ?? null,
     fixturePreflight: run.fixturePreflight ?? [],
+    model: run.model ?? null,
+    reasoningEffort: run.reasoningEffort ?? null,
     passedCheckCount: run.passedCheckCount,
     totalCheckCount: run.totalCheckCount,
     passRate:
@@ -1006,14 +1009,36 @@ export async function interruptRunScenarioResults(
   return interrupted.length
 }
 
+/**
+ * Each failed check needs exactly one screenshot, unless it is recorded as
+ * evidence unavailable with a reason; then it must have none.
+ */
 export function validateFailedCheckEvidence(
-  checkResults: Array<{ checkId: string; verdict: string }>,
+  checkResults: Array<{
+    checkId: string
+    verdict: string
+    evidenceUnavailableReason?: string | null
+  }>,
   evidence: Array<{ checkId: string }>
 ) {
-  const failedCheckIds = checkResults
-    .filter((check) => check.verdict === "failed")
+  const failedChecks = checkResults.filter(
+    (check) => check.verdict === "failed"
+  )
+  const failedCheckIds = failedChecks
+    .filter((check) => !check.evidenceUnavailableReason)
+    .map((check) => check.checkId)
+  const unavailableCheckIds = failedChecks
+    .filter((check) => check.evidenceUnavailableReason)
     .map((check) => check.checkId)
   const evidenceIds = evidence.map((item) => item.checkId)
+
+  if (evidenceIds.some((checkId) => unavailableCheckIds.includes(checkId))) {
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        "A failed check cannot have both a screenshot and an evidence-unavailable reason.",
+    })
+  }
 
   if (
     evidenceIds.length !== failedCheckIds.length ||
@@ -1022,7 +1047,27 @@ export function validateFailedCheckEvidence(
   ) {
     throw new ConvexError({
       code: "validation_error",
-      message: "Every failed check requires exactly one screenshot.",
+      message:
+        "Every failed check requires exactly one screenshot or an evidence-unavailable reason.",
+    })
+  }
+}
+
+/** Evidence-unavailable reasons only make sense where screenshots are required. */
+export function rejectEvidenceUnavailableReasons(
+  checkResults: Array<{ evidenceUnavailableReason?: string | null }>
+) {
+  if (
+    checkResults.some(
+      (check) =>
+        check.evidenceUnavailableReason !== undefined &&
+        check.evidenceUnavailableReason !== null
+    )
+  ) {
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        "Evidence-unavailable reasons are only accepted for runs that require screenshots.",
     })
   }
 }
@@ -1221,6 +1266,7 @@ export function validateCompletedCheckResults(
     verdict: string
     evidence: string
     blockedReason?: string | null
+    evidenceUnavailableReason?: string | null
   }>
 ) {
   const expectedIds = evaluationChecks.map((check) => check.id)
@@ -1241,6 +1287,17 @@ export function validateCompletedCheckResults(
             "tool_limit",
           ].includes(check.blockedReason ?? "")
         : check.blockedReason !== undefined && check.blockedReason !== null
+    ) ||
+    checkResults.some((check) =>
+      check.evidenceUnavailableReason === undefined ||
+      check.evidenceUnavailableReason === null
+        ? false
+        : check.verdict !== "failed" ||
+          check.evidenceUnavailableReason.trim() === "" ||
+          check.evidenceUnavailableReason !==
+            check.evidenceUnavailableReason.trim() ||
+          check.evidenceUnavailableReason.length >
+            EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH
     )
   ) {
     throw new ConvexError({
@@ -1290,6 +1347,7 @@ export function matchesTerminalScenarioResult(
       verdict: string
       evidence: string
       blockedReason?: string | null
+      evidenceUnavailableReason?: string | null
     }>
     executionSummary: string | null
     failureDetail: string | null
@@ -1303,6 +1361,7 @@ export function matchesTerminalScenarioResult(
       verdict: string
       evidence: string
       blockedReason?: string | null
+      evidenceUnavailableReason?: string | null
     }>
     executionSummary: string | null
     failureDetail: string | null
@@ -1329,7 +1388,9 @@ export function matchesTerminalScenarioResult(
         candidate?.checkId === check.checkId &&
         candidate.verdict === check.verdict &&
         candidate.evidence === check.evidence &&
-        (candidate.blockedReason ?? null) === (check.blockedReason ?? null)
+        (candidate.blockedReason ?? null) === (check.blockedReason ?? null) &&
+        (candidate.evidenceUnavailableReason ?? null) ===
+          (check.evidenceUnavailableReason ?? null)
       )
     })
   )

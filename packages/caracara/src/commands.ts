@@ -6,6 +6,7 @@ import {
   API_NAMESPACE,
   formatRunName,
   MAX_REQUESTED_PHASE_ORDERS,
+  runModelSchema,
   type AuthoringRequest,
   type CheckResult,
   type Fixture,
@@ -39,6 +40,7 @@ import {
   readLocalSecrets,
   readResolvedConfig,
   resolveEnvironment,
+  resolveRunModel,
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
@@ -490,6 +492,14 @@ export async function updateCheckCommand(
 }
 
 export async function initCommand(options: InitCommandOptions) {
+  if (options.model !== undefined) {
+    const parsed = runModelSchema.safeParse(options.model)
+    if (!parsed.success) {
+      throw new Error(
+        `Invalid model ${JSON.stringify(options.model)}: ${parsed.error.issues[0]?.message ?? "invalid value"}`
+      )
+    }
+  }
   const config = await readResolvedConfig(
     {
       apiBaseUrl: options.apiBaseUrl,
@@ -802,6 +812,11 @@ export async function runCommand(
     }
   }
 
+  const runModel = resolveRunModel(config, {
+    model: options.model,
+    modelReasoningEffort: options.modelReasoningEffort,
+  })
+
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   await runner.preflight?.()
@@ -845,14 +860,15 @@ export async function runCommand(
     const message = error instanceof Error ? error.message : "Unknown error"
     writeDiagnostic(`Failed to finalize interrupted run: ${message}\n`)
   }
-  // One runner session serves preflight agent operations and the run.
+  // One runner session serves preflight agent operations, the run, and
+  // post-run maintenance, so the run's model override applies to all three.
   const sessions = createLazyRunnerSession(() =>
     runner.startRun({
       cwd,
       secrets,
       targetUrl: environment.targetUrl,
-      model: config.model,
-      modelReasoningEffort: config.model_reasoning_effort,
+      model: runModel.model,
+      modelReasoningEffort: runModel.modelReasoningEffort,
       signal: runAbortController.signal,
     })
   )
@@ -1000,6 +1016,10 @@ export async function runCommand(
         runnerType,
         environment: environment.name,
         targetUrl: environment.targetUrl,
+        ...(runModel.model ? { model: runModel.model } : {}),
+        ...(runModel.modelReasoningEffort
+          ? { reasoningEffort: runModel.modelReasoningEffort }
+          : {}),
         startedAt: runStartedAt,
         creationAttemptId,
         fixturePreflight,
@@ -1065,8 +1085,8 @@ export async function runCommand(
             environment: environment.name,
             targetUrl: environment.targetUrl,
             runnerType,
-            model: config.model ?? null,
-            modelReasoningEffort: config.model_reasoning_effort ?? null,
+            model: runModel.model ?? null,
+            modelReasoningEffort: runModel.modelReasoningEffort ?? null,
             startedAt: runStartedAt,
             finishedAt,
             exitCode,
@@ -1350,10 +1370,20 @@ export async function runCommand(
       ? { id: item.phase.id, order: item.phase.order, name: item.phase.name }
       : null
   )
+  if (
+    (runModel.model !== undefined &&
+      createRunResponse.run.model !== runModel.model) ||
+    (runModel.modelReasoningEffort !== undefined &&
+      createRunResponse.run.reasoningEffort !== runModel.modelReasoningEffort)
+  ) {
+    io.stderr.write(
+      "Warning: the server did not record this run's model settings. Update the Caracara web app to store them.\n"
+    )
+  }
   const phaseIds = [
     ...new Set(queue.flatMap((item) => (item.phase ? [item.phase.id] : []))),
   ]
-  const keepGoing = options.keepGoing ?? phaseIds.length > 1
+  const keepGoing = options.keepGoing ?? true
   const progress = new RunProgress(outputMode, io, heartbeatMs)
   const scenarioReports: RunReportScenario[] = []
 
@@ -1415,9 +1445,13 @@ export async function runCommand(
   let runFailed = false
   // Every remaining scenario is skipped (no keep-going, or the session broke).
   let stopRemaining = false
-  // With keep-going, the rest of this phase is skipped after an error.
-  let skippedPhaseId: string | null = null
+  // With keep-going, only scenarios that depend on one that did not complete
+  // are skipped. Dependencies never cross phases.
+  const unfinishedScenarioSlugs = new Map<string, string>()
   let consecutiveFirstScenarioFailures = 0
+  // Runner failures since the last completed scenario; a run where nothing
+  // completes (expired login, exhausted quota) stops instead of trying all.
+  let consecutiveRunnerFailures = 0
   let executedInCurrentPhase = 0
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
@@ -1444,8 +1478,8 @@ export async function runCommand(
       environment: environment.name,
       targetUrl: environment.targetUrl,
       runnerType,
-      model: config.model ?? null,
-      modelReasoningEffort: config.model_reasoning_effort ?? null,
+      model: runModel.model ?? null,
+      modelReasoningEffort: runModel.modelReasoningEffort ?? null,
       suite: executionSource.suite
         ? {
             name: executionSource.suite.name,
@@ -1512,10 +1546,13 @@ export async function runCommand(
         activeScenarioResultId = startedScenario.result.id
         runAbortController.signal.throwIfAborted()
 
+        const failedDependencySlug = item.scenario.dependencyIds
+          .map((dependencyId) => unfinishedScenarioSlugs.get(dependencyId))
+          .find((slug) => slug !== undefined)
         const skipDetail = stopRemaining
           ? "Dependency chain stopped after an earlier failure."
-          : skippedPhaseId !== null && item.phase?.id === skippedPhaseId
-            ? "Skipped after an execution error earlier in this phase."
+          : failedDependencySlug !== undefined
+            ? `Skipped because dependency ${failedDependencySlug} did not complete.`
             : null
         if (skipDetail) {
           await submitScenarioResult({
@@ -1541,6 +1578,7 @@ export async function runCommand(
             signal: runAbortController.signal,
           })
           runAbortController.signal.throwIfAborted()
+          unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
           activeScenario = null
           activeScenarioIndex = null
           activeScenarioResultId = null
@@ -1628,9 +1666,9 @@ export async function runCommand(
           activeScenarioIndex = null
           activeScenarioResultId = null
           activeScenarioAttemptId = null
-          if (firstInPhase) {
-            consecutiveFirstScenarioFailures = 0
-          }
+          // A completed scenario shows the run is not broken as a whole.
+          consecutiveFirstScenarioFailures = 0
+          consecutiveRunnerFailures = 0
           recordScenario({
             sequenceIndex,
             status: "completed",
@@ -1647,19 +1685,19 @@ export async function runCommand(
             throw error
           }
           runFailed = true
+          unfinishedScenarioSlugs.set(item.scenario.id, item.scenario.slug)
           if (item.phase && firstInPhase) {
             consecutiveFirstScenarioFailures += 1
           }
+          consecutiveRunnerFailures += 1
           const sessionBroken =
             runSession === null || runSession.isHealthy?.() === false
           if (
-            keepGoing &&
-            item.phase &&
-            !sessionBroken &&
-            consecutiveFirstScenarioFailures < 2
+            !keepGoing ||
+            sessionBroken ||
+            consecutiveFirstScenarioFailures >= 2 ||
+            consecutiveRunnerFailures >= 3
           ) {
-            skippedPhaseId = item.phase.id
-          } else {
             stopRemaining = true
           }
           const failureDetail =
@@ -1837,8 +1875,8 @@ export async function runCommand(
           environment: environment.name,
           targetUrl: environment.targetUrl,
           runnerType,
-          model: config.model ?? null,
-          modelReasoningEffort: config.model_reasoning_effort ?? null,
+          model: runModel.model ?? null,
+          modelReasoningEffort: runModel.modelReasoningEffort ?? null,
           startedAt: runStartedAt,
           finishedAt: finalFinishedAt ?? Date.now(),
           exitCode,

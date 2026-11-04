@@ -81,6 +81,28 @@ export const targetUrlSchema = z
     }
   })
   .transform((value) => new URL(value).toString())
+// Reasoning efforts the CLI can pass to Codex. The server stores any
+// runReasoningEffortSchema token so a newer CLI never fails run creation.
+export const modelReasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+])
+export const runModelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .check(maxUtf16Length(100))
+  .regex(/^[\x21-\x7e]+$/, {
+    error: "Model must be printable ASCII without spaces.",
+  })
+export const runReasoningEffortSchema = z.string().regex(/^[a-z0-9_-]{1,32}$/, {
+  error: "Reasoning effort must be a short lowercase token.",
+})
 export const runEnvironmentSchema = z.object({
   environment: environmentNameSchema,
   targetUrl: targetUrlSchema,
@@ -143,6 +165,13 @@ export const BLOCKED_REASONS = [
   "tool_limit",
 ] as const
 export const blockedReasonSchema = z.enum(BLOCKED_REASONS)
+export const EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH = 500
+/** Why a failed check has no screenshot, for example a native dialog that blocked every capture. */
+export const evidenceUnavailableReasonSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .check(maxUtf16Length(EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH))
 export const checkVerdictSchema = z.enum([
   "passed",
   "failed",
@@ -155,6 +184,9 @@ export const checkResultSchema = z
     verdict: checkVerdictSchema,
     evidence: z.string().min(1).check(maxUtf16Length(2_000)),
     blockedReason: blockedReasonSchema.nullable().optional(),
+    evidenceUnavailableReason: evidenceUnavailableReasonSchema
+      .nullable()
+      .optional(),
   })
   .superRefine((result, context) => {
     if (result.verdict === "blocked" && !result.blockedReason) {
@@ -173,6 +205,18 @@ export const checkResultSchema = z
         code: "custom",
         message: "Only blocked checks can include a blocked reason.",
         path: ["blockedReason"],
+      })
+    }
+    if (
+      result.verdict !== "failed" &&
+      result.evidenceUnavailableReason !== undefined &&
+      result.evidenceUnavailableReason !== null
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Only failed checks can include an evidence-unavailable reason.",
+        path: ["evidenceUnavailableReason"],
       })
     }
   })
@@ -325,6 +369,8 @@ export const runSchema = z.object({
   environment: environmentNameSchema.nullable().optional(),
   targetUrl: targetUrlSchema.nullable().optional(),
   fixturePreflight: z.array(fixturePreflightEntrySchema).optional(),
+  model: z.string().min(1).nullable().optional(),
+  reasoningEffort: z.string().min(1).nullable().optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),

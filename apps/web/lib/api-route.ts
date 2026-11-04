@@ -658,6 +658,10 @@ export async function createRun(
       evidencePolicy: args.evidencePolicy,
       environment: payload.environment,
       targetUrl: payload.targetUrl,
+      ...(payload.model ? { model: payload.model } : {}),
+      ...(payload.reasoningEffort
+        ? { reasoningEffort: payload.reasoningEffort }
+        : {}),
       requestedScenarioSlug: payload.requestedScenarioSlug ?? null,
       requestedPhaseOrder: payload.requestedPhaseOrder ?? null,
       requestedPhaseOrders: payload.requestedPhaseOrders ?? null,

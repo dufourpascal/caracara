@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => {
     phaseId: phase.id,
     phaseName: phase.name,
     phaseOrder: phase.order,
-    dependencyIds: [],
+    // setup-b builds on setup-a; every other scenario is independent.
+    dependencyIds: slug === "setup-b" ? ["id-setup-a"] : [],
     fixtureRequirements: [],
   })
   const phase = (order: number, slugs: string[]) => {
@@ -239,7 +240,7 @@ describe("run exit codes and summary", () => {
     expect(process.exitCode).toBe(3)
   })
 
-  it("exits 2 and stops a single-phase run after an execution error", async () => {
+  it("exits 2 and skips the dependents of a failed scenario in a single-phase run", async () => {
     mocks.failing.add("setup-a")
     const { stdout } = await run({ phase: "1" })
 
@@ -250,7 +251,7 @@ describe("run exit codes and summary", () => {
       [
         "setup-b",
         "dependency_failed",
-        "Dependency chain stopped after an earlier failure.",
+        "Skipped because dependency setup-a did not complete.",
       ],
     ])
     expect(stdout).toContain("[2/2] setup-b SKIPPED")
@@ -309,7 +310,7 @@ describe("multi-phase runs", () => {
       [
         "setup-b",
         "dependency_failed",
-        "Skipped after an execution error earlier in this phase.",
+        "Skipped because dependency setup-a did not complete.",
       ],
       ["data-a", "completed", null],
       ["data-b", "completed", null],
@@ -326,6 +327,76 @@ describe("multi-phase runs", () => {
       "data-a:completed",
       "data-b:runner_failed",
       "export-a:completed",
+    ])
+  })
+
+  it("keeps running independent scenarios in the failing phase", async () => {
+    mocks.failing.add("data-a")
+    await run({ phases: "2" })
+
+    expect(submitted()).toEqual([
+      ["data-a", "runner_failed", "data-a broke"],
+      ["data-b", "completed", null],
+    ])
+  })
+
+  it("does not stop after two failing first scenarios with a success between", async () => {
+    const exportPhase = mocks.executionPlan.phases[2]!
+    mocks.executionPlan.phases.push({
+      id: "phase-4",
+      name: "Phase 4",
+      order: 4,
+      scenarios: [
+        {
+          ...exportPhase.scenarios[0]!,
+          id: "id-report-a",
+          name: "report-a",
+          slug: "report-a",
+          phaseId: "phase-4",
+          phaseName: "Phase 4",
+          phaseOrder: 4,
+        },
+      ],
+    })
+    mocks.failing.add("data-a")
+    mocks.failing.add("export-a")
+    try {
+      await run({})
+    } finally {
+      mocks.executionPlan.phases.pop()
+    }
+
+    expect(submitted().map(([slug, status]) => `${slug}:${status}`)).toEqual([
+      "setup-a:completed",
+      "setup-b:completed",
+      "data-a:runner_failed",
+      "data-b:completed",
+      "export-a:runner_failed",
+      "report-a:completed",
+    ])
+  })
+
+  it("stops a single-phase run after three runner failures in a row", async () => {
+    const dataPhase = mocks.executionPlan.phases[1]!
+    const extra = ["data-c", "data-d"].map((slug) => ({
+      ...dataPhase.scenarios[0]!,
+      id: `id-${slug}`,
+      name: slug,
+      slug,
+    }))
+    dataPhase.scenarios.push(...extra)
+    for (const slug of ["data-a", "data-b", "data-c"]) mocks.failing.add(slug)
+    try {
+      await run({ phases: "2" })
+    } finally {
+      dataPhase.scenarios.splice(2)
+    }
+
+    expect(submitted().map(([slug, status]) => `${slug}:${status}`)).toEqual([
+      "data-a:runner_failed",
+      "data-b:runner_failed",
+      "data-c:runner_failed",
+      "data-d:dependency_failed",
     ])
   })
 

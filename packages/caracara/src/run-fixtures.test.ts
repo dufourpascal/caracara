@@ -395,6 +395,47 @@ describe("run fixture preflight", () => {
   })
 })
 
+describe("run model override", () => {
+  it("uses the run's model for fixture agent tasks and scenarios in one session", async () => {
+    // No hooks: preflight verifies through the runner agent.
+    vi.mocked(readFixtureHooks).mockResolvedValue({
+      path: "/project/.caracara/fixtures.json",
+      rootDir: "/project",
+      projects: {},
+    })
+    const executeFixtureTask = vi.fn(
+      async (input: { checks: Array<{ id: string; name: string }> }) => ({
+        summary: "Checked.",
+        checkResults: input.checks.map((check) => ({
+          checkId: check.id,
+          name: check.name,
+          verdict: "passed" as const,
+          evidence: "Seen.",
+        })),
+        usage: { complete: true },
+      })
+    )
+    mocks.startRun.mockImplementationOnce(async () => ({
+      executeScenario: mocks.executeScenario,
+      executeFixtureTask,
+      close: vi.fn(async () => undefined),
+    }))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ model: "gpt-5.4-mini", plain: true })
+
+    expect(mocks.startRun).toHaveBeenCalledOnce()
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-5.4-mini" })
+    )
+    expect(executeFixtureTask).toHaveBeenCalledOnce()
+    expect(
+      executeFixtureTask.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.createRun.mock.invocationCallOrder[0]!)
+    expect(mocks.executeScenario).toHaveBeenCalledOnce()
+  })
+})
+
 describe("phases runs", () => {
   // Phase 2 requires the fixture; phases 1 and 3 do not.
   function threePhasePlan() {

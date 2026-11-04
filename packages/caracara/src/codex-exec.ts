@@ -51,9 +51,21 @@ export type CodexThreadOptions = {
   modelReasoningEffort?: CodexReasoningEffort
 }
 
+/**
+ * One `item.*` event from `codex exec --json`. Items carry an `id`, a `type`
+ * (`command_execution`, `mcp_tool_call`, `reasoning`, ...) and type-specific
+ * fields.
+ */
+export type CodexItemEvent = {
+  type: "item.started" | "item.updated" | "item.completed"
+  item: { id?: string; type: string } & Record<string, unknown>
+}
+
 export type CodexTurnOptions = {
   outputSchema?: unknown
   signal?: AbortSignal
+  /** Receives every item event while the turn runs. */
+  onItemEvent?: (event: CodexItemEvent) => void
 }
 
 export type CodexTurn = {
@@ -72,6 +84,22 @@ type CodexEvent =
     }
   | { type: "turn.failed"; error: { message: string } }
   | { type: string }
+
+function isCodexItemEvent(event: CodexEvent): event is CodexItemEvent {
+  if (
+    event.type !== "item.started" &&
+    event.type !== "item.updated" &&
+    event.type !== "item.completed"
+  ) {
+    return false
+  }
+  const item = (event as { item?: unknown }).item
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    typeof (item as { type?: unknown }).type === "string"
+  )
+}
 
 function isFile(filePath: string) {
   try {
@@ -454,7 +482,12 @@ export class CodexThread {
       turnOptions.outputSchema
     )
     try {
-      return await this.runProcess(prompt, schemaPath, turnOptions.signal)
+      return await this.runProcess(
+        prompt,
+        schemaPath,
+        turnOptions.signal,
+        turnOptions.onItemEvent
+      )
     } finally {
       await cleanup()
     }
@@ -463,7 +496,8 @@ export class CodexThread {
   private async runProcess(
     prompt: string,
     outputSchemaFile: string | undefined,
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
+    onItemEvent: ((event: CodexItemEvent) => void) | undefined
   ): Promise<CodexTurn> {
     const args = buildCodexExecArgs({
       config: this.client.config,
@@ -539,6 +573,13 @@ export class CodexThread {
           event = JSON.parse(line) as CodexEvent
         } catch (error) {
           throw new Error(`Failed to parse item: ${line}`, { cause: error })
+        }
+        if (onItemEvent && isCodexItemEvent(event)) {
+          try {
+            onItemEvent(event)
+          } catch {
+            // Progress reporting must never break the turn.
+          }
         }
         if (event.type === "thread.started" && "thread_id" in event) {
           this.threadId = event.thread_id

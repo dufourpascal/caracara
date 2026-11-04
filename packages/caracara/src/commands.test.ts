@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   assertSuitePlanMatchesRun,
+  buildRunUrl,
+  describeRunSelection,
+  formatPhaseList,
   listEnvironmentsCommand,
+  parsePhaseList,
   resolveCheckReference,
   resolvePhaseReference,
   resolveRunMode,
@@ -96,6 +100,7 @@ describe("run selection", () => {
       mode: "suite",
       requestedScenarioSlug: null,
       requestedPhaseOrder: null,
+      requestedPhaseOrders: null,
       requestedSuiteSlug: "demo-only",
     })
     expect(() => resolveRunMode({ suite: "demo-only", phase: "2" })).toThrow(
@@ -104,6 +109,70 @@ describe("run selection", () => {
     expect(() =>
       resolveRunMode({ suite: "demo-only", scenario: "checkout" })
     ).toThrow(/cannot be combined/i)
+  })
+})
+
+describe("phase lists", () => {
+  it("parses numbers and ranges into sorted unique phases", () => {
+    expect(parsePhaseList("1-7,9,10")).toEqual([1, 2, 3, 4, 5, 6, 7, 9, 10])
+    expect(parsePhaseList(" 10, 3,3 ,1-2")).toEqual([1, 2, 3, 10])
+  })
+
+  it("rejects malformed, zero, descending and oversized lists", () => {
+    expect(() => parsePhaseList("")).toThrow(/comma-separated/)
+    expect(() => parsePhaseList("1,,2")).toThrow(/comma-separated/)
+    expect(() => parsePhaseList("a")).toThrow(/invalid entry "a"/)
+    expect(() => parsePhaseList("0,2")).toThrow(/positive/)
+    expect(() => parsePhaseList("7-1")).toThrow(/low to high/)
+    expect(() => parsePhaseList("1-100000000")).toThrow(/at most 100/)
+    expect(() => parsePhaseList("1-60,100-160")).toThrow(/at most 100/)
+    expect(() => parsePhaseList("9007199254740992")).toThrow(/too large/)
+    expect(() => parsePhaseList("1-9007199254740993")).toThrow(/too large/)
+  })
+
+  it("formats phase lists compactly", () => {
+    expect(formatPhaseList([1, 2, 3, 4, 5, 6, 7, 9, 10])).toBe("1-7, 9, 10")
+    expect(formatPhaseList([1, 3])).toBe("1, 3")
+  })
+
+  it("selects the phases mode for several phases and phase mode for one", () => {
+    expect(resolveRunMode({ phases: "1-3" })).toMatchObject({
+      mode: "phases",
+      requestedPhaseOrder: null,
+      requestedPhaseOrders: [1, 2, 3],
+    })
+    expect(resolveRunMode({ phases: "4" })).toMatchObject({
+      mode: "phase",
+      requestedPhaseOrder: 4,
+      requestedPhaseOrders: null,
+    })
+    expect(() => resolveRunMode({ phases: "1,2", phase: "1" })).toThrow(
+      "--phase, --phases cannot be combined."
+    )
+    expect(() => resolveRunMode({ phases: "1,2", scenario: "x" })).toThrow(
+      /cannot be combined/
+    )
+  })
+
+  it("describes the selection", () => {
+    expect(describeRunSelection(resolveRunMode({ phases: "1-7,9" }))).toBe(
+      "phases 1-7, 9"
+    )
+    expect(describeRunSelection(resolveRunMode({ throughPhase: "3" }))).toBe(
+      "phases 1-3"
+    )
+    expect(describeRunSelection(resolveRunMode({}))).toBe("all phases")
+  })
+})
+
+describe("run URL", () => {
+  it("points at the run page of the web app", () => {
+    expect(buildRunUrl("https://caracara.example.com", "demo", "run-1")).toBe(
+      "https://caracara.example.com/projects/demo/runs/run-1"
+    )
+    expect(buildRunUrl("https://x.test/base/", "a b", "r")).toBe(
+      "https://x.test/base/projects/a%20b/runs/r"
+    )
   })
 })
 

@@ -639,15 +639,12 @@ export function RunFixturePreflight({
       <ul className="mt-1 grid gap-1">
         {entries.map((entry) => (
           <li
-            className="flex items-center gap-2 text-sm"
+            className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm"
             key={entry.fixtureId}
             title={entry.fixtureSlug}
           >
-            <span className="min-w-0 flex-1 truncate text-foreground">
+            <span className="min-w-0 basis-full truncate text-foreground">
               {entry.fixtureName}
-            </span>
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {entry.access}
             </span>
             <Badge
               className="font-mono"
@@ -655,8 +652,8 @@ export function RunFixturePreflight({
             >
               {entry.outcome}
             </Badge>
-            <span className="w-10 text-right font-mono text-[11px] text-muted-foreground">
-              {entry.executor ?? "none"}
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {entry.access} · {entry.executor ?? "none"}
             </span>
           </li>
         ))}

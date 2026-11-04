@@ -191,8 +191,8 @@ describe("run fixture preflight", () => {
 
     const rows = screen.getAllByRole("listitem").map((row) => row.textContent)
     expect(rows).toEqual([
-      "Seeded accountmutatesrepairedhook",
-      "Catalogreadskippednone",
+      "Seeded accountrepairedmutates · hook",
+      "Catalogskippedread · none",
     ])
   })
 

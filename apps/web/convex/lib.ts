@@ -143,9 +143,13 @@ export async function requireProjectOwnerBySlug(ctx: Ctx, slug: string) {
   return { identity, project }
 }
 
-export async function assertProjectAuthoringUnlocked(
+// Authoring stays open while a run is running: the CLI executes the
+// definitions it fetched at run start and stores them on each scenario result.
+// Only writes that would cut a running run off from its project are blocked.
+export async function assertNoRunningProjectRun(
   ctx: Ctx,
-  projectId: Id<"projects">
+  projectId: Id<"projects">,
+  action: string
 ) {
   const runningRun = await ctx.db
     .query("runs")
@@ -157,7 +161,7 @@ export async function assertProjectAuthoringUnlocked(
   if (runningRun) {
     throw new ConvexError({
       code: "conflict",
-      message: `Authoring is unavailable while run ${runningRun.name} is running.`,
+      message: `${action} is unavailable while run ${runningRun.name} is running. Finish or delete that run to continue.`,
     })
   }
 }

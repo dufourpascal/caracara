@@ -441,6 +441,7 @@ export function buildRunnerPrompt(input: {
       : []),
     "",
     "Use the Chrome DevTools browser tools to perform the task once and inspect the actual frontend.",
+    "Where a canvas or image viewer has no element to target, click by viewport coordinates with click_at, taking the coordinates from a screenshot or the element's bounding box.",
     "Before interacting, review every evaluation check and plan the browser states and actions needed to observe each one. Preserve or revisit relevant states so later checks are not skipped.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
     'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "blocked" when you could not reach or inspect it.',
@@ -679,6 +680,9 @@ export function buildCodexChromeMcpArgs(input: {
     // lets file tools such as upload_file read from the OS temp directory.
     "--workspace",
     input.workspaceRoot,
+    // Enables click_at, so canvas viewers (atlas landmarks, image viewers) can be
+    // clicked by coordinate where no element uid exists.
+    "--experimentalVision=true",
   ]
 }
 

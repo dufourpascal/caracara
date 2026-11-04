@@ -168,8 +168,7 @@ export function assertScenarioPhaseInSuiteRun(
   ) {
     throw new ConvexError({
       code: "conflict",
-      message:
-        "The suite changed while the run was starting. Finish this run and start it again.",
+      message: "The suite changed after this run was created. Start the run again.",
     })
   }
 }

@@ -371,7 +371,7 @@ describe("suite run phase snapshot", () => {
     ],
   ])("rejects a scenario from %s", (_, scenarioPhase) => {
     expect(() => assertScenarioPhaseInSuiteRun(suiteRun, scenarioPhase)).toThrow(
-      "The suite changed while the run was starting."
+      "The suite changed after this run was created. Start the run again."
     )
   })
 })

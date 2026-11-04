@@ -486,6 +486,18 @@ describe("Codex configuration", () => {
     expect(prompt).toContain("- CARACARA_SECRET_USERNAME")
     expect(prompt).toContain("Previous reason: environment_failure")
     expect(schema.properties.checkResults.minItems).toBe(1)
+    expect(prompt).not.toContain("handle_dialog")
+    expect(
+      buildBlockedRetryPrompt({
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+        projectPrompt: "Use the seeded demo account.",
+        scenario,
+        blockedResults: [blockedResult],
+        secretNames: ["CARACARA_SECRET_USERNAME"],
+        evidenceDirectory: "/tmp/caracara-evidence",
+      })
+    ).toContain("handle_dialog")
 
     const retry = validateBlockedRetryExecution([checkId], {
       executionSummary: "Reloaded the editor.",

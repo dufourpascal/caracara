@@ -525,6 +525,7 @@ export function buildBlockedRetryPrompt(input: {
           "If a retry changes a check to failed, put the browser in the state that demonstrates the failure and capture the visible viewport only.",
           "First call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false. Inspect the image itself and adjust the browser until the defect and enough surrounding context are clearly visible.",
           "Only then call take_screenshot again with the listed failure screenshot path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+          nativeDialogEvidence,
         ]
       : []),
     'For failed evidence use: "Attempted: <specific action and expected result>. Failed: <exact observed behavior>."',
@@ -533,9 +534,13 @@ export function buildBlockedRetryPrompt(input: {
   ].join("\n")
 }
 
-/** Native dialogs block chrome-devtools screenshots, so failures shown in one need a nearby capture instead. */
+/** Native dialogs block chrome-devtools screenshots, so a failure shown in one needs a nearby capture instead. */
 const nativeDialogEvidence =
-  "Browser-native alert, confirm and prompt dialogs block screenshots and never appear in them. If one is open, record its exact text, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted), then capture the page with the control that opened it in view."
+  "Browser-native alert, confirm and prompt dialogs block screenshots and never appear in them. If one is open, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted). If the failure is the dialog itself, record its exact text in the evidence and capture the page with the control that opened it in view; otherwise capture the failure region as usual."
+
+/** Correction turns only save screenshots, so they skip the instruction to record the dialog text. */
+const nativeDialogCorrection =
+  "Browser-native alert, confirm and prompt dialogs block screenshots. If one is open, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted). If the failure is the dialog itself, capture the page with the control that opened it in view; otherwise capture the failure region as usual."
 
 export function buildMissingScreenshotPrompt(input: {
   scenario: OrderedScenario
@@ -551,7 +556,7 @@ export function buildMissingScreenshotPrompt(input: {
     "For each check, call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, and visually inspect the returned image. Capture the visible viewport without a uid.",
     "If the image does not clearly show the defect and enough surrounding context, adjust the browser and repeat the preview screenshot.",
     "Only after visually confirming the image, call take_screenshot again with the listed path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
-    nativeDialogEvidence,
+    nativeDialogCorrection,
     ...checks.map(
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`

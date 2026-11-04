@@ -1818,51 +1818,48 @@ export async function runCommand(
           finalFinishedAt = Date.now()
         }
 
-        try {
-          if (finalRunStatus && finalFinishedAt !== null) {
-            try {
-              await finalizeRun({
-                apiBaseUrl: config.apiBaseUrl,
-                accessToken,
-                version: CLI_VERSION,
-                projectSlug,
-                runId,
-                payload: {
-                  status: finalRunStatus,
-                  finishedAt: finalFinishedAt,
-                  finalizationAttemptId,
-                  ...(interruptedScenarioResultId
-                    ? { interruptedScenarioResultId }
-                    : {}),
-                  ...(interruptedScenarioAttemptId
-                    ? { interruptedScenarioAttemptId }
-                    : {}),
-                },
-                signal: runAbortController.signal,
-              })
-              if (interruptedSignal && finalRunStatus !== "interrupted") {
-                await finalizeInterruptedRun(runId)
-              }
-            } catch (error) {
-              if (!interruptedSignal) {
-                finalizationError = error
-              } else {
-                try {
-                  await finalizeInterruptedRun(
-                    runId,
-                    finalRunStatus === "interrupted"
-                      ? finalFinishedAt
-                      : undefined
-                  )
-                } catch (correctionError) {
-                  finalizationError = correctionError
-                }
+        if (finalRunStatus && finalFinishedAt !== null) {
+          try {
+            await finalizeRun({
+              apiBaseUrl: config.apiBaseUrl,
+              accessToken,
+              version: CLI_VERSION,
+              projectSlug,
+              runId,
+              payload: {
+                status: finalRunStatus,
+                finishedAt: finalFinishedAt,
+                finalizationAttemptId,
+                ...(interruptedScenarioResultId
+                  ? { interruptedScenarioResultId }
+                  : {}),
+                ...(interruptedScenarioAttemptId
+                  ? { interruptedScenarioAttemptId }
+                  : {}),
+              },
+              signal: runAbortController.signal,
+            })
+            if (interruptedSignal && finalRunStatus !== "interrupted") {
+              await finalizeInterruptedRun(runId)
+            }
+          } catch (error) {
+            if (!interruptedSignal) {
+              finalizationError = error
+            } else {
+              try {
+                await finalizeInterruptedRun(
+                  runId,
+                  finalRunStatus === "interrupted" ? finalFinishedAt : undefined
+                )
+              } catch (correctionError) {
+                finalizationError = correctionError
               }
             }
           }
-        } finally {
-          stopListeningForInterrupts()
         }
+        // SIGINT and SIGTERM listeners stay installed until the runner session
+        // is closed in the outermost cleanup below, so a signal never exits
+        // Node while the (detached) browser is still running.
 
         // Restore fixtures the run was allowed to change only after a completed
         // or failed run: not after an interruption, a finalization error, or
@@ -1927,6 +1924,7 @@ export async function runCommand(
     // the run or the exit code.
     if (maintainFixtures) {
       await runPostRunFixtureMaintenance({
+        signal: runAbortController.signal,
         runId,
         executedScenarios,
         fixtures: executionSource.fixtures,
@@ -1938,6 +1936,7 @@ export async function runCommand(
               accessToken,
               version: CLI_VERSION,
               projectSlug,
+              signal: runAbortController.signal,
             })
           ).fixtures,
         createRuntime: async (recordUsage) => {
@@ -1948,21 +1947,21 @@ export async function runCommand(
           )
         },
         getHooksPath: () => hooksConfig?.path ?? null,
-        listenForInterrupts,
-        stopListeningForInterrupts,
         printUsage: (usage) =>
           printFixtureUsage("Post-run fixture maintenance usage", usage),
       })
     }
   } finally {
     // Unconditional cleanup: closes the session kept for maintenance, or one
-    // left open by an unexpected error. A no-op when it is already closed.
+    // left open by an unexpected error (a no-op when it is already closed),
+    // and only then stops listening for signals. A close failure fails the
+    // command like any other runner close failure; signal codes still win.
     try {
       await sessions.close()
     } catch (error) {
-      writeDiagnostic(
-        `Failed to close the runner: ${error instanceof Error ? error.message : "Unknown error"}\n`
-      )
+      closeError ??= error
+    } finally {
+      stopListeningForInterrupts()
     }
   }
 
@@ -2030,6 +2029,8 @@ export async function resultsCommand(
 }
 
 async function runPostRunFixtureMaintenance(args: {
+  /** Aborted by SIGINT or SIGTERM; the caller keeps listening throughout. */
+  signal: AbortSignal
   runId: string
   executedScenarios: OrderedScenario[]
   fixtures: Fixture[]
@@ -2038,11 +2039,12 @@ async function runPostRunFixtureMaintenance(args: {
     recordUsage: (usage: RunnerUsageReport) => void
   ) => Promise<FixtureRuntime>
   getHooksPath: () => string | null
-  listenForInterrupts: () => void
-  stopListeningForInterrupts: () => void
   printUsage: (usage: RunnerUsageReport) => void
 }) {
   let usage: RunnerUsageReport = { complete: true }
+  if (args.signal.aborted) {
+    return
+  }
   try {
     const selected = selectPostRunResetFixtures(
       args.executedScenarios,
@@ -2068,7 +2070,7 @@ async function runPostRunFixtureMaintenance(args: {
     if (resetFixtures.length === 0) {
       return
     }
-    args.listenForInterrupts()
+    args.signal.throwIfAborted()
     const runtime = await args.createRuntime((next) => {
       usage = mergeRunnerUsage(usage, next)
     })
@@ -2084,12 +2086,13 @@ async function runPostRunFixtureMaintenance(args: {
       }
     }
   } catch (error) {
-    process.stderr.write(
-      `Warning: post-run fixture maintenance failed: ${error instanceof Error ? error.message : "Unknown error"}\n`
-    )
+    if (!args.signal.aborted) {
+      process.stderr.write(
+        `Warning: post-run fixture maintenance failed: ${error instanceof Error ? error.message : "Unknown error"}\n`
+      )
+    }
   } finally {
-    // The caller closes the runner session.
-    args.stopListeningForInterrupts()
+    // The caller closes the runner session and stops listening for signals.
     args.printUsage(usage)
   }
 }

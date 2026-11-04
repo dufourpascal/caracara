@@ -873,3 +873,139 @@ describe("runner session around post-run maintenance", () => {
     expect(process.exitCode).toBeUndefined()
   })
 })
+
+describe("signals and cleanup after the run", () => {
+  function newListeners(event: "SIGINT" | "SIGTERM", existing: Set<unknown>) {
+    return process
+      .listeners(event)
+      .filter((listener) => !existing.has(listener))
+  }
+
+  function trackedSession(close: () => Promise<void>) {
+    const closeMock = vi.fn(async () => {
+      await close()
+      return undefined
+    })
+    mocks.startRun.mockImplementation(async () => ({
+      executeScenario: mocks.executeScenario,
+      executeFixtureTask: vi.fn(),
+      close: closeMock,
+    }))
+    return closeMock
+  }
+
+  afterEach(() => {
+    mocks.fetchFixtures.mockReset().mockImplementation(async () => ({
+      fixtures: [{ ...mocks.fixture, requirements: [], health: [] }],
+    }))
+    mocks.startRun.mockReset().mockImplementation(async () => ({
+      executeScenario: mocks.executeScenario,
+      executeFixtureTask: vi.fn(),
+      close: vi.fn(async () => undefined),
+    }))
+  })
+
+  it("aborts the fixture refresh on SIGINT, closes the session once and exits 130", async () => {
+    mocks.state.access = "mutates"
+    const close = trackedSession(async () => undefined)
+    const existing = new Set<unknown>(process.listeners("SIGINT"))
+    // The first fetch is preflight's hook check; the second is the refresh.
+    mocks.fetchFixtures.mockImplementationOnce(async () => ({
+      fixtures: [{ ...mocks.fixture, requirements: [], health: [] }],
+    }))
+    mocks.fetchFixtures.mockImplementationOnce(
+      (args: unknown) =>
+        new Promise((_, reject) => {
+          const { signal } = args as { signal?: AbortSignal }
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+          // The session is still open, so the listener must still be there.
+          const listener = newListeners("SIGINT", existing)[0]
+          expect(listener).toBeDefined()
+          listener?.("SIGINT")
+        })
+    )
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ plain: true })
+
+    expect(mocks.fetchFixtures).toHaveBeenCalledTimes(2)
+    // Only the preflight verify ran: the refresh was aborted.
+    expect(kinds().map((payload) => payload.kind)).toEqual(["verify"])
+    expect(close).toHaveBeenCalledOnce()
+    expect(newListeners("SIGINT", existing)).toHaveLength(0)
+    expect(process.exitCode).toBe(130)
+  })
+
+  it("keeps listening while the final close is pending and exits 143 on SIGTERM", async () => {
+    mocks.state.access = "mutates"
+    const existing = new Set<unknown>(process.listeners("SIGTERM"))
+    const close = trackedSession(async () => {
+      const listener = newListeners("SIGTERM", existing)[0]
+      expect(listener).toBeDefined()
+      listener?.("SIGTERM")
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ plain: true })
+
+    // Maintenance finished before the final close.
+    expect(kinds().map((payload) => payload.kind)).toEqual([
+      "verify",
+      "reset",
+      "verify",
+    ])
+    expect(close).toHaveBeenCalledOnce()
+    expect(newListeners("SIGTERM", existing)).toHaveLength(0)
+    expect(process.exitCode).toBe(143)
+  })
+
+  it("fails the command when the session kept for maintenance cannot be closed", async () => {
+    mocks.state.access = "mutates"
+    const close = trackedSession(async () => {
+      throw new Error("browser stuck")
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await expect(runCommand({ plain: true })).rejects.toThrow("browser stuck")
+
+    expect(kinds().map((payload) => payload.kind)).toEqual([
+      "verify",
+      "reset",
+      "verify",
+    ])
+    expect(close).toHaveBeenCalledOnce()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "completed" }),
+      })
+    )
+  })
+
+  it("still closes the session once when the summary throws after finalization", async () => {
+    mocks.state.access = "mutates"
+    const close = trackedSession(async () => undefined)
+    const existing = new Set<unknown>(process.listeners("SIGINT"))
+    const stdout = {
+      isTTY: false,
+      write(chunk: string) {
+        if (chunk.includes("━━ Run")) {
+          throw new Error("summary exploded")
+        }
+        return true
+      },
+    }
+
+    await expect(
+      runCommand(
+        { plain: true },
+        { stdout, stderr: { isTTY: false, write: () => true }, env: {} }
+      )
+    ).rejects.toThrow("summary exploded")
+
+    expect(mocks.finalizeRun).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    expect(newListeners("SIGINT", existing)).toHaveLength(0)
+  })
+})

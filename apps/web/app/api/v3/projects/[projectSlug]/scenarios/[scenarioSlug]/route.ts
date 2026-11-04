@@ -25,7 +25,7 @@ export async function GET(
     const token = await requireVerifiedToken(request)
     const { projectSlug, scenarioSlug } = await params
     const projectResponse = await getProjectBySlug(token, projectSlug)
-    const scenario = await fetchQuery(
+    const response = await fetchQuery(
       api.scenarios.getBySlug,
       {
         projectSlug,
@@ -34,9 +34,10 @@ export async function GET(
       { token }
     )
 
-    if (!scenario) {
+    if (!response) {
       throw new ApiRouteError(404, "not_found", "Scenario not found.")
     }
+    const { fixtures, ...scenario } = response
 
     return NextResponse.json(
       singleScenarioResponseSchema.parse({
@@ -47,6 +48,7 @@ export async function GET(
           projectPrompt: projectResponse.project.projectPrompt,
         },
         scenario,
+        fixtures,
       })
     )
   } catch (error) {

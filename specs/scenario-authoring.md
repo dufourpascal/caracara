@@ -62,9 +62,9 @@ When a scenario is changed, the system must ensure past runs still reference the
 
 ### AUTHORING_11
 
-The CLI exposes eight narrow authoring commands.
+The CLI exposes twelve narrow authoring commands.
 
-The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. They update live records directly and return structured results. The CLI does not expose a generic patch or scenario deletion command.
+The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, `updateCheck`, `createFixture`, `updateFixture`, `requireFixture`, and `unrequireFixture`. They update live records directly and return structured results. The CLI does not expose a generic patch or scenario deletion command.
 
 ### AUTHORING_12
 
@@ -85,3 +85,9 @@ Writes that would cut a running run off from its project stay blocked while it r
 Suite authoring is frontend-only and direct.
 
 The frontend supports direct suite create, update, and delete operations using a name, slug, and phase membership checkboxes. Suite writes stay open during runs like other authoring writes. These operations are intentionally absent from the CLI authoring API.
+
+### AUTHORING_15
+
+Fixtures are authored on the web and through the CLI.
+
+The web Fixtures workspace edits every fixture field and its requirements and deletes fixtures. The CLI creates and updates fixtures (steps and checks as whole JSON arrays) and adds or removes requirements; it does not delete fixtures. Fixture writes stay open during runs: a run uses the definitions it fetched with its plan.

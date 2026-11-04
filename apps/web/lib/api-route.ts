@@ -9,6 +9,7 @@ import {
   createRunRequestSchema,
   createVersionMismatchDetails,
   finalizeRunRequestSchema,
+  fixtureListResponseSchema,
   isCliVersionSupported,
   oauthAuthorizeRequestSchema,
   oauthTokenRequestSchema,
@@ -279,6 +280,15 @@ export async function getProjectList(token: string) {
   return projectListResponseSchema.parse({ projects })
 }
 
+export async function getFixtureList(token: string, projectSlug: string) {
+  const fixtures = await fetchQuery(
+    api.fixtures.listForProject,
+    { projectSlug },
+    { token }
+  )
+  return fixtureListResponseSchema.parse({ fixtures })
+}
+
 export async function authorProject(args: {
   token: string
   projectSlug: string
@@ -400,6 +410,48 @@ export async function authorProject(args: {
         { token: args.token }
       )
       break
+    case "createFixture":
+    case "updateFixture": {
+      const { operation, ...fields } = payload
+      result = await fetchMutation(
+        operation === "createFixture"
+          ? api.fixtures.create
+          : api.fixtures.update,
+        { projectId: project.id, ...fields } as never,
+        { token: args.token }
+      )
+      break
+    }
+    case "requireFixture":
+    case "unrequireFixture": {
+      const target = {
+        projectId: project.id as never,
+        fixtureId: payload.fixtureId as never,
+        ...(payload.phaseId === undefined
+          ? {}
+          : { phaseId: payload.phaseId as never }),
+        ...(payload.scenarioId === undefined
+          ? {}
+          : { scenarioId: payload.scenarioId as never }),
+      }
+      result =
+        payload.operation === "requireFixture"
+          ? await fetchMutation(
+              api.fixtures.setRequirement,
+              {
+                ...target,
+                access: payload.access,
+                ...(payload.mutationScope === undefined
+                  ? {}
+                  : { mutationScope: payload.mutationScope }),
+              },
+              { token: args.token }
+            )
+          : await fetchMutation(api.fixtures.removeRequirement, target, {
+              token: args.token,
+            })
+      break
+    }
   }
 
   return {
@@ -458,6 +510,9 @@ export async function createRun(
         : {}),
       ...(payload.interruptedAt
         ? { interruptedAt: payload.interruptedAt }
+        : {}),
+      ...(payload.fixturePreflight
+        ? { fixturePreflight: payload.fixturePreflight }
         : {}),
     },
     { token }

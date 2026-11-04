@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
+import { stripFixtureRequirements } from "./fixtures"
 import {
   deleteDependenciesTouchingScenarioIds,
   ensurePhaseOwnership,
@@ -176,6 +177,7 @@ export const remove = mutation({
       project._id,
       affectedScenarios.map((scenario) => scenario._id)
     )
+    await stripFixtureRequirements(ctx, project._id, phase._id)
     await ctx.db.delete(phase._id)
     await normalizeProjectPhaseOrders(ctx, project._id)
     await rebuildScenarioNavigationMetadata(ctx, project._id)

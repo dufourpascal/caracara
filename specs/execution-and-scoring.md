@@ -104,7 +104,7 @@ The same config may set the default Codex `model` and `model_reasoning_effort`. 
 
 The CLI can execute one named suite.
 
-`caracara run --suite <slug>` executes only active scenarios in the suite's phases. The backend validates and snapshots the suite while creating the run, before the CLI fetches the execution plan. If the suite's phases change in between, the CLI finalizes the run as interrupted and asks the user to run it again. The backend filters the existing ordered phase plan, so selected phases retain project order. `--suite` is mutually exclusive with `--scenario`, `--phase`, `--phases`, and `--through-phase`; an empty or otherwise non-runnable suite returns a specific error before a run is inserted.
+`caracara run --suite <slug>` executes only active scenarios in the suite's phases. The CLI fetches the suite's execution plan first for the fixture preflight. The backend validates and snapshots the suite while creating the run, and the CLI then fetches the plan again. If the suite's phases differ from the snapshot, the CLI finalizes the run as interrupted and asks the user to run it again. The backend filters the existing ordered phase plan, so selected phases retain project order. `--suite` is mutually exclusive with `--scenario`, `--phase`, `--phases`, and `--through-phase`; an empty or otherwise non-runnable suite returns a specific error before a run is inserted.
 
 ### EXEC_15
 
@@ -120,4 +120,28 @@ When stdout and stderr are both interactive terminals outside CI, the CLI keeps 
 
 The end-of-run summary lists totals, per-phase rows, only the scenarios with failed or blocked checks, each failed or blocked check with its evidence and blocked reason, execution errors with the scenarios they skipped and a rerun command, duration, runner, model, tokens and the run's web app URL.
 
-The CLI exits with 0 when every scenario ran, 1 when a CLI, configuration or API error stops the run, 2 when a scenario was recorded as a runner failure (including a completed result the API rejected, as before) or was skipped, 3 when `--fail-on` matches a failed or blocked check, and the conventional signal codes (130, 143) when interrupted. Failed checks alone never change the exit code. Earlier CLIs exited 0 after runner failures.
+The CLI exits with 0 when every scenario ran, 1 when a CLI, configuration or API error stops the run, 2 when a scenario was recorded as a runner failure (including a completed result the API rejected, as before) or was skipped, 3 when `--fail-on` matches a failed or blocked check, 4 when a required fixture is unhealthy (EXEC_17), and the conventional signal codes (130, 143) when interrupted. Failed checks alone never change the exit code. Earlier CLIs exited 0 after runner failures.
+
+### EXEC_17
+
+Every run checks its required fixtures before it is created.
+
+After fetching the plan and before creating the run, the CLI collects the fixtures required by the selected scenarios' effective requirements. `caracara run --fixtures check|repair|skip` controls the preflight; `check` is the default. `check` verifies each fixture. `repair` converges each fixture and then verifies it. `skip` runs no operation and records each fixture as skipped. A fixture that is still unhealthy, or that has no usable executor for the requested operation, makes the CLI print the failing checks and a hint (add a hook or health checks, or use `--fixtures skip`) and exit 4 without creating a run. Interrupting the preflight exits 130 or 143 without a run. The run stores one preflight entry per fixture (outcome `healthy`, `repaired`, or `skipped`; executor `hook`, `agent`, or none), and the CLI run summary and `caracara results` (text and JSON) show them. `caracara fixtures:verify <slug>` and `fixtures:converge <slug>` run one operation outside a run; converge exits 4 when the final verify is unhealthy.
+
+### EXEC_18
+
+A local hook runs a fixture operation when one is configured.
+
+`.caracara/fixtures.json`, next to `config.json`, maps project slug to fixture slug to optional `verify` and `converge` shell commands. Hooks are keyed by slug, so renaming a fixture detaches its hook. A hook runs in the directory that contains `.caracara`, with the process environment, local secrets, and `CARACARA_ENVIRONMENT`, `CARACARA_TARGET_URL`, `CARACARA_PROJECT`, and `CARACARA_FIXTURE`; server values reach the hook only through these variables. Exit code 0 means success. Hook stdout and stderr go to the CLI's stderr so `--json` output stays valid, nothing from the hook is sent to the server, and an interrupt kills the hook's process group.
+
+### EXEC_19
+
+The local agent runs a fixture operation without a hook.
+
+Without a hook, verify is one inspect-only agent task over the fixture's health checks and is healthy only when every check passes; it needs at least one health check. Converge is one agent task that lists the steps in order as checks (each check is the step's done-when), skips steps whose done-when already holds, does the rest in order, and stops at the first that fails; it needs at least one step. Converge is always followed by verify. Agent tasks use the run's runner, model, and reasoning effort and start the runner session lazily; the run then reuses that session. They capture no screenshot evidence.
+
+### EXEC_20
+
+Prompts protect fixtures during evaluation and allow changes only during maintenance.
+
+The evaluation prompt and the blocked-check retry prompt include a "Protected fixtures" section listing each required fixture's name, locator, protection rules, and access: read-only, or "you may change only <scope>" for a mutating requirement, which is the only exception to project-context rules that protect fixtures. Fixture verify and converge tasks use a maintenance prompt that exempts only that fixture from those rules.

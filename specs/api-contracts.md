@@ -72,7 +72,7 @@ Contract responses should clearly separate malformed requests, authentication fa
 
 API v3 exposes one narrow authoring operation endpoint.
 
-`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the eight supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. Writes apply immediately, including while a project run is running; that run keeps executing the definitions it fetched when it started.
+`POST /api/v3/projects/:projectSlug/authoring` accepts a discriminated request for one of the twelve supported CLI authoring operations. It uses the existing bearer token, CLI version header, project ownership checks, validation limits, and structured error format. Writes apply immediately, including while a project run is running; that run keeps executing the definitions it fetched when it started.
 
 ### API_12
 
@@ -86,10 +86,16 @@ Run creation may also include the Codex `model` and `reasoningEffort` the run us
 
 The execution API supports suite filtering without suite authoring operations.
 
-`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running run. The CLI creates that suite run before fetching the execution plan and refuses to execute (finalizing the run as interrupted) when the fetched plan's suite phases differ from the run's phase snapshot, because authoring stays open in between. There are no suite authoring REST operations.
+`GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running run. The CLI fetches the suite's execution plan before creating the run, for the fixture preflight, and fetches it again after creation. It refuses to execute (finalizing the run as interrupted) when that plan's suite phases differ from the run's phase snapshot, because authoring stays open in between. There are no suite authoring REST operations.
 
 ### API_14
 
 The CLI can read a run's results back.
 
 `GET /api/v3/projects/:projectSlug/runs/:runRef` returns the run and its ordered scenario results, including check snapshots, verdicts, timing, and token usage, but not the owner ID or execution instructions. `runRef` is a run ID, an exact run name, or `latest`, the most recently started run of the project. With `latest`, an optional `?environment=` filter selects the latest run in that environment. A run outside the owned project, or no match, returns `not_found`. A name shared by several runs returns `conflict`. Result submission accepts an optional `tokenUsage` object, which older CLIs omit.
+
+### API_15
+
+The API exposes fixtures for execution and authoring.
+
+`GET /api/v3/projects/:projectSlug/fixtures` returns the project's fixture definitions. The execution plan and single-scenario responses add `fixtureRequirements` (merged per DOMAIN_14) to each scenario and a top-level `fixtures` list with the definitions those scenarios require; both default to empty for older servers. The authoring endpoint accepts `createFixture`, `updateFixture` (partial; given step and check arrays replace the stored ones and may omit IDs), `requireFixture` (exactly one `phaseId` or `scenarioId`, access, and a scope only for `mutates`; it replaces an existing requirement for that target), and `unrequireFixture`. Run creation accepts an optional `fixturePreflight` array (up to 100 entries), which run responses return. Older CLIs ignore all fixture fields.

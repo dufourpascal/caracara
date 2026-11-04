@@ -5,6 +5,8 @@ import {
   LATEST_RUN_REFERENCE,
   requestedPhaseOrdersSchema,
   runEnvironmentSchema,
+  runModelSchema,
+  runReasoningEffortSchema,
 } from "@workspace/contracts"
 
 import type { Id } from "./_generated/dataModel"
@@ -89,6 +91,61 @@ export function parseRunEnvironment(input: {
   }
 
   return parsed.data
+}
+
+function invalidRunModel(message: string): never {
+  throw new ConvexError({ code: "validation_error", message })
+}
+
+export function parseRunModel(input: {
+  runnerType: "codex" | "claude-code"
+  model?: string
+  reasoningEffort?: string
+}) {
+  if (input.model === undefined && input.reasoningEffort === undefined) {
+    return {}
+  }
+  if (input.runnerType !== "codex") {
+    invalidRunModel("Model settings are only supported for Codex runs.")
+  }
+
+  const model =
+    input.model === undefined
+      ? undefined
+      : runModelSchema.safeParse(input.model)
+  if (model && !model.success) {
+    invalidRunModel(model.error.issues[0]?.message ?? "Model is invalid.")
+  }
+  const reasoningEffort =
+    input.reasoningEffort === undefined
+      ? undefined
+      : runReasoningEffortSchema.safeParse(input.reasoningEffort)
+  if (reasoningEffort && !reasoningEffort.success) {
+    invalidRunModel(
+      reasoningEffort.error.issues[0]?.message ??
+        "Reasoning effort is invalid."
+    )
+  }
+
+  return {
+    ...(model ? { model: model.data } : {}),
+    ...(reasoningEffort ? { reasoningEffort: reasoningEffort.data } : {}),
+  }
+}
+
+export function matchesRunModel(
+  run: { model?: string; reasoningEffort?: string },
+  runModel: { model?: string; reasoningEffort?: string }
+) {
+  // A run stored without settings (for example by a server deployed before
+  // this field existed) accepts the retry; the original snapshot is kept.
+  if (run.model === undefined && run.reasoningEffort === undefined) {
+    return true
+  }
+  return (
+    run.model === runModel.model &&
+    run.reasoningEffort === runModel.reasoningEffort
+  )
 }
 
 export function parseRequestedPhaseOrders(input: {
@@ -449,6 +506,8 @@ export const create = mutation({
     ),
     environment: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
     requestedPhaseOrders: v.optional(v.union(v.null(), v.array(v.number()))),
@@ -468,6 +527,7 @@ export const create = mutation({
         message: "Interrupted run creation requires a creation attempt ID.",
       })
     }
+    const runModel = parseRunModel(args)
     if (args.creationAttemptId) {
       const existing = await ctx.db
         .query("runs")
@@ -478,6 +538,11 @@ export const create = mutation({
         )
         .unique()
       if (existing) {
+        if (!matchesRunModel(existing, runModel)) {
+          invalidRunModel(
+            "Run creation retry does not match the original model settings."
+          )
+        }
         const creationState = getRunCreationState(args.interruptedAt)
         if (
           creationState.status === "interrupted" &&
@@ -554,6 +619,7 @@ export const create = mutation({
       runnerType: args.runnerType,
       evidencePolicy: args.evidencePolicy ?? "text_only",
       ...(environment ?? {}),
+      ...runModel,
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,

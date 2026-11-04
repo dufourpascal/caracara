@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   formatRunDuration,
+  formatRunModelLabel,
+  formatRunModelTitle,
   getCheckPassRate,
   getRunHref,
   ProjectSettingsPanel,
@@ -23,6 +25,23 @@ import {
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }))
+
+describe("run model labels", () => {
+  it("labels recorded models and hides missing ones", () => {
+    expect(
+      formatRunModelLabel({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    ).toBe("gpt-6.1-sol · high")
+    expect(formatRunModelLabel({ model: "gpt-6.1-sol" })).toBe("gpt-6.1-sol")
+    expect(formatRunModelLabel({ model: null, reasoningEffort: "high" })).toBe(
+      null
+    )
+    expect(formatRunModelLabel({})).toBe(null)
+    expect(
+      formatRunModelTitle({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    ).toBe("Model: gpt-6.1-sol, reasoning effort: high")
+    expect(formatRunModelTitle({})).toBe("Model not recorded")
+  })
+})
 
 describe("run environment filter", () => {
   afterEach(cleanup)

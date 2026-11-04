@@ -9,6 +9,7 @@ import {
   buildRunUrl,
   describeRunSelection,
   formatPhaseList,
+  initCommand,
   listEnvironmentsCommand,
   parsePhaseList,
   resolveCheckReference,
@@ -204,5 +205,13 @@ describe("suite run plan check", () => {
         planPhases: plan,
       })
     ).toThrow('Suite "smoke" changed while the run was starting. Run it again.')
+  })
+})
+
+describe("initCommand", () => {
+  it("rejects a model that caracara run would refuse", async () => {
+    await expect(initCommand({ model: "gpt 6" })).rejects.toThrow(
+      'Invalid model "gpt 6"'
+    )
   })
 })

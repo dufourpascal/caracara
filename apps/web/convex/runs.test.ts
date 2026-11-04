@@ -10,10 +10,12 @@ import {
   canCorrectRunInterruption,
   canCorrectScenarioInterruption,
   getRunCreationState,
+  matchesRunModel,
   matchesScenarioExecutionAttempt,
   matchesTerminalRun,
   parseRequestedPhaseOrders,
   parseRunEnvironment,
+  parseRunModel,
   removeRunEnvironmentName,
   validateRunResultsFilter,
 } from "./runs"
@@ -114,6 +116,46 @@ describe("multi-phase run targets", () => {
         validationMessage({ mode: "phases", requestedPhaseOrders })
       ).toMatchObject({ code: "validation_error" })
     }
+  })
+})
+
+describe("run model", () => {
+  it("stores only validated Codex model settings", () => {
+    expect(parseRunModel({ runnerType: "codex" })).toEqual({})
+    expect(
+      parseRunModel({
+        runnerType: "codex",
+        model: " gpt-6.1-sol ",
+        reasoningEffort: "high",
+      })
+    ).toEqual({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    expect(
+      parseRunModel({ runnerType: "codex", reasoningEffort: "ultra" })
+    ).toEqual({ reasoningEffort: "ultra" })
+    expect(() =>
+      parseRunModel({ runnerType: "claude-code", model: "gpt-6.1-sol" })
+    ).toThrow("only supported for Codex")
+    let invalidModelError: unknown
+    try {
+      parseRunModel({ runnerType: "codex", model: "gpt 6" })
+    } catch (error) {
+      invalidModelError = error
+    }
+    expect(invalidModelError).toMatchObject({
+      data: { code: "validation_error" },
+    })
+    expect(() =>
+      parseRunModel({ runnerType: "codex", reasoningEffort: "HIGH" })
+    ).toThrow("lowercase token")
+  })
+
+  it("only lets a creation retry reuse the original model settings", () => {
+    const stored = { model: "gpt-6.1-sol", reasoningEffort: "high" }
+    expect(matchesRunModel(stored, { ...stored })).toBe(true)
+    expect(matchesRunModel({}, {})).toBe(true)
+    expect(matchesRunModel(stored, { model: "gpt-6.1-terra" })).toBe(false)
+    expect(matchesRunModel(stored, {})).toBe(false)
+    expect(matchesRunModel({}, { model: "gpt-6.1-sol" })).toBe(true)
   })
 })
 

@@ -442,6 +442,81 @@ describe("contracts", () => {
     ).not.toHaveProperty("requestedPhaseOrders")
   })
 
+  it("records the run model and reasoning effort additively", () => {
+    expect(
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        model: " gpt-6.1-sol ",
+        reasoningEffort: "high",
+        startedAt: 1,
+      })
+    ).toMatchObject({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    // The server accepts effort tokens newer than this contract version.
+    expect(
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        reasoningEffort: "ultra",
+        startedAt: 1,
+      }).reasoningEffort
+    ).toBe("ultra")
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        model: "gpt 6",
+        startedAt: 1,
+      })
+    ).toThrow(/printable ASCII/)
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        reasoningEffort: "High Effort",
+        startedAt: 1,
+      })
+    ).toThrow(/lowercase token/)
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "claude-code",
+        model: "gpt-6.1-sol",
+        startedAt: 1,
+      })
+    ).toThrow(/only supported for Codex/)
+
+    const legacyRun = {
+      id: "run-1",
+      projectId: "project-1",
+      ownerUserId: "user-1",
+      name: "calm-macaw-20260827-120000",
+      status: "completed",
+      mode: "all",
+      requestedScenarioSlug: null,
+      runnerType: "codex",
+      evidencePolicy: "text_only",
+      passedCheckCount: 1,
+      totalCheckCount: 1,
+      passRate: 100,
+      startedAt: 1,
+      finishedAt: 2,
+      createdAt: 1,
+      updatedAt: 2,
+    }
+    expect(runSchema.parse(legacyRun).model).toBeUndefined()
+    expect(
+      runSchema.parse({ ...legacyRun, model: null, reasoningEffort: null })
+    ).toMatchObject({ model: null, reasoningEffort: null })
+    expect(
+      runSchema.parse({
+        ...legacyRun,
+        model: "gpt-6.1-terra",
+        reasoningEffort: "xhigh",
+      })
+    ).toMatchObject({ model: "gpt-6.1-terra", reasoningEffort: "xhigh" })
+  })
+
   it("validates environment-aware run creation", () => {
     expect(
       createRunRequestSchema.parse({

@@ -336,6 +336,8 @@ describe("api-route helpers", () => {
         runnerType: "codex",
         environment: "preview",
         targetUrl: "https://preview.example.com",
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
         startedAt: 1,
         creationAttemptId: "00000000-0000-4000-8000-000000000001",
         interruptedAt: 2,
@@ -348,6 +350,8 @@ describe("api-route helpers", () => {
         projectId: "project-1",
         environment: "preview",
         targetUrl: "https://preview.example.com/",
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
         interruptedAt: 2,
       }),
       { token: "token" }

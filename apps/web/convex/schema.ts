@@ -140,6 +140,8 @@ export default defineSchema({
     ),
     environment: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
     passedCheckCount: v.number(),
     totalCheckCount: v.number(),
     startedAt: v.number(),

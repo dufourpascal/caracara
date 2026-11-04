@@ -6,6 +6,7 @@ import {
   API_NAMESPACE,
   formatRunName,
   MAX_REQUESTED_PHASE_ORDERS,
+  runModelSchema,
   type AuthoringRequest,
   type CheckResult,
   type OrderedScenario,
@@ -37,6 +38,7 @@ import {
   readLocalSecrets,
   readResolvedConfig,
   resolveEnvironment,
+  resolveRunModel,
   writeConfig,
   writeLocalConfig,
 } from "./config.js"
@@ -465,6 +467,14 @@ export async function updateCheckCommand(
 }
 
 export async function initCommand(options: InitCommandOptions) {
+  if (options.model !== undefined) {
+    const parsed = runModelSchema.safeParse(options.model)
+    if (!parsed.success) {
+      throw new Error(
+        `Invalid model ${JSON.stringify(options.model)}: ${parsed.error.issues[0]?.message ?? "invalid value"}`
+      )
+    }
+  }
   const config = await readResolvedConfig(
     {
       apiBaseUrl: options.apiBaseUrl,
@@ -749,6 +759,11 @@ export async function runCommand(
     process.env
   )
 
+  const runModel = resolveRunModel(config, {
+    model: options.model,
+    modelReasoningEffort: options.modelReasoningEffort,
+  })
+
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
   await runner.preflight?.()
@@ -810,6 +825,10 @@ export async function runCommand(
         runnerType,
         environment: environment.name,
         targetUrl: environment.targetUrl,
+        ...(runModel.model ? { model: runModel.model } : {}),
+        ...(runModel.modelReasoningEffort
+          ? { reasoningEffort: runModel.modelReasoningEffort }
+          : {}),
         startedAt: runStartedAt,
         creationAttemptId,
         ...(interruptedAt === undefined ? {} : { interruptedAt }),
@@ -874,8 +893,8 @@ export async function runCommand(
             environment: environment.name,
             targetUrl: environment.targetUrl,
             runnerType,
-            model: config.model ?? null,
-            modelReasoningEffort: config.model_reasoning_effort ?? null,
+            model: runModel.model ?? null,
+            modelReasoningEffort: runModel.modelReasoningEffort ?? null,
             startedAt: runStartedAt,
             finishedAt,
             exitCode,
@@ -1114,6 +1133,16 @@ export async function runCommand(
       ? { id: item.phase.id, order: item.phase.order, name: item.phase.name }
       : null
   )
+  if (
+    (runModel.model !== undefined &&
+      createRunResponse.run.model !== runModel.model) ||
+    (runModel.modelReasoningEffort !== undefined &&
+      createRunResponse.run.reasoningEffort !== runModel.modelReasoningEffort)
+  ) {
+    io.stderr.write(
+      "Warning: the server did not record this run's model settings. Update the Caracara web app to store them.\n"
+    )
+  }
   const phaseIds = [
     ...new Set(queue.flatMap((item) => (item.phase ? [item.phase.id] : []))),
   ]
@@ -1206,8 +1235,8 @@ export async function runCommand(
       environment: environment.name,
       targetUrl: environment.targetUrl,
       runnerType,
-      model: config.model ?? null,
-      modelReasoningEffort: config.model_reasoning_effort ?? null,
+      model: runModel.model ?? null,
+      modelReasoningEffort: runModel.modelReasoningEffort ?? null,
       suite: executionSource.suite
         ? {
             name: executionSource.suite.name,
@@ -1323,8 +1352,8 @@ export async function runCommand(
             cwd,
             secrets,
             targetUrl: environment.targetUrl,
-            model: config.model,
-            modelReasoningEffort: config.model_reasoning_effort,
+            model: runModel.model,
+            modelReasoningEffort: runModel.modelReasoningEffort,
             signal: runAbortController.signal,
           })
           runAbortController.signal.throwIfAborted()
@@ -1600,8 +1629,8 @@ export async function runCommand(
           environment: environment.name,
           targetUrl: environment.targetUrl,
           runnerType,
-          model: config.model ?? null,
-          modelReasoningEffort: config.model_reasoning_effort ?? null,
+          model: runModel.model ?? null,
+          modelReasoningEffort: runModel.modelReasoningEffort ?? null,
           startedAt: runStartedAt,
           finishedAt: finalFinishedAt ?? Date.now(),
           exitCode,

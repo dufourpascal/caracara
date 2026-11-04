@@ -115,6 +115,7 @@ vi.mock("./execution.js", async (importOriginal) => ({
 }))
 
 import { runCommand } from "./commands.js"
+import { readResolvedConfig } from "./config.js"
 
 afterEach(() => {
   process.exitCode = undefined
@@ -953,6 +954,112 @@ describe("run interruption", () => {
     expect(stderr).toHaveBeenCalledWith(
       "Failed to finalize interrupted run: API unavailable\n"
     )
+  })
+})
+
+describe("run model", () => {
+  const configWithModel = {
+    accessToken: "token",
+    apiBaseUrl: "https://caracara.example.com",
+    defaultEnvironment: "development",
+    environments: { development: "http://localhost:3000/" },
+    expiresAt: null,
+    runner: "codex" as const,
+    selectedProjectSlug: "demo",
+    userEmail: "test@example.com",
+    model: "gpt-6.1-terra",
+    model_reasoning_effort: "low" as const,
+  }
+  const completedExecution = {
+    executionSummary: "Opened the application.",
+    checkResults: [],
+    usage: { complete: true },
+  }
+
+  it("sends the same flag overrides to run creation and to Codex", async () => {
+    vi.mocked(readResolvedConfig).mockResolvedValueOnce(configWithModel)
+    mocks.createRun.mockResolvedValueOnce({
+      run: {
+        ...mocks.createRunResponse.run,
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+      } as typeof mocks.createRunResponse.run,
+    })
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await runCommand({
+      model: " gpt-6.1-sol ",
+      modelReasoningEffort: "high",
+    })
+
+    expect(mocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          model: "gpt-6.1-sol",
+          reasoningEffort: "high",
+        }),
+      })
+    )
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-6.1-sol",
+        modelReasoningEffort: "high",
+      })
+    )
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining("codex · gpt-6.1-sol · high")
+    )
+    expect(stderr).not.toHaveBeenCalledWith(
+      expect.stringContaining("did not record")
+    )
+  })
+
+  it("uses the config defaults and warns when the server drops them", async () => {
+    vi.mocked(readResolvedConfig).mockResolvedValueOnce(configWithModel)
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(mocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          model: "gpt-6.1-terra",
+          reasoningEffort: "low",
+        }),
+      })
+    )
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-6.1-terra",
+        modelReasoningEffort: "low",
+      })
+    )
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining("did not record this run's model settings")
+    )
+  })
+
+  it("omits model fields when nothing is configured", async () => {
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    const payload = mocks.createRun.mock.calls[0]?.[0] as unknown as {
+      payload: Record<string, unknown>
+    }
+    expect(payload.payload).not.toHaveProperty("model")
+    expect(payload.payload).not.toHaveProperty("reasoningEffort")
   })
 })
 

@@ -316,13 +316,7 @@ describe("run interruption", () => {
       .find((listener) => !existingListeners.has(listener))
     expect(interrupt).toBeDefined()
     interrupt?.("SIGINT")
-    finishCreatingRun?.({
-      run: {
-        id: "run-1",
-        name: "steady-hawk-20260827-120000",
-        evidencePolicy: "text_only",
-      },
-    })
+    finishCreatingRun?.(mocks.createRunResponse)
 
     await run
 

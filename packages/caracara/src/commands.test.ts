@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   formatRunModel,
+  initCommand,
   listEnvironmentsCommand,
   resolveCheckReference,
   resolvePhaseReference,
@@ -114,5 +115,13 @@ describe("formatRunModel", () => {
     ).toBe("Model gpt-6.1-sol, reasoning high")
     expect(formatRunModel({ model: "gpt-6.1-sol" })).toBe("Model gpt-6.1-sol")
     expect(formatRunModel({})).toBe("Model Codex default (not recorded)")
+  })
+})
+
+describe("initCommand", () => {
+  it("rejects a model that caracara run would refuse", async () => {
+    await expect(initCommand({ model: "gpt 6" })).rejects.toThrow(
+      'Invalid model "gpt 6"'
+    )
   })
 })

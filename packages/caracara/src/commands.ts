@@ -5,6 +5,7 @@ import {
   CONVEX_TOKEN_TEMPLATE,
   API_NAMESPACE,
   formatRunName,
+  runModelSchema,
   type AuthoringRequest,
   type OrderedScenario,
   type RunnablePhase,
@@ -440,6 +441,14 @@ export async function updateCheckCommand(
 }
 
 export async function initCommand(options: InitCommandOptions) {
+  if (options.model !== undefined) {
+    const parsed = runModelSchema.safeParse(options.model)
+    if (!parsed.success) {
+      throw new Error(
+        `Invalid model ${JSON.stringify(options.model)}: ${parsed.error.issues[0]?.message ?? "invalid value"}`
+      )
+    }
+  }
   const config = await readResolvedConfig(
     {
       apiBaseUrl: options.apiBaseUrl,

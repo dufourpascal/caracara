@@ -125,6 +125,11 @@ export function matchesRunModel(
   run: { model?: string; reasoningEffort?: string },
   runModel: { model?: string; reasoningEffort?: string }
 ) {
+  // A run stored without settings (for example by a server deployed before
+  // this field existed) accepts the retry; the original snapshot is kept.
+  if (run.model === undefined && run.reasoningEffort === undefined) {
+    return true
+  }
   return (
     run.model === runModel.model &&
     run.reasoningEffort === runModel.reasoningEffort

@@ -90,7 +90,7 @@ describe("run model", () => {
     expect(matchesRunModel({}, {})).toBe(true)
     expect(matchesRunModel(stored, { model: "gpt-6.1-terra" })).toBe(false)
     expect(matchesRunModel(stored, {})).toBe(false)
-    expect(matchesRunModel({}, { model: "gpt-6.1-sol" })).toBe(false)
+    expect(matchesRunModel({}, { model: "gpt-6.1-sol" })).toBe(true)
   })
 })
 

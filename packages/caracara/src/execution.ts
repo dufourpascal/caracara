@@ -449,6 +449,7 @@ export function buildRunnerPrompt(input: {
     ...(input.evidenceDirectory
       ? [
           "For every failed check, put the browser in the state that demonstrates the failure. Scroll to the relevant region and remove unrelated overlays.",
+          transientFailureEvidence,
           "Call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, so you can visually inspect the returned image. Capture the visible viewport without a uid.",
           "Inspect the image itself. Confirm that the failed behavior is clearly visible and that enough surrounding UI is shown to understand the problem. For a missing element, show the region where it should appear.",
           "If the image does not clearly show the defect, adjust the browser and repeat the preview screenshot. Do not save an unrelated, overly broad, obscured, or unreadable screenshot.",
@@ -532,6 +533,14 @@ export function buildBlockedRetryPrompt(input: {
   ].join("\n")
 }
 
+/** Progress text, toasts and running states disappear, so their screenshots must be taken when seen. */
+const transientFailureEvidence =
+  "Some failures are transient: progress or status text, toasts, loading states and running jobs. When you observe one, follow the screenshot steps below for that check right away, because the state may be gone by the end of the scenario."
+
+/** A correction turn cannot bring back a transient state, so it captures where the failure appeared instead of failing the run. */
+const transientFailureCorrection =
+  "If the failure was transient and can no longer be shown, capture the closest view of where it appeared, such as the finished row, status area or the control that started it."
+
 export function buildMissingScreenshotPrompt(input: {
   scenario: OrderedScenario
   evidenceDirectory: string
@@ -546,6 +555,7 @@ export function buildMissingScreenshotPrompt(input: {
     "For each check, call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, and visually inspect the returned image. Capture the visible viewport without a uid.",
     "If the image does not clearly show the defect and enough surrounding context, adjust the browser and repeat the preview screenshot.",
     "Only after visually confirming the image, call take_screenshot again with the listed path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+    transientFailureCorrection,
     ...checks.map(
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`

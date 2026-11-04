@@ -369,6 +369,8 @@ describe("Codex configuration", () => {
     expect(correction).toContain("visually inspect the returned image")
     expect(correction).toContain("Only after visually confirming the image")
     expect(correction).toContain("Valid article slug")
+    expect(prompt).toContain("Some failures are transient")
+    expect(correction).toContain("can no longer be shown")
   })
 
   it("recognizes only WebP file signatures", () => {

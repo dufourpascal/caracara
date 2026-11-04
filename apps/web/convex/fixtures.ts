@@ -394,13 +394,7 @@ export const removeRequirement = mutation({
       args.fixtureId,
       args.projectId
     )
-    if ((args.phaseId === undefined) === (args.scenarioId === undefined)) {
-      validationError("Name exactly one phase or scenario.")
-    }
-    const target = {
-      phaseId: args.phaseId ?? null,
-      scenarioId: args.scenarioId ?? null,
-    }
+    const target = await resolveRequirementTarget(ctx, fixture.projectId, args)
     const requirements = fixture.requirements.filter(
       (requirement) => !isSameTarget(requirement, target)
     )

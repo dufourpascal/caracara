@@ -292,6 +292,13 @@ describe("fixture requirements", () => {
     await expect(
       call(fixtures.removeRequirement, ctx, { projectId, fixtureId, phaseId })
     ).rejects.toThrow("no requirement")
+    await expect(
+      call(fixtures.removeRequirement, ctx, {
+        projectId,
+        fixtureId,
+        phaseId: otherPhase,
+      })
+    ).rejects.toThrow("Phase not found.")
   })
 
   it("drops requirements on deleted phases and scenarios", async () => {

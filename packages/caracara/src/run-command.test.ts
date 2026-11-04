@@ -439,6 +439,78 @@ describe("runs that end before any scenario", () => {
   })
 })
 
+describe("runs that end during creation", () => {
+  function jsonEvents(text: string) {
+    return text
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+  }
+
+  it("keeps the loaded plan when interrupted while the run is created", async () => {
+    const existing = new Set(process.listeners("SIGINT"))
+    mocks.createRun.mockImplementationOnce(async () => {
+      process.listeners("SIGINT").find((listener) => !existing.has(listener))?.(
+        "SIGINT"
+      )
+      return {
+        run: {
+          id: "run-1",
+          name: "steady-hawk-20261104-120000",
+          evidencePolicy: "text_only",
+        },
+      }
+    })
+    const stdout = output()
+
+    await runCommand(
+      { phases: "1,3", json: true },
+      { stdout: stdout.stream, stderr: output().stream, env: {} }
+    )
+
+    expect(process.exitCode).toBe(130)
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(finalizedStatus()).toBe("interrupted")
+    expect(mocks.finalizeRun).toHaveBeenCalledOnce()
+    const events = jsonEvents(stdout.text())
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      type: "run.finished",
+      status: "interrupted",
+      exitCode: 130,
+      report: {
+        run: { scenarioCounts: { total: 3, notRun: 3 } },
+        phases: [
+          { order: 1, scenarioCount: 2, notRunCount: 2 },
+          { order: 3, scenarioCount: 1, notRunCount: 1 },
+        ],
+      },
+    })
+    expect(
+      process.listeners("SIGINT").filter((listener) => !existing.has(listener))
+    ).toHaveLength(0)
+  })
+
+  it("reports a created suite run with no active scenarios", async () => {
+    mocks.fetchExecutionPlan.mockResolvedValueOnce({
+      ...mocks.executionPlan,
+      phases: [],
+    })
+    const stdout = output()
+
+    await expect(
+      runCommand(
+        { suite: "smoke" },
+        { stdout: stdout.stream, stderr: output().stream, env: {} }
+      )
+    ).rejects.toThrow('Suite "smoke" has no active scenarios to run.')
+
+    expect(finalizedStatus()).toBe("interrupted")
+    expect(stdout.text()).toContain("━━ Run steady-hawk-20261104-120000")
+    expect(stdout.text()).toContain("Scenarios  0 completed")
+  })
+})
+
 describe("exit paths", () => {
   it("prints the summary and exits 1 when finalization fails", async () => {
     mocks.finalizeRun.mockRejectedValueOnce(new Error("finalize down"))

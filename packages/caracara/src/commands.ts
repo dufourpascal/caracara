@@ -509,7 +509,6 @@ function parsePhaseOrder(value: string | undefined, flagName: string) {
   return parsed
 }
 
-
 /**
  * Parses a phase list such as `1-7,9,10` into sorted, unique phase orders.
  * Ranges are checked before they are expanded.
@@ -541,7 +540,9 @@ export function parsePhaseList(value: string) {
       throw new Error(`--phases range "${token}" must go from low to high.`)
     }
     if (end - start + 1 > MAX_REQUESTED_PHASE_ORDERS) {
-      throw new Error(`--phases can select at most ${MAX_REQUESTED_PHASE_ORDERS} phases.`)
+      throw new Error(
+        `--phases can select at most ${MAX_REQUESTED_PHASE_ORDERS} phases.`
+      )
     }
     for (let order = start; order <= end; order += 1) {
       orders.add(order)
@@ -804,9 +805,7 @@ export async function runCommand(
         status: "interrupted",
         finishedAt,
         finalizationAttemptId,
-        ...(interruptedScenarioResultId
-          ? { interruptedScenarioResultId }
-          : {}),
+        ...(interruptedScenarioResultId ? { interruptedScenarioResultId } : {}),
         ...(interruptedScenarioAttemptId
           ? { interruptedScenarioAttemptId }
           : {}),
@@ -818,7 +817,10 @@ export async function runCommand(
   // so JSON consumers still get run.finished and text output a summary.
   const reportRunEndedEarly = (
     run: { id: string; name: string },
-    exitCode: number
+    exitCode: number,
+    queue: ReadonlyArray<{
+      phase: { id: string; order: number; name: string } | null
+    }> = []
   ) => {
     const progress = new RunProgress(outputMode, io, 0)
     try {
@@ -841,7 +843,15 @@ export async function runCommand(
             finishedAt,
             exitCode,
           },
-          queue: [],
+          queue: queue.map((item) => ({
+            phase: item.phase
+              ? {
+                  id: item.phase.id,
+                  order: item.phase.order,
+                  name: item.phase.name,
+                }
+              : null,
+          })),
           scenarios: [],
         })
       )
@@ -1026,8 +1036,8 @@ export async function runCommand(
         : runSelection.mode === "phases"
           ? `Phases ${formatPhaseList(runSelection.requestedPhaseOrders)} have no active scenarios to run.`
           : runSelection.mode === "suite"
-          ? `Suite "${runSelection.requestedSuiteSlug}" has no active scenarios to run.`
-          : "No runnable scenarios found."
+            ? `Suite "${runSelection.requestedSuiteSlug}" has no active scenarios to run.`
+            : "No runnable scenarios found."
     )
   }
 
@@ -1044,7 +1054,11 @@ export async function runCommand(
     }
     if (interruptedSignal) {
       await finishSignalInterruption(createRunResponse.run.id)
-      reportRunEndedEarly(createRunResponse.run, signalExitCode())
+      reportRunEndedEarly(
+        createRunResponse.run,
+        signalExitCode(),
+        executionSource.queue
+      )
       return
     }
   }
@@ -1057,9 +1071,7 @@ export async function runCommand(
       : null
   )
   const phaseIds = [
-    ...new Set(
-      queue.flatMap((item) => (item.phase ? [item.phase.id] : []))
-    ),
+    ...new Set(queue.flatMap((item) => (item.phase ? [item.phase.id] : []))),
   ]
   const keepGoing = options.keepGoing ?? phaseIds.length > 1
   const progress = new RunProgress(outputMode, io, heartbeatMs)
@@ -1507,9 +1519,7 @@ export async function runCommand(
               try {
                 await finalizeInterruptedRun(
                   runId,
-                  finalRunStatus === "interrupted"
-                    ? finalFinishedAt
-                    : undefined
+                  finalRunStatus === "interrupted" ? finalFinishedAt : undefined
                 )
               } catch (correctionError) {
                 finalizationError = correctionError

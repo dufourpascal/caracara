@@ -166,7 +166,7 @@ caracara requireFixture --fixture het-vs-homo --scenario calculate-results --acc
 
 A requirement on a phase applies to all its scenarios. `read` is the default access. Evaluation prompts list the required fixtures as protected, and a `mutates` requirement allows changes only within its mutation scope.
 
-`caracara run` checks the selection's fixtures before it creates the run. `--fixtures check` (the default) verifies each one and stops with exit code 3 if any is unhealthy, so no run is created. `--fixtures repair` converges an unhealthy fixture and verifies it again. `--fixtures skip` runs no fixture operations. After a completed or failed run, the CLI resets and verifies each fixture that an executed scenario was allowed to change. A failure there prints a warning but does not change the run result.
+`caracara run` checks the selection's fixtures before it creates the run. `--fixtures check` (the default) verifies each one and stops with exit code 3 if any is unhealthy, so no run is created. `--fixtures repair` converges an unhealthy fixture and verifies it again. `--fixtures skip` runs no fixture operations. Once the run exists, the CLI fetches the plan again and runs that. If its fixture requirements no longer match what preflight checked, the CLI marks the run failed before any scenario starts, and you rerun. After a completed or failed run, the CLI resets and verifies each fixture that an executed scenario was allowed to change. A failure there prints a warning but does not change the run result.
 
 Manage fixtures outside a run with:
 
@@ -179,7 +179,7 @@ caracara fixtures:reset <slug> [--environment <name>]
 
 Converge and reset always end with a verify. The commands exit with code 3 when the final verify is unhealthy.
 
-Each operation runs a local hook when one is configured, otherwise the runner agent works from the fixture's definition. Hooks live in `.caracara/fixtures.json` next to `config.json` and never leave your machine:
+Each operation runs a local hook when one is configured, otherwise the runner agent works from the fixture's definition. Hooks live in `.caracara/fixtures.json` next to `config.json` and never leave your machine. `caracara run` reads the file only when the selection requires fixtures:
 
 ```json
 {

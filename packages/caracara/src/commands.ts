@@ -50,11 +50,14 @@ import {
   getProjectFixtureHooks,
   readFixtureHooks,
   findUnknownHookSlugs,
+  type FixtureHooksConfig,
+  type ProjectFixtureHooks,
 } from "./fixture-hooks.js"
 import { resolveProtectedFixtures } from "./fixture-prompts.js"
 import {
   collectRequiredFixtures,
   createFixtureOperationApi,
+  describeFixtureSnapshotMismatch,
   createLazyRunnerSession,
   formatPreflightAbort,
   parseFixtureMode,
@@ -604,11 +607,16 @@ export async function runCommand(options: RunCommandOptions) {
     process.env
   )
   const fixtureMode = parseFixtureMode(options.fixtures)
-  // Hooks are local only; `skip` never runs them.
-  const hooksConfig = fixtureMode === "skip" ? null : await readFixtureHooks(cwd)
-  const fixtureHooks = hooksConfig
-    ? getProjectFixtureHooks(hooksConfig, projectSlug)
-    : {}
+  // Hooks are local only. They are read when the selection requires
+  // fixtures, so a broken fixtures.json cannot block unrelated runs.
+  let hooksConfig: FixtureHooksConfig | null = null
+  let fixtureHooks: ProjectFixtureHooks = {}
+  const loadFixtureHooks = async () => {
+    if (!hooksConfig) {
+      hooksConfig = await readFixtureHooks(cwd)
+      fixtureHooks = getProjectFixtureHooks(hooksConfig, projectSlug)
+    }
+  }
 
   const runnerType = config.runner
   const runner = getRunnerAdapter(runnerType)
@@ -763,6 +771,7 @@ export async function runCommand(options: RunCommandOptions) {
     let result: Awaited<ReturnType<typeof runFixturePreflight>>
     try {
       if (fixtureMode !== "skip") {
+        await loadFixtureHooks()
         await warnAboutUnknownHooks()
       }
       result = await runFixturePreflight(
@@ -867,6 +876,41 @@ export async function runCommand(options: RunCommandOptions) {
     }
     setSignalExitCode()
   }
+  /** Finalizes a created run as failed before any scenario started. */
+  const failRunBeforeExecution = async (runId: string) => {
+    try {
+      await finalizeRun({
+        apiBaseUrl: config.apiBaseUrl,
+        accessToken,
+        version: CLI_VERSION,
+        projectSlug,
+        runId,
+        payload: {
+          status: "failed",
+          finishedAt: Date.now(),
+          finalizationAttemptId,
+        },
+        signal: runAbortController.signal,
+      })
+      if (interruptedSignal) {
+        await finalizeInterruptedRun(runId)
+      }
+    } catch (error) {
+      try {
+        if (!interruptedSignal) {
+          throw error
+        }
+        await finalizeInterruptedRun(runId)
+      } catch (finalError) {
+        process.stderr.write(
+          `Failed to finalize run: ${finalError instanceof Error ? finalError.message : "Unknown error"}\n`
+        )
+      }
+    } finally {
+      stopListeningForInterrupts()
+      await closeSessionQuietly()
+    }
+  }
   let createRunResponse: Awaited<ReturnType<typeof startRun>> | null = null
   if (runSelection.mode === "suite") {
     // The suite plan is read-only; the run that locks authoring is created
@@ -904,7 +948,7 @@ export async function runCommand(options: RunCommandOptions) {
       return
     }
   }
-  const executionSource = await (
+  const fetchExecutionSource = () =>
     runSelection.mode === "single"
       ? fetchSingleScenario({
           apiBaseUrl: config.apiBaseUrl,
@@ -970,7 +1014,7 @@ export async function runCommand(options: RunCommandOptions) {
             ),
           }
         })
-  ).catch(async (error) => {
+  const handleExecutionSourceError = async (error: unknown) => {
     let finalizationError: unknown = null
     try {
       if (createRunResponse) {
@@ -992,11 +1036,15 @@ export async function runCommand(options: RunCommandOptions) {
       throw finalizationError
     }
     throw error
-  })
+  }
 
-  if (!executionSource) {
+  const initialSource = await fetchExecutionSource().catch(
+    handleExecutionSourceError
+  )
+  if (!initialSource) {
     return
   }
+  let executionSource = initialSource
 
   if (executionSource.queue.length === 0) {
     let finalizationError: unknown = null
@@ -1052,6 +1100,36 @@ export async function runCommand(options: RunCommandOptions) {
     if (interruptedSignal) {
       await finishSignalInterruption(createRunResponse.run.id)
       return
+    }
+  }
+
+  // Requirements can change while preflight runs. The run now holds the
+  // authoring lock, so execute the plan as it is now and confirm that it
+  // still matches the fixture snapshot the server stored on the run.
+  const runFixtureSnapshot = createRunResponse.run.fixturePreflight ?? []
+  if (fixturePreflight.length > 0 || runFixtureSnapshot.length > 0) {
+    if (runSelection.mode !== "suite") {
+      const refreshed = await fetchExecutionSource().catch(
+        handleExecutionSourceError
+      )
+      if (!refreshed) {
+        return
+      }
+      executionSource = refreshed
+    }
+    const mismatch = describeFixtureSnapshotMismatch(
+      executionSource.queue.map((item) => item.scenario),
+      executionSource.fixtures,
+      runFixtureSnapshot
+    )
+    if (mismatch) {
+      await failRunBeforeExecution(createRunResponse.run.id)
+      if (setSignalExitCode()) {
+        return
+      }
+      throw new Error(
+        `Fixture requirements changed during preflight (${mismatch}). Run ${createRunResponse.run.name} was marked failed without executing scenarios; rerun.`
+      )
     }
   }
 
@@ -1404,9 +1482,14 @@ export async function runCommand(options: RunCommandOptions) {
       runId: createRunResponse.run.id,
       executedScenarios,
       fixtures: executionSource.fixtures,
-      createRuntime: (recordUsage) =>
-        createFixtureRuntime(executionSource.project.projectPrompt, recordUsage),
-      hooksPath: hooksConfig?.path ?? null,
+      createRuntime: async (recordUsage) => {
+        await loadFixtureHooks()
+        return createFixtureRuntime(
+          executionSource.project.projectPrompt,
+          recordUsage
+        )
+      },
+      getHooksPath: () => hooksConfig?.path ?? null,
       listenForInterrupts,
       stopListeningForInterrupts,
       closeSession: () => sessions.close(),
@@ -1440,8 +1523,8 @@ async function runPostRunFixtureMaintenance(args: {
   fixtures: Fixture[]
   createRuntime: (
     recordUsage: (usage: RunnerUsageReport) => void
-  ) => FixtureRuntime
-  hooksPath: string | null
+  ) => Promise<FixtureRuntime>
+  getHooksPath: () => string | null
   listenForInterrupts: () => void
   stopListeningForInterrupts: () => void
   closeSession: () => Promise<void>
@@ -1457,12 +1540,12 @@ async function runPostRunFixtureMaintenance(args: {
       return
     }
     args.listenForInterrupts()
-    const runtime = args.createRuntime((next) => {
+    const runtime = await args.createRuntime((next) => {
       usage = mergeRunnerUsage(usage, next)
     })
     try {
       await runPostRunMaintenance(runtime, resetFixtures, args.runId, {
-        hooksPath: args.hooksPath,
+        hooksPath: args.getHooksPath(),
       })
     } catch (error) {
       if (!runtime.signal.aborted) {

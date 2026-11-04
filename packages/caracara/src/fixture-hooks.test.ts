@@ -357,6 +357,38 @@ describe.skipIf(process.platform === "win32")("hook executor", () => {
     expect(() => process.kill(grandchild, 0)).toThrow()
   })
 
+  it("does not start the hook when the signal fires during setup", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "caracara-hook-setup-"))
+    const marker = join(dir, "ran")
+    const scriptPath = join(dir, "hook.mjs")
+    await writeFile(
+      scriptPath,
+      `import { writeFileSync } from "node:fs"
+      writeFileSync(${JSON.stringify(marker)}, "yes")`
+    )
+    const controller = new AbortController()
+    const pending = runFixtureHook({
+      command: `"${process.execPath}" "${scriptPath}"`,
+      cwd: dir,
+      kind: "verify",
+      projectSlug: "demo",
+      fixtureSlug: "het-vs-homo",
+      healthChecks,
+      environment: "development",
+      targetUrl: "http://localhost:3000/",
+      secrets: {},
+      baseEnv: inheritedEnv,
+      timeoutMs: 10_000,
+      signal: controller.signal,
+      stdout: () => undefined,
+      stderr: () => undefined,
+    })
+    // The executor is now awaiting its temp directory, past the entry check.
+    controller.abort(new Error("Interrupted by SIGTERM."))
+    await expect(pending).rejects.toThrow("Interrupted by SIGTERM.")
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
   it("rejects with the abort reason", async () => {
     const controller = new AbortController()
     const pending = runHook("setInterval(() => {}, 1000)", {

@@ -38,6 +38,7 @@ import {
   buildWindowsTaskkillArgs,
   terminateChildProcess,
 } from "./process-control.js"
+import { collectSecretValues, redactValues } from "./redaction.js"
 
 export { buildWindowsTaskkillArgs, terminateChildProcess }
 
@@ -277,10 +278,14 @@ function clipEnd(text: string, limit: number) {
   return text.length <= limit ? text : text.slice(0, limit)
 }
 
+/**
+ * Validates one fixture task's output and redacts it. `secretValues` must
+ * include inherited CARACARA_SECRET_* values, not only secrets.env.
+ */
 export function validateFixtureTaskOutput(
   checks: EvaluationCheck[],
   output: unknown,
-  secrets: RunnerSecrets
+  secretValues: readonly string[]
 ): Omit<FixtureTaskExecution, "usage"> {
   const candidate = output as Partial<FixtureTaskOutput> | null
   const results = Array.isArray(candidate?.checkResults)
@@ -307,7 +312,7 @@ export function validateFixtureTaskOutput(
   const byId = new Map(results.map((result) => [result.checkId, result]))
   return {
     summary: clipEnd(
-      redactSecretValues(candidate.summary.trim(), secrets),
+      redactValues(candidate.summary.trim(), secretValues),
       FIXTURE_OPERATION_SUMMARY_MAX_LENGTH
     ),
     checkResults: checks.map((check) => {
@@ -317,7 +322,7 @@ export function validateFixtureTaskOutput(
         name: check.name,
         verdict: result.verdict as FixtureOperationCheckResult["verdict"],
         evidence: clipEnd(
-          redactSecretValues(result.evidence.trim(), secrets),
+          redactValues(result.evidence.trim(), secretValues),
           2_000
         ),
       }
@@ -340,8 +345,10 @@ type FixtureTurn = (input: {
 export async function executeFixtureTaskWithTurn(
   turn: FixtureTurn,
   input: FixtureTaskInput,
-  secrets: RunnerSecrets
+  secrets: RunnerSecrets,
+  env: NodeJS.ProcessEnv = process.env
 ): Promise<FixtureTaskExecution> {
+  const secretValues = collectSecretValues(secrets, env)
   let usage: RunnerUsageReport = { complete: false }
   try {
     const result = await turn({
@@ -354,14 +361,14 @@ export async function executeFixtureTaskWithTurn(
     })
     usage = result.usage
     return {
-      ...validateFixtureTaskOutput(input.checks, result.output, secrets),
+      ...validateFixtureTaskOutput(input.checks, result.output, secretValues),
       usage,
     }
   } catch (error) {
     throw new RunnerExecutionError(
-      redactSecretValues(
+      redactValues(
         error instanceof Error ? error.message : "Fixture task failed.",
-        secrets
+        secretValues
       ),
       usage
     )

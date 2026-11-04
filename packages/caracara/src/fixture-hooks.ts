@@ -16,6 +16,9 @@ import { z } from "zod"
 
 import { findLocalConfigPath } from "./config.js"
 import { terminateChildProcess } from "./process-control.js"
+import { collectSecretValues, redactValues } from "./redaction.js"
+
+export { collectSecretValues, redactValues }
 
 const FIXTURE_HOOKS_FILE_NAME = "fixtures.json"
 export const DEFAULT_HOOK_TIMEOUT_MINUTES = 60
@@ -135,35 +138,6 @@ export function findUnknownHookSlugs(
 
 export function getFixtureHook(hooks: ProjectFixtureHooks, slug: string) {
   return Object.hasOwn(hooks, slug) ? hooks[slug] : undefined
-}
-
-/** Exact values to redact: local secrets plus inherited CARACARA_SECRET_* values. */
-export function collectSecretValues(
-  localSecrets: Record<string, string>,
-  env: NodeJS.ProcessEnv = process.env
-) {
-  const values = new Set<string>()
-  for (const value of Object.values(localSecrets)) {
-    if (value !== "") {
-      values.add(value)
-    }
-  }
-  for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith("CARACARA_SECRET_") && value) {
-      values.add(value)
-    }
-  }
-  return [...values].sort((left, right) => right.length - left.length)
-}
-
-export function redactValues(text: string, secretValues: readonly string[]) {
-  let redacted = text
-  for (const secret of secretValues) {
-    if (secret !== "") {
-      redacted = redacted.split(secret).join("[REDACTED]")
-    }
-  }
-  return redacted
 }
 
 const MAX_PENDING_LINE_LENGTH = 8_192
@@ -416,6 +390,8 @@ export async function runFixtureHook(
     })
 
     const detached = process.platform !== "win32"
+    // The signal may have fired while the temp directory was being created.
+    input.signal?.throwIfAborted()
     const child = spawn(input.command, {
       cwd: input.cwd,
       shell: true,
@@ -461,6 +437,9 @@ export async function runFixtureHook(
     const timer = setTimeout(() => stop("timeout"), input.timeoutMs)
     const onAbort = () => stop("abort")
     input.signal?.addEventListener("abort", onAbort, { once: true })
+    if (input.signal?.aborted) {
+      onAbort()
+    }
 
     let exit: { code: number | null; signal: NodeJS.Signals | null }
     try {

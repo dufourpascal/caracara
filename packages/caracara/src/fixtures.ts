@@ -549,6 +549,59 @@ export function collectRequiredFixtures(
   return [...required.values()]
 }
 
+/** Per required fixture, the strongest access any of the scenarios needs. */
+export function collectRequiredFixtureAccess(
+  scenarios: Array<{ fixtureRequirements: EffectiveFixtureRequirement[] }>
+) {
+  const access = new Map<string, EffectiveFixtureRequirement["access"]>()
+  for (const scenario of scenarios) {
+    for (const requirement of scenario.fixtureRequirements) {
+      if (access.get(requirement.fixtureId) !== "mutates") {
+        access.set(requirement.fixtureId, requirement.access)
+      }
+    }
+  }
+  return access
+}
+
+/**
+ * Compares the plan fetched after run creation, when authoring is locked,
+ * with the fixture snapshot the server stored on the run. Returns a
+ * description of the differences, or null when they match.
+ */
+export function describeFixtureSnapshotMismatch(
+  scenarios: Array<{ fixtureRequirements: EffectiveFixtureRequirement[] }>,
+  fixtures: Array<Pick<Fixture, "id" | "slug">>,
+  snapshot: Array<{
+    fixtureId: string
+    fixtureSlug: string
+    access: EffectiveFixtureRequirement["access"]
+  }>
+) {
+  const required = collectRequiredFixtureAccess(scenarios)
+  const slugOf = (fixtureId: string) =>
+    snapshot.find((entry) => entry.fixtureId === fixtureId)?.fixtureSlug ??
+    fixtures.find((fixture) => fixture.id === fixtureId)?.slug ??
+    fixtureId
+  const differences: string[] = []
+  for (const [fixtureId, access] of required) {
+    const entry = snapshot.find((candidate) => candidate.fixtureId === fixtureId)
+    if (!entry) {
+      differences.push(`${slugOf(fixtureId)} is now required`)
+    } else if (entry.access !== access) {
+      differences.push(
+        `${slugOf(fixtureId)} access changed from ${entry.access} to ${access}`
+      )
+    }
+  }
+  for (const entry of snapshot) {
+    if (!required.has(entry.fixtureId)) {
+      differences.push(`${entry.fixtureSlug} is no longer required`)
+    }
+  }
+  return differences.length > 0 ? differences.join("; ") : null
+}
+
 /** Fixtures that an executed scenario was allowed to change. */
 export function selectPostRunResetFixtures(
   executedScenarios: Array<{

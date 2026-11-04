@@ -57,28 +57,61 @@ const mocks = vi.hoisted(() => {
     unassignedScenarioCount: 0,
     fixtures: [fixture],
   })
+  // The access the server computes for the selection, used by both the plan
+  // and the run's fixture snapshot.
+  const state = { access: "read" as "read" | "mutates" }
+  const readHooks = async () => ({
+    path: "/project/.caracara/fixtures.json",
+    rootDir: "/project",
+    projects: {
+      demo: {
+        "het-vs-homo": {
+          verify: "./verify.sh",
+          converge: "./converge.sh",
+          reset: "./reset.sh",
+        },
+      },
+    },
+  })
   let operationCounter = 0
   const hookStatuses: Array<"succeeded" | "failed"> = []
   return {
     fixture,
     makePlan,
+    readHooks,
+    state,
     hookStatuses,
     resetOperationCounter: () => {
       operationCounter = 0
     },
-    createRun: vi.fn(async (args: unknown) => {
-      void args
-      return {
+    createRun: vi.fn(
+      async (args: {
+        payload: {
+          fixturePreflight?: Array<{
+            fixtureId: string
+            outcome: string
+            operationId: string | null
+          }>
+        }
+      }) => ({
         run: {
           id: "run-1",
           name: "steady-hawk-20260827-120000",
           evidencePolicy: "text_only",
+          fixturePreflight: (args.payload.fixturePreflight ?? []).map(
+            (entry) => ({
+              ...entry,
+              fixtureSlug: fixture.slug,
+              fixtureName: fixture.name,
+              access: state.access,
+            })
+          ),
         },
-      }
-    }),
+      })
+    ),
     fetchExecutionPlan: vi.fn(async (args: unknown) => {
       void args
-      return makePlan("read")
+      return makePlan(state.access)
     }),
     finalizeRun: vi.fn(async (args: unknown) => {
       void args
@@ -161,19 +194,7 @@ vi.mock("./config.js", async (importOriginal) => ({
 
 vi.mock("./fixture-hooks.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./fixture-hooks.js")>()),
-  readFixtureHooks: vi.fn(async () => ({
-    path: "/project/.caracara/fixtures.json",
-    rootDir: "/project",
-    projects: {
-      demo: {
-        "het-vs-homo": {
-          verify: "./verify.sh",
-          converge: "./converge.sh",
-          reset: "./reset.sh",
-        },
-      },
-    },
-  })),
+  readFixtureHooks: vi.fn(mocks.readHooks),
   runFixtureHook: mocks.runFixtureHook,
 }))
 
@@ -186,6 +207,22 @@ vi.mock("./execution.js", async (importOriginal) => ({
 }))
 
 import { runCommand } from "./commands.js"
+import { readFixtureHooks } from "./fixture-hooks.js"
+
+function planWithoutFixtures() {
+  const plan = mocks.makePlan("read")
+  return {
+    ...plan,
+    fixtures: [],
+    phases: plan.phases.map((phase) => ({
+      ...phase,
+      scenarios: phase.scenarios.map((scenario) => ({
+        ...scenario,
+        fixtureRequirements: [],
+      })),
+    })),
+  }
+}
 
 type CreateRunCall = [
   { payload: { fixturePreflight?: unknown[]; mode: string } },
@@ -205,8 +242,10 @@ afterEach(() => {
   mocks.resetOperationCounter()
   vi.clearAllMocks()
   vi.restoreAllMocks()
+  mocks.state.access = "read"
+  vi.mocked(readFixtureHooks).mockReset().mockImplementation(mocks.readHooks)
   mocks.fetchExecutionPlan.mockImplementation(async () =>
-    mocks.makePlan("read")
+    mocks.makePlan(mocks.state.access)
   )
 })
 
@@ -275,7 +314,7 @@ describe("run fixture preflight", () => {
   })
 
   it("skips fixture operations entirely with --fixtures skip", async () => {
-    mocks.fetchExecutionPlan.mockResolvedValue(mocks.makePlan("mutates"))
+    mocks.state.access = "mutates"
     vi.spyOn(process.stdout, "write").mockImplementation(() => true)
 
     await runCommand({ fixtures: "skip" })
@@ -355,9 +394,95 @@ describe("run fixture preflight", () => {
   })
 })
 
+describe("plan after run creation", () => {
+  it("executes the plan fetched after the run locked authoring", async () => {
+    // Preflight saw a mutating requirement; it became read-only before the
+    // run was created, and the server snapshot says read.
+    mocks.fetchExecutionPlan.mockResolvedValueOnce(mocks.makePlan("mutates"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledTimes(2)
+    expect(mocks.createRun.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.fetchExecutionPlan.mock.invocationCallOrder[1]!
+    )
+    const executionInput = mocks.executeScenario.mock.calls[0]?.[0] as {
+      fixtures: Array<{ access: string }>
+    }
+    expect(executionInput.fixtures).toEqual([
+      expect.objectContaining({ access: "read" }),
+    ])
+    // The refetched plan needs no post-run reset.
+    expect(kinds().map((payload) => payload.kind)).toEqual(["verify"])
+  })
+
+  it("fails the run without executing when requirements no longer match the snapshot", async () => {
+    mocks.fetchExecutionPlan
+      .mockResolvedValueOnce(mocks.makePlan("read"))
+      .mockResolvedValueOnce(mocks.makePlan("mutates"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await expect(runCommand({})).rejects.toThrow(
+      /Fixture requirements changed during preflight \(het-vs-homo access changed from read to mutates\).*rerun/
+    )
+
+    expect(mocks.startScenarioExecution).not.toHaveBeenCalled()
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).toHaveBeenCalledOnce()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        payload: expect.objectContaining({ status: "failed" }),
+      })
+    )
+  })
+
+  it("keeps the single fetch for selections without fixtures", async () => {
+    mocks.fetchExecutionPlan.mockResolvedValue(planWithoutFixtures())
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledOnce()
+    expect(mocks.startFixtureOperation).not.toHaveBeenCalled()
+    const [createArgs] = mocks.createRun.mock.calls[0] as unknown as CreateRunCall
+    expect(createArgs.payload.fixturePreflight).toEqual([])
+  })
+})
+
+describe("local hooks file", () => {
+  it("does not read fixtures.json when the selection requires no fixtures", async () => {
+    vi.mocked(readFixtureHooks).mockRejectedValueOnce(
+      new Error("fixtures.json is invalid")
+    )
+    mocks.fetchExecutionPlan.mockResolvedValue(planWithoutFixtures())
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(readFixtureHooks).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "completed" }),
+      })
+    )
+  })
+
+  it("reports an invalid fixtures.json when fixtures are required", async () => {
+    vi.mocked(readFixtureHooks).mockRejectedValueOnce(
+      new Error("fixtures.json is invalid")
+    )
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await expect(runCommand({})).rejects.toThrow("fixtures.json is invalid")
+    expect(mocks.createRun).not.toHaveBeenCalled()
+  })
+})
+
 describe("post-run fixture maintenance", () => {
   it("resets and verifies mutated fixtures after finalization, keeping the run result", async () => {
-    mocks.fetchExecutionPlan.mockResolvedValue(mocks.makePlan("mutates"))
+    mocks.state.access = "mutates"
     // preflight verify, reset, final verify (unhealthy)
     mocks.hookStatuses.push("succeeded", "succeeded", "failed")
     const stdout = vi
@@ -386,7 +511,7 @@ describe("post-run fixture maintenance", () => {
   })
 
   it("also resets after a failed run", async () => {
-    mocks.fetchExecutionPlan.mockResolvedValue(mocks.makePlan("mutates"))
+    mocks.state.access = "mutates"
     mocks.executeScenario.mockRejectedValueOnce(new Error("Runner failed"))
     vi.spyOn(process.stdout, "write").mockImplementation(() => true)
 

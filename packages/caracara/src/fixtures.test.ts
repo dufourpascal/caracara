@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   buildBlockedRetryPrompt,
   buildFixtureTaskResultSchema,
+  executeFixtureTaskWithTurn,
   buildRunnerPrompt,
   RunnerExecutionError,
   validateFixtureTaskOutput,
@@ -475,6 +476,42 @@ describe("agent operations", () => {
     expect(runtime.recordUsage).toHaveBeenCalledWith({ complete: false })
   })
 
+  it("redacts inherited-only secrets from fixture task output and errors", async () => {
+    const checks = makeFixture().healthChecks.slice(0, 1)
+    const env = { CARACARA_SECRET_INHERITED: "inherited-only-value" }
+    const result = await executeFixtureTaskWithTurn(
+      async () => ({
+        output: {
+          summary: "Used inherited-only-value to log in",
+          checkResults: [
+            {
+              checkId: CHECK_A,
+              verdict: "passed",
+              evidence: "Token inherited-only-value accepted",
+            },
+          ],
+        },
+        usage: { complete: true },
+      }),
+      { cwd: "/project", prompt: "verify", checks },
+      { CARACARA_SECRET_LOCAL: "local-value" },
+      env
+    )
+    expect(result.summary).toBe("Used [REDACTED] to log in")
+    expect(result.checkResults[0]?.evidence).toBe("Token [REDACTED] accepted")
+
+    await expect(
+      executeFixtureTaskWithTurn(
+        async () => {
+          throw new Error("Login failed for inherited-only-value")
+        },
+        { cwd: "/project", prompt: "verify", checks },
+        {},
+        env
+      )
+    ).rejects.toThrow("Login failed for [REDACTED]")
+  })
+
   it("validates and redacts fixture task output", () => {
     const checks = makeFixture().healthChecks
     expect(
@@ -487,7 +524,7 @@ describe("agent operations", () => {
             { checkId: CHECK_A, verdict: "passed", evidence: "9 animals" },
           ],
         },
-        { CARACARA_SECRET_PASSWORD: "pw-123" }
+        ["pw-123"]
       )
     ).toEqual({
       summary: "Logged in with [REDACTED]",
@@ -505,7 +542,7 @@ describe("agent operations", () => {
             { checkId: CHECK_A, verdict: "passed", evidence: "ok" },
           ],
         },
-        {}
+        []
       )
     ).toThrow(/every fixture check/)
     expect(

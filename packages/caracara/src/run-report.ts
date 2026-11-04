@@ -5,7 +5,7 @@ import type {
 } from "@workspace/contracts"
 
 import type { RunnerUsage, RunnerUsageReport } from "./execution.js"
-import { toSingleLine, truncateToWidth } from "./terminal-text.js"
+import { displayWidth, toSingleLine, truncateToWidth } from "./terminal-text.js"
 
 /**
  * Field names follow the `caracara results --json` report where they overlap,
@@ -492,16 +492,18 @@ export function formatRunner(run: RunReport["run"]) {
 
 function table(rows: string[][], alignRight: ReadonlySet<number>) {
   const widths = rows[0]!.map((_, column) =>
-    Math.max(...rows.map((row) => (row[column] ?? "").length))
+    Math.max(...rows.map((row) => displayWidth(row[column] ?? "")))
   )
+  const pad = (cell: string, column: number) =>
+    " ".repeat(Math.max(0, widths[column]! - displayWidth(cell)))
   return rows.map((row) =>
     row
       .map((cell, column) =>
         alignRight.has(column)
-          ? cell.padStart(widths[column]!)
+          ? `${pad(cell, column)}${cell}`
           : column === row.length - 1
             ? cell
-            : cell.padEnd(widths[column]!)
+            : `${cell}${pad(cell, column)}`
       )
       .join("  ")
       .trimEnd()

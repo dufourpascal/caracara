@@ -113,5 +113,5 @@ export function truncateStyledLine(line: string, maxWidth: number) {
     width += characterWidth
     index += character.length
   }
-  return `${result}…\u001b[0m`
+  return line.includes("\u001b") ? `${result}…\u001b[0m` : `${result}…`
 }

@@ -42,12 +42,14 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 
 /**
  * Picks the output mode: explicit flags win, otherwise the live panel when
- * stderr is an interactive terminal outside CI, and plain lines elsewhere.
+ * stdout and stderr are both interactive terminals outside CI, and plain
+ * lines elsewhere (CI logs, `> file`, `| tee`).
  */
 export function resolveOutputMode(input: {
   json?: boolean
   quiet?: boolean
   plain?: boolean
+  stdout: OutputStream
   stderr: OutputStream
   env: NodeJS.ProcessEnv
 }): OutputMode {
@@ -70,7 +72,10 @@ export function resolveOutputMode(input: {
   }
   const ci = input.env.CI
   const inCi = ci !== undefined && ci !== "" && ci !== "0" && ci !== "false"
-  return input.stderr.isTTY === true && !inCi && input.env.TERM !== "dumb"
+  return input.stdout.isTTY === true &&
+    input.stderr.isTTY === true &&
+    !inCi &&
+    input.env.TERM !== "dumb"
     ? "live"
     : "plain"
 }

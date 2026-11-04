@@ -676,6 +676,7 @@ export async function runCommand(
     json: options.json,
     quiet: options.quiet,
     plain: options.plain,
+    stdout: io.stdout,
     stderr: io.stderr,
     env: io.env,
   })

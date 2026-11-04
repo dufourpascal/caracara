@@ -108,28 +108,25 @@ afterEach(() => {
 })
 
 describe("output mode", () => {
-  it("uses the live panel only for an interactive stderr outside CI", () => {
+  it("uses the live panel only for interactive terminals outside CI", () => {
     const tty = stream(true)
-    expect(resolveOutputMode({ stderr: tty, env: {} })).toBe("live")
-    expect(resolveOutputMode({ stderr: tty, env: { CI: "true" } })).toBe(
-      "plain"
-    )
-    expect(resolveOutputMode({ stderr: tty, env: { CI: "false" } })).toBe(
-      "live"
-    )
-    expect(resolveOutputMode({ stderr: tty, env: { TERM: "dumb" } })).toBe(
-      "plain"
-    )
-    expect(resolveOutputMode({ stderr: stream(false), env: {} })).toBe("plain")
-    expect(resolveOutputMode({ plain: true, stderr: tty, env: {} })).toBe(
-      "plain"
-    )
-    expect(resolveOutputMode({ quiet: true, stderr: tty, env: {} })).toBe(
-      "quiet"
-    )
-    expect(resolveOutputMode({ json: true, stderr: tty, env: {} })).toBe("json")
+    const both = { stdout: tty, stderr: tty }
+    expect(resolveOutputMode({ ...both, env: {} })).toBe("live")
+    expect(resolveOutputMode({ ...both, env: { CI: "true" } })).toBe("plain")
+    expect(resolveOutputMode({ ...both, env: { CI: "false" } })).toBe("live")
+    expect(resolveOutputMode({ ...both, env: { TERM: "dumb" } })).toBe("plain")
+    // `caracara run > run.log` and `caracara run | tee run.log`
+    expect(
+      resolveOutputMode({ stdout: stream(false), stderr: tty, env: {} })
+    ).toBe("plain")
+    expect(
+      resolveOutputMode({ stdout: tty, stderr: stream(false), env: {} })
+    ).toBe("plain")
+    expect(resolveOutputMode({ plain: true, ...both, env: {} })).toBe("plain")
+    expect(resolveOutputMode({ quiet: true, ...both, env: {} })).toBe("quiet")
+    expect(resolveOutputMode({ json: true, ...both, env: {} })).toBe("json")
     expect(() =>
-      resolveOutputMode({ json: true, quiet: true, stderr: tty, env: {} })
+      resolveOutputMode({ json: true, quiet: true, ...both, env: {} })
     ).toThrow("--json, --quiet cannot be combined.")
   })
 

@@ -438,3 +438,68 @@ describe("runs that end before any scenario", () => {
     ])
   })
 })
+
+describe("exit paths", () => {
+  it("prints the summary and exits 1 when finalization fails", async () => {
+    mocks.finalizeRun.mockRejectedValueOnce(new Error("finalize down"))
+    const stdout = output()
+
+    await expect(
+      runCommand(
+        { phase: "1", json: true },
+        { stdout: stdout.stream, stderr: output().stream, env: {} }
+      )
+    ).rejects.toThrow("finalize down")
+
+    const last = JSON.parse(stdout.text().trimEnd().split("\n").at(-1)!) as {
+      type: string
+      exitCode: number
+    }
+    expect(last).toMatchObject({ type: "run.finished", exitCode: 1 })
+  })
+
+  it("exits 1 when the runner session cannot be closed", async () => {
+    mocks.close.mockRejectedValueOnce(new Error("browser stuck"))
+    await expect(run({ phase: "1" })).rejects.toThrow("browser stuck")
+    expect(finalizedStatus()).toBe("completed")
+  })
+
+  it("reports an interrupted run with the signal exit code", async () => {
+    const existing = new Set(process.listeners("SIGINT"))
+    mocks.executeScenario.mockImplementationOnce(
+      (input) =>
+        new Promise((_, reject) => {
+          const { signal } = input as { signal?: AbortSignal }
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        })
+    )
+    const stdout = output()
+    const running = runCommand(
+      { phase: "1", json: true },
+      { stdout: stdout.stream, stderr: output().stream, env: {} }
+    )
+    await vi.waitFor(() => expect(mocks.executeScenario).toHaveBeenCalled())
+    process.listeners("SIGINT").find((listener) => !existing.has(listener))?.(
+      "SIGINT"
+    )
+    await running
+
+    expect(process.exitCode).toBe(130)
+    const events = stdout
+      .text()
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(events.at(-2)).toMatchObject({
+      type: "scenario.finished",
+      status: "interrupted",
+    })
+    expect(events.at(-1)).toMatchObject({
+      type: "run.finished",
+      status: "interrupted",
+      exitCode: 130,
+    })
+  })
+})

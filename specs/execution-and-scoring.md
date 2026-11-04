@@ -110,7 +110,7 @@ The CLI can execute several phases as one run.
 
 The CLI reports progress while a run executes and summarizes it at the end.
 
-When stderr is an interactive terminal outside CI, the CLI keeps a status panel at the bottom of stderr with the current phase and scenario, elapsed time and ETA, cumulative check verdicts, tokens and the agent's current step; other output scrolls above it on stdout. Otherwise, or with `--plain`, it prints timestamped lines and a periodic heartbeat for a running scenario. `--quiet` prints only a compact summary and `--json` prints versioned JSON lines events, ending with `run.finished`. Agent steps are reduced to tool names or redacted, single-line command labels; arguments, outputs and reasoning text are never shown.
+When stdout and stderr are both interactive terminals outside CI, the CLI keeps a status panel at the bottom of stderr with the current phase and scenario, elapsed time and ETA, cumulative check verdicts, tokens and the agent's current step; other output scrolls above it on stdout. Otherwise (CI, redirected or piped output), or with `--plain`, it prints timestamped lines and a periodic heartbeat for a running scenario. `--quiet` prints only a compact summary and `--json` prints versioned JSON lines events, ending with `run.finished`. Agent steps are reduced to tool names or redacted, single-line command labels; arguments, outputs and reasoning text are never shown.
 
 The end-of-run summary lists totals, per-phase rows, only the scenarios with failed or blocked checks, each failed or blocked check with its evidence and blocked reason, execution errors with the scenarios they skipped and a rerun command, duration, runner, model, tokens and the run's web app URL.
 

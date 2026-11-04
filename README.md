@@ -154,6 +154,18 @@ Caracara runs the Codex CLI installed on your machine: the `codex` executable on
 
 When Codex marks a check as failed, it captures a WebP screenshot through Chrome DevTools. The CLI validates and uploads the screenshot before submitting the completed result. Run deletion also removes the stored screenshots.
 
+## Run results
+
+`caracara results` prints the latest run of the selected project as a compact table: status, environment, duration, token totals, one row per scenario, and every check that did not pass with its reason.
+
+```bash
+caracara results                     # latest run
+caracara results latest --environment preview
+caracara results brave-heron-20261104-120000 --json
+```
+
+The run reference is a run ID, the run name that `caracara run` prints, or `latest`. `--json` prints a versioned report (`formatVersion: 1`) with run identity, status, environment, start and end, duration, model and reasoning effort (`null` until runs record them), token totals, and per scenario its phase, status, duration, tokens, and each check's name, verdict, and reason. Token usage is recorded per scenario from the runner (Codex or Claude Code) and summed per run. Runs from older CLIs have no token usage. The web app shows the same duration and token totals in the run detail.
+
 ## CLI scenario authoring
 
 The logged-in CLI can update the selected project directly:

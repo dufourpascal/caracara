@@ -17,6 +17,7 @@ import {
   fetchExecutionPlan,
   finalizeRun,
   fetchProjects,
+  fetchRunResults,
   fetchSingleScenario,
   fetchWhoAmI,
   startScenarioExecution,
@@ -59,7 +60,17 @@ import {
   type RunReportScenario,
   type ScenarioOutcome,
 } from "./run-report.js"
-import type { InitCommandOptions, RunCommandOptions } from "./types.js"
+import {
+  assertResultsEnvironmentFilter,
+  buildRunResultsReport,
+  formatRunResultsTable,
+  toTokenUsageField,
+} from "./results.js"
+import type {
+  InitCommandOptions,
+  ResultsCommandOptions,
+  RunCommandOptions,
+} from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
 const CLI_VERSION = "0.7.0"
@@ -1370,6 +1381,7 @@ export async function runCommand(
                 ...(activeScenarioAttemptId
                   ? { executionAttemptId: activeScenarioAttemptId }
                   : {}),
+                ...toTokenUsageField(activeScenarioUsage),
               },
             },
             signal: runAbortController.signal,
@@ -1433,6 +1445,8 @@ export async function runCommand(
                 ...(activeScenarioAttemptId
                   ? { executionAttemptId: activeScenarioAttemptId }
                   : {}),
+                // No usage report yet means the runner never ran: nothing used.
+                ...toTokenUsageField(activeScenarioUsage ?? { complete: true }),
               },
             },
             signal: runAbortController.signal,
@@ -1484,6 +1498,8 @@ export async function runCommand(
                 ...(activeScenarioAttemptId
                   ? { executionAttemptId: activeScenarioAttemptId }
                   : {}),
+                // No usage report yet means the runner never ran: nothing used.
+                ...toTokenUsageField(activeScenarioUsage ?? { complete: true }),
               },
             },
             signal: AbortSignal.timeout(10_000),
@@ -1636,6 +1652,29 @@ export function buildRunUrl(
   } catch {
     return null
   }
+}
+
+export async function resultsCommand(
+  runRef: string,
+  options: ResultsCommandOptions
+) {
+  assertResultsEnvironmentFilter(runRef, options.environment)
+  const context = await getAuthoringContext(options)
+  const response = await fetchRunResults({
+    apiBaseUrl: context.apiBaseUrl,
+    accessToken: context.accessToken,
+    version: CLI_VERSION,
+    projectSlug: context.projectSlug,
+    runRef,
+    environment: options.environment,
+  })
+  const report = buildRunResultsReport(response)
+
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : formatRunResultsTable(report)
+  )
 }
 
 function openBrowser(url: string) {

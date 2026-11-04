@@ -34,3 +34,10 @@ export type RunCommandOptions = {
   heartbeat?: string
   failOn?: string
 }
+
+export type ResultsCommandOptions = {
+  apiBaseUrl?: string
+  project?: string
+  environment?: string
+  json?: boolean
+}

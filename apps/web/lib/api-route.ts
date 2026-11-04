@@ -499,6 +499,31 @@ export async function submitScenarioResult(args: {
   )
 }
 
+export async function getRunResults(args: {
+  token: string
+  projectSlug: string
+  runRef: string
+  environment?: string
+}) {
+  const response = await fetchQuery(
+    api.runs.getResults,
+    {
+      projectSlug: args.projectSlug,
+      runRef: args.runRef,
+      ...(args.environment !== undefined
+        ? { environment: args.environment }
+        : {}),
+    },
+    { token: args.token }
+  )
+
+  if (!response) {
+    throw new ApiRouteError(404, "not_found", "Run not found.")
+  }
+
+  return response
+}
+
 export async function startScenarioExecution(args: {
   token: string
   projectSlug: string

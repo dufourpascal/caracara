@@ -34,7 +34,7 @@ When the CLI submits a scenario result, the backend stores the scenario data tha
 
 Runs and per-scenario results are stored separately.
 
-A run stores overall execution state, passed and total check counts, and the selected environment name plus target URL when supplied by the CLI. The project keeps the distinct run environment names as a compact summary for history filters. Each scenario result stores its status, check snapshot, evidenced verdicts, optional failure detail, and timing. The run also persists its generated human-readable name.
+A run stores overall execution state, passed and total check counts, and the selected environment name plus target URL when supplied by the CLI. The project keeps the distinct run environment names as a compact summary for history filters. Each scenario result stores its status, check snapshot, evidenced verdicts, optional failure detail, timing, and optional runner token usage. Run token totals are summed from the scenario results when read rather than stored on the run. The run also persists its generated human-readable name.
 
 ### DATA_07
 

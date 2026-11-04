@@ -287,6 +287,7 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     runnerType: result.runnerType,
     executionSummary: result.executionSummary,
     failureDetail: result.failureDetail,
+    tokenUsage: result.tokenUsage ?? null,
     startedAt: result.startedAt,
     finishedAt: result.finishedAt,
     submittedAt: toTimestamp(result._creationTime),
@@ -1068,6 +1069,38 @@ export function createRunName() {
   return formatRunName(new Date())
 }
 
+const TOKEN_USAGE_COUNT_FIELDS = [
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+] as const
+
+export function validateTokenUsage(
+  status: string,
+  tokenUsage: TokenUsageRecord | undefined
+) {
+  if (tokenUsage === undefined) {
+    return
+  }
+  if (status === "dependency_failed") {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Dependency-failed scenarios cannot report token usage.",
+    })
+  }
+  for (const field of TOKEN_USAGE_COUNT_FIELDS) {
+    const value = tokenUsage[field]
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: `Token usage ${field} must be a non-negative integer.`,
+      })
+    }
+  }
+}
+
 export function validateCompletedCheckResults(
   evaluationChecks: Array<{ id: string }>,
   checkResults: Array<{
@@ -1116,6 +1149,26 @@ export function validateRunnerMatch(
   }
 }
 
+type TokenUsageRecord = Record<
+  (typeof TOKEN_USAGE_COUNT_FIELDS)[number],
+  number
+> & { complete: boolean }
+
+function matchesTokenUsage(
+  existing: TokenUsageRecord | undefined,
+  submitted: TokenUsageRecord | undefined
+) {
+  if (!existing || !submitted) {
+    return existing === submitted
+  }
+  return (
+    existing.complete === submitted.complete &&
+    TOKEN_USAGE_COUNT_FIELDS.every(
+      (field) => existing[field] === submitted[field]
+    )
+  )
+}
+
 export function matchesTerminalScenarioResult(
   existing: {
     status: string
@@ -1128,6 +1181,7 @@ export function matchesTerminalScenarioResult(
     executionSummary: string | null
     failureDetail: string | null
     finishedAt: number | null
+    tokenUsage?: TokenUsageRecord
   },
   submitted: {
     status: string
@@ -1140,6 +1194,7 @@ export function matchesTerminalScenarioResult(
     executionSummary: string | null
     failureDetail: string | null
     finishedAt: number
+    tokenUsage?: TokenUsageRecord
   }
 ) {
   return (
@@ -1147,6 +1202,13 @@ export function matchesTerminalScenarioResult(
     existing.executionSummary === submitted.executionSummary &&
     existing.failureDetail === submitted.failureDetail &&
     existing.finishedAt === submitted.finishedAt &&
+    matchesTokenUsage(
+      existing.tokenUsage,
+      // An interruption correction without usage keeps the stored usage, so
+      // its retry must still match.
+      submitted.tokenUsage ??
+        (submitted.status === "interrupted" ? existing.tokenUsage : undefined)
+    ) &&
     existing.checkResults.length === submitted.checkResults.length &&
     existing.checkResults.every((check, index) => {
       const candidate = submitted.checkResults[index]

@@ -122,6 +122,159 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("scenario token usage", () => {
+  const runnerUsage = {
+    inputTokens: 1_000,
+    cachedInputTokens: 600,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 50,
+    estimatedCostUsd: 0.01,
+  }
+  const storedUsage = {
+    inputTokens: 1_000,
+    cachedInputTokens: 600,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 50,
+    complete: true,
+  }
+  const zeroUsage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    complete: true,
+  }
+
+  function submittedResults() {
+    return (
+      mocks.submitScenarioResult.mock.calls as unknown as Array<
+        [{ payload: { result: { status: string; tokenUsage?: unknown } } }]
+      >
+    ).map(([args]) => args.payload.result)
+  }
+
+  it("submits the runner's usage with a completed scenario", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: true },
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed", tokenUsage: storedUsage }),
+    ])
+  })
+
+  it("keeps the usage when the completed submission fails", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: false },
+    })
+    mocks.submitScenarioResult.mockRejectedValueOnce(new Error("Bad gateway"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed" }),
+      expect.objectContaining({
+        status: "runner_failed",
+        tokenUsage: { ...storedUsage, complete: false },
+      }),
+    ])
+  })
+
+  it("submits usage carried by a runner error", async () => {
+    const { RunnerExecutionError } = await import("./execution.js")
+    mocks.executeScenario.mockRejectedValueOnce(
+      new RunnerExecutionError("Invalid output", {
+        usage: runnerUsage,
+        complete: true,
+      })
+    )
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({
+        status: "runner_failed",
+        tokenUsage: storedUsage,
+      }),
+    ])
+  })
+
+  it("records zero usage when the runner never started", async () => {
+    mocks.startRun.mockRejectedValueOnce(new Error("Codex not found"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({
+        status: "runner_failed",
+        tokenUsage: zeroUsage,
+      }),
+    ])
+  })
+
+  it("omits usage when the runner failed without reporting any", async () => {
+    mocks.executeScenario.mockRejectedValueOnce(new Error("Runner crashed"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    const [result] = submittedResults()
+    expect(result?.status).toBe("runner_failed")
+    expect(result).not.toHaveProperty("tokenUsage")
+  })
+
+  it("keeps the usage when the completed submission is interrupted", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: true },
+    })
+    mocks.submitScenarioResult.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() =>
+      expect(mocks.submitScenarioResult).toHaveBeenCalledOnce()
+    )
+    process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+      ?.("SIGINT")
+    await run
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed", tokenUsage: storedUsage }),
+      expect.objectContaining({
+        status: "interrupted",
+        tokenUsage: storedUsage,
+      }),
+    ])
+  })
+})
+
 describe("run interruption", () => {
   it.each([
     ["SIGINT", 130],

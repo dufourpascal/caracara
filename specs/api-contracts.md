@@ -85,3 +85,9 @@ The environment name and target URL must be supplied together. The backend valid
 The execution API supports suite filtering without suite authoring operations.
 
 `GET /api/v3/projects/:projectSlug/scenarios?suite=:suiteSlug` returns the normal execution-plan shape filtered to the suite's phases and includes the resolved suite name and slug. Run creation accepts suite mode with a mutually exclusive requested suite slug. In one Convex mutation, the server resolves the suite, rejects a non-runnable suite, stores its name, slug, and selected phase snapshots, and creates the running run. The CLI creates that suite run before fetching the execution plan and refuses to execute (finalizing the run as interrupted) when the fetched plan's suite phases differ from the run's phase snapshot, because authoring stays open in between. There are no suite authoring REST operations.
+
+### API_14
+
+The CLI can read a run's results back.
+
+`GET /api/v3/projects/:projectSlug/runs/:runRef` returns the run and its ordered scenario results, including check snapshots, verdicts, timing, and token usage, but not the owner ID or execution instructions. `runRef` is a run ID, an exact run name, or `latest`, the most recently started run of the project. With `latest`, an optional `?environment=` filter selects the latest run in that environment. A run outside the owned project, or no match, returns `not_found`. A name shared by several runs returns `conflict`. Result submission accepts an optional `tokenUsage` object, which older CLIs omit.

@@ -170,6 +170,22 @@ export const checkResultSchema = z
     }
   })
 
+const tokenCountSchema = z.number().int().nonnegative()
+
+/**
+ * Agent runtime token usage for one scenario execution. `inputTokens`
+ * includes cached and cache-write input tokens. `complete` is false when at
+ * least one runner turn did not report usage, so the counts are a lower bound.
+ */
+export const tokenUsageSchema = z.object({
+  inputTokens: tokenCountSchema,
+  cachedInputTokens: tokenCountSchema,
+  cacheWriteInputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  reasoningOutputTokens: tokenCountSchema,
+  complete: z.boolean(),
+})
+
 export const projectSchema = z.object({
   id: z.string(),
   ownerUserId: z.string().min(1),
@@ -318,6 +334,7 @@ export const scenarioResultSchema = z.object({
   runnerType: runnerTypeSchema,
   executionSummary: nullableStringSchema,
   failureDetail: nullableStringSchema,
+  tokenUsage: tokenUsageSchema.nullable().optional(),
   startedAt: timestampSchema,
   finishedAt: timestampSchema.nullable(),
   submittedAt: timestampSchema,
@@ -330,6 +347,7 @@ export type EvaluationCheck = z.infer<typeof evaluationCheckSchema>
 export type BlockedReason = z.infer<typeof blockedReasonSchema>
 export type CheckVerdict = z.infer<typeof checkVerdictSchema>
 export type CheckResult = z.infer<typeof checkResultSchema>
+export type TokenUsage = z.infer<typeof tokenUsageSchema>
 export type RunnerType = z.infer<typeof runnerTypeSchema>
 export type RunMode = z.infer<typeof runModeSchema>
 export type EvidencePolicy = z.infer<typeof evidencePolicySchema>

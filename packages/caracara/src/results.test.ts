@@ -216,7 +216,9 @@ describe("run results report", () => {
     expect(formatRunResultsTable(report)).toContain("Checks    in progress")
   })
 
-  it("reads a recorded model and reasoning effort once the API sends them", () => {
+  // The API strips unknown run fields, so these only arrive once runSchema
+  // records a model and reasoning effort (branch feat/model-per-run).
+  it("reports a model and reasoning effort when the run carries them", () => {
     expect(readRunString(response.run, "model")).toBeNull()
     expect(readRunString(response.run, "reasoningEffort")).toBeNull()
     const report = buildRunResultsReport({

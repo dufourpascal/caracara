@@ -13,6 +13,7 @@ import {
   matchesTerminalRun,
   parseRunEnvironment,
   removeRunEnvironmentName,
+  validateRunResultsFilter,
 } from "./runs"
 
 describe("run environments", () => {
@@ -323,5 +324,31 @@ describe("run deletion helpers", () => {
       "result-2",
       "run-1",
     ])
+  })
+})
+
+describe("run results filter", () => {
+  const validationError = expect.objectContaining({
+    data: expect.objectContaining({ code: "validation_error" }),
+  })
+
+  it("allows any reference without an environment filter", () => {
+    expect(() => validateRunResultsFilter("latest", undefined)).not.toThrow()
+    expect(() =>
+      validateRunResultsFilter("brave-heron-20261104-120000", undefined)
+    ).not.toThrow()
+  })
+
+  it("filters only the latest run by a valid environment", () => {
+    expect(() => validateRunResultsFilter("latest", "preview")).not.toThrow()
+    expect(() =>
+      validateRunResultsFilter("brave-heron-20261104-120000", "preview")
+    ).toThrow(validationError)
+    expect(() => validateRunResultsFilter("latest", "")).toThrow(
+      validationError
+    )
+    expect(() => validateRunResultsFilter("latest", "Bad_Env")).toThrow(
+      validationError
+    )
   })
 })

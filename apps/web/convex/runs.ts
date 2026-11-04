@@ -261,6 +261,21 @@ export const getDetail = query({
   },
 })
 
+export function validateRunResultsFilter(
+  runRef: string,
+  environment: string | undefined
+) {
+  if (environment === undefined) {
+    return
+  }
+  if (runRef !== LATEST_RUN_REFERENCE) {
+    invalidEnvironment("An environment filter only applies to the latest run.")
+  }
+  if (!environmentNameSchema.safeParse(environment).success) {
+    invalidEnvironment("Environment filter is invalid.")
+  }
+}
+
 async function resolveRunReference(
   ctx: QueryCtx,
   projectId: Id<"projects">,
@@ -316,16 +331,7 @@ export const getResults = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    if (args.environment !== undefined) {
-      if (args.runRef !== LATEST_RUN_REFERENCE) {
-        invalidEnvironment(
-          "An environment filter only applies to the latest run."
-        )
-      }
-      if (!environmentNameSchema.safeParse(args.environment).success) {
-        invalidEnvironment("Environment filter is invalid.")
-      }
-    }
+    validateRunResultsFilter(args.runRef, args.environment)
 
     const run = await resolveRunReference(
       ctx,

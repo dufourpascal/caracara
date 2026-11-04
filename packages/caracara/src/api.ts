@@ -167,9 +167,10 @@ export async function fetchRunResults(args: {
   runRef: string
   environment?: string
 }) {
-  const search = args.environment
-    ? `?${new URLSearchParams({ environment: args.environment })}`
-    : ""
+  const search =
+    args.environment !== undefined
+      ? `?${new URLSearchParams({ environment: args.environment })}`
+      : ""
 
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${encodeURIComponent(args.projectSlug)}/runs/${encodeURIComponent(args.runRef)}${search}`,

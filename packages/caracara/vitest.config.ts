@@ -12,6 +12,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Runs never pick the live status panel in tests, even from a terminal.
+    env: { CI: "1" },
     // Vitest 4 stopped excluding dist/ by default; tsc emits compiled tests there.
     exclude: [...configDefaults.exclude, "**/dist/**"],
   },

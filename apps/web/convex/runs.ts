@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import {
   environmentNameSchema,
+  requestedPhaseOrdersSchema,
   runEnvironmentSchema,
   runModelSchema,
   runReasoningEffortSchema,
@@ -134,6 +135,35 @@ export function matchesRunModel(
     run.model === runModel.model &&
     run.reasoningEffort === runModel.reasoningEffort
   )
+}
+
+export function parseRequestedPhaseOrders(input: {
+  mode: string
+  requestedPhaseOrders?: number[] | null
+}) {
+  const isPhasesRun = input.mode === "phases"
+  if (isPhasesRun !== (input.requestedPhaseOrders != null)) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Run mode and requested target do not match.",
+    })
+  }
+  if (input.requestedPhaseOrders == null) {
+    return null
+  }
+
+  const parsed = requestedPhaseOrdersSchema.safeParse(
+    input.requestedPhaseOrders
+  )
+  if (!parsed.success) {
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        parsed.error.issues[0]?.message ??
+        "Requested phase orders are invalid.",
+    })
+  }
+  return parsed.data
 }
 
 export function addRunEnvironmentName(names: string[], environment: string) {
@@ -349,7 +379,8 @@ export const create = mutation({
       v.literal("single"),
       v.literal("phase"),
       v.literal("through_phase"),
-      v.literal("suite")
+      v.literal("suite"),
+      v.literal("phases")
     ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
     evidencePolicy: v.optional(
@@ -361,6 +392,7 @@ export const create = mutation({
     reasoningEffort: v.optional(v.string()),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedPhaseOrders: v.optional(v.union(v.null(), v.array(v.number()))),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     startedAt: v.number(),
     creationAttemptId: v.optional(v.string()),
@@ -411,6 +443,7 @@ export const create = mutation({
         return toRun(existing)
       }
     }
+    const requestedPhaseOrders = parseRequestedPhaseOrders(args)
     const isSuiteRun = args.mode === "suite"
     if (isSuiteRun !== (args.requestedSuiteSlug != null)) {
       throw new ConvexError({
@@ -453,6 +486,7 @@ export const create = mutation({
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
+      requestedPhaseOrders,
       requestedSuiteSlug: suite?.slug ?? null,
       requestedSuiteName: suite?.name ?? null,
       ...(suite

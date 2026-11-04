@@ -68,6 +68,8 @@ The system distinguishes completed scenarios, runner failures, dependency failur
 
 The CLI handles `SIGINT` and `SIGTERM` as interrupted executions. It cancels the active local runner, reports any active scenario and enclosing run as interrupted, and only then exits with the conventional signal exit code.
 
+After a runner failure the CLI marks later scenarios as dependency failures. When the run's scenarios span more than one phase, the CLI keeps going by default: it skips only the rest of the failing phase and continues with the next phase. It stops the whole run when the runner session is unusable (the runner could not start or its browser exited) or when two phases in a row fail on their first scenario. `--no-keep-going` restores stopping after the first runner failure; `--keep-going` enables phase-level continuation for single-phase runs. Any runner failure still finalizes the run as failed.
+
 ### EXEC_10
 
 Runs are reported back to the hosted service as durable records.
@@ -84,7 +86,7 @@ For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheck
 
 The CLI reports local runner usage after each run.
 
-The report includes aggregate token usage and an estimated API-equivalent cost when the runner exposes enough information. Caracara does not submit or persist this usage report.
+The end-of-run summary includes aggregate and per-phase token usage and an estimated API-equivalent cost when the runner exposes enough information. Caracara does not submit or persist this usage report.
 
 ### EXEC_13
 
@@ -98,4 +100,20 @@ The same config may set the default Codex `model` and `model_reasoning_effort`. 
 
 The CLI can execute one named suite.
 
-`caracara run --suite <slug>` executes only active scenarios in the suite's phases. The backend validates and snapshots the suite while creating the run, before the CLI fetches the execution plan. If the suite's phases change in between, the CLI finalizes the run as interrupted and asks the user to run it again. The backend filters the existing ordered phase plan, so selected phases retain project order. `--suite` is mutually exclusive with `--scenario`, `--phase`, and `--through-phase`; an empty or otherwise non-runnable suite returns a specific error before a run is inserted.
+`caracara run --suite <slug>` executes only active scenarios in the suite's phases. The backend validates and snapshots the suite while creating the run, before the CLI fetches the execution plan. If the suite's phases change in between, the CLI finalizes the run as interrupted and asks the user to run it again. The backend filters the existing ordered phase plan, so selected phases retain project order. `--suite` is mutually exclusive with `--scenario`, `--phase`, `--phases`, and `--through-phase`; an empty or otherwise non-runnable suite returns a specific error before a run is inserted.
+
+### EXEC_15
+
+The CLI can execute several phases as one run.
+
+`caracara run --phases <list>` accepts phase numbers and ascending ranges such as `1-7,9,10`. A list with one phase uses the `phase` run mode; otherwise the run uses the `phases` mode and stores the sorted, unique `requestedPhaseOrders` (2 to 100 entries), which the backend validates. Every requested phase must exist. `--phases` is mutually exclusive with `--scenario`, `--suite`, `--phase`, and `--through-phase`.
+
+### EXEC_16
+
+The CLI reports progress while a run executes and summarizes it at the end.
+
+When stdout and stderr are both interactive terminals outside CI, the CLI keeps a status panel at the bottom of stderr with the current phase and scenario, elapsed time and ETA, cumulative check verdicts, tokens and the agent's current step; other output scrolls above it on stdout. Otherwise (CI, redirected or piped output), or with `--plain`, it prints timestamped lines and a periodic heartbeat for a running scenario. `--quiet` prints only a compact summary and `--json` prints versioned JSON lines events, ending with `run.finished`. Agent steps are reduced to tool names or redacted, single-line command labels; arguments, outputs and reasoning text are never shown.
+
+The end-of-run summary lists totals, per-phase rows, only the scenarios with failed or blocked checks, each failed or blocked check with its evidence and blocked reason, execution errors with the scenarios they skipped and a rerun command, duration, runner, model, tokens and the run's web app URL.
+
+The CLI exits with 0 when every scenario ran, 1 when a CLI, configuration or API error stops the run, 2 when a scenario was recorded as a runner failure (including a completed result the API rejected, as before) or was skipped, 3 when `--fail-on` matches a failed or blocked check, and the conventional signal codes (130, 143) when interrupted. Failed checks alone never change the exit code. Earlier CLIs exited 0 after runner failures.

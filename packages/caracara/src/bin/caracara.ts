@@ -158,6 +158,37 @@ program
   .option("--suite <slug>")
   .option("--phase <number>")
   .option("--through-phase <number>")
+  .option(
+    "--phases <list>",
+    "run several phases as one run, for example 1-7,9,10"
+  )
+  .option(
+    "--keep-going",
+    "after an execution error, skip the rest of that phase and continue (default when the run covers several phases)"
+  )
+  .option("--no-keep-going", "stop the run after the first execution error")
+  .option("--plain", "print timestamped lines instead of the live status panel")
+  .option("-q, --quiet", "print only the final summary")
+  .option("--json", "print JSON lines events instead of text")
+  .option(
+    "--heartbeat <duration>",
+    "in plain output, report a running scenario every 30s, 5m, 1h (0 turns it off)",
+    "5m"
+  )
+  .option(
+    "--fail-on <verdicts>",
+    "exit with code 3 when checks have these verdicts: failed, blocked or failed,blocked"
+  )
+  .addHelpText(
+    "after",
+    `
+Exit codes:
+  0    every scenario ran (failed checks are findings, not errors)
+  1    the run stopped on a CLI, configuration or API error
+  2    a scenario was recorded as a runner failure or was skipped
+  3    --fail-on matched a check verdict
+  130  interrupted (SIGINT), 143 terminated (SIGTERM)`
+  )
   .action(async (options) => {
     await runCommand(options)
   })

@@ -859,7 +859,9 @@ describe("run model", () => {
         modelReasoningEffort: "high",
       })
     )
-    expect(stdout).toHaveBeenCalledWith("Model gpt-6.1-sol, reasoning high\n")
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining("codex · gpt-6.1-sol · high")
+    )
     expect(stderr).not.toHaveBeenCalledWith(
       expect.stringContaining("did not record")
     )

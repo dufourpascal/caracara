@@ -748,7 +748,7 @@ async function validatePreflightOperation(
     latestFinished?._id !== operation._id ||
     active.some((candidate) => candidate.kind !== "verify")
   ) {
-    conflict(`${label}: the fixture was maintained after it was verified; rerun.`)
+    conflict(`${label}: a newer fixture operation replaced this verify; rerun.`)
   }
   if (
     await hasMutatingRunSince(ctx, {

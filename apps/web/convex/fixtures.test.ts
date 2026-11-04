@@ -916,7 +916,7 @@ describe("run creation with fixtures", () => {
     const beforeReset = await verify(fixture.id)
     vi.advanceTimersByTime(1)
     const reset = await startOperation(fixture.id, { kind: "reset", attemptId: uuid(10) })
-    await expectError(createRun(entry(beforeReset.id)), "conflict", /maintained after/)
+    await expectError(createRun(entry(beforeReset.id)), "conflict", /newer fixture operation replaced/)
     expect(reset.status).toBe("running")
   })
 
@@ -930,7 +930,7 @@ describe("run creation with fixtures", () => {
     const superseded = await verify(fixture.id)
     vi.advanceTimersByTime(1)
     await verify(fixture.id, "failed")
-    await expectError(createRun(entry(superseded.id)), "conflict", /maintained after/)
+    await expectError(createRun(entry(superseded.id)), "conflict", /newer fixture operation replaced/)
 
     vi.advanceTimersByTime(1)
     const beforeConverge = await verify(fixture.id)
@@ -944,13 +944,13 @@ describe("run creation with fixtures", () => {
       checkResults: [],
       summary: null,
     })
-    await expectError(createRun(entry(beforeConverge.id)), "conflict", /maintained after/)
+    await expectError(createRun(entry(beforeConverge.id)), "conflict", /newer fixture operation replaced/)
 
     vi.advanceTimersByTime(1)
     const interruptedAfter = await verify(fixture.id)
     vi.advanceTimersByTime(1)
     await startOperation(fixture.id, { attemptId: uuid(21), interruptedAt: Date.now() })
-    await expectError(createRun(entry(interruptedAfter.id)), "conflict", /maintained after/)
+    await expectError(createRun(entry(interruptedAfter.id)), "conflict", /newer fixture operation replaced/)
   })
 
   it("rejects a verify followed by a run that mutates the fixture", async () => {

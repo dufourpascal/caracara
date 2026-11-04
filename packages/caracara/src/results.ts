@@ -1,5 +1,6 @@
 import {
   getTokenTotals,
+  LATEST_RUN_REFERENCE,
   sumRunTokenUsage,
   type CheckVerdict,
   type RunResultsResponse,
@@ -10,6 +11,17 @@ import {
 import type { RunnerUsageReport } from "./execution.js"
 
 export const RUN_RESULTS_FORMAT_VERSION = 1
+
+export function assertResultsEnvironmentFilter(
+  runRef: string,
+  environment: string | undefined
+) {
+  if (environment !== undefined && runRef !== LATEST_RUN_REFERENCE) {
+    throw new Error(
+      `--environment only applies to \`caracara results ${LATEST_RUN_REFERENCE}\`.`
+    )
+  }
+}
 
 function toTokenCount(value: number) {
   return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0

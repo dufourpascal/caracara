@@ -5,7 +5,6 @@ import {
   CONVEX_TOKEN_TEMPLATE,
   API_NAMESPACE,
   formatRunName,
-  LATEST_RUN_REFERENCE,
   type AuthoringRequest,
   type OrderedScenario,
   type RunnablePhase,
@@ -47,6 +46,7 @@ import {
   type RunnerUsageReport,
 } from "./execution.js"
 import {
+  assertResultsEnvironmentFilter,
   buildRunResultsReport,
   formatRunResultsTable,
   toTokenUsageField,
@@ -1239,11 +1239,7 @@ export async function resultsCommand(
   runRef: string,
   options: ResultsCommandOptions
 ) {
-  if (options.environment !== undefined && runRef !== LATEST_RUN_REFERENCE) {
-    throw new Error(
-      `--environment only applies to \`caracara results ${LATEST_RUN_REFERENCE}\`.`
-    )
-  }
+  assertResultsEnvironmentFilter(runRef, options.environment)
   const context = await getAuthoringContext(options)
   const response = await fetchRunResults({
     apiBaseUrl: context.apiBaseUrl,

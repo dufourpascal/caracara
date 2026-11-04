@@ -52,9 +52,9 @@ Users need a clear way to see whether a scenario is still being authored or inte
 
 The frontend should present run history and per-scenario results using reusable data-display patterns.
 
-Users can inspect pass rates and every scenario's ordered check verdicts and browser evidence. Execution failures remain visually separate from failed product checks. Run history uses the generated run name as its primary label.
+Users can inspect pass rates and every scenario's ordered check verdicts and browser evidence. Execution failures remain visually separate from failed product checks. Run history uses the generated run name as its primary label. The run detail shows the run duration and the run's total token usage, and each scenario result shows its token usage next to its duration. Totals marked with "+" are incomplete lower bounds, and runs without recorded usage show "n/a".
 
-The run log labels tracked runs with their environment and filters by that environment before pagination. The selected filter is stored in the URL and remains active while opening run and scenario details. The run detail shows the snapshotted target URL, the run duration, and the run's total token usage. Each scenario result shows its token usage next to its duration. Totals marked with "+" are incomplete lower bounds, and runs without recorded usage show "n/a". Legacy runs remain visible as untracked.
+The run log labels tracked runs with their environment and filters by that environment before pagination. The selected filter is stored in the URL and remains active while opening run and scenario details. The run detail shows the snapshotted target URL. Legacy runs remain visible as untracked.
 
 When a failed check has screenshot evidence, the result view shows a small uncropped thumbnail below its text evidence. The thumbnail opens the authenticated full-size image in an accessible shared dialog. Historical text-only results do not show an empty screenshot frame.
 

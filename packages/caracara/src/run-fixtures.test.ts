@@ -616,6 +616,38 @@ describe("post-run fixture maintenance", () => {
     expect(stderr.join("")).toContain("Post-run fixture maintenance in development")
   })
 
+  it("maintains the fixtures as they are after the run, not as fetched at its start", async () => {
+    mocks.state.access = "mutates"
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+    const finalizeCalls = () => mocks.finalizeRun.mock.invocationCallOrder[0]!
+    // Deleted during the run: the post-run fetch no longer returns it.
+    const original = mocks.fetchFixtures.getMockImplementation()!
+    mocks.fetchFixtures.mockImplementation(async (args: unknown) =>
+      mocks.finalizeRun.mock.calls.length > 0
+        ? { fixtures: [] }
+        : await original(args)
+    )
+
+    try {
+      await runCommand({})
+    } finally {
+      mocks.fetchFixtures.mockImplementation(original)
+    }
+
+    expect(
+      mocks.fetchFixtures.mock.invocationCallOrder.some(
+        (order) => order > finalizeCalls()
+      )
+    ).toBe(true)
+    expect(kinds().map((payload) => payload.kind)).toEqual(["verify"])
+    expect(stderr.mock.calls.map(([text]) => String(text)).join("")).toContain(
+      "Skipping post-run maintenance for het-vs-homo: it was deleted during the run."
+    )
+  })
+
   it("also resets after a failed run", async () => {
     mocks.state.access = "mutates"
     mocks.executeScenario.mockRejectedValueOnce(new Error("Runner failed"))

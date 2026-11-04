@@ -347,8 +347,8 @@ Exit codes:
   0    every scenario ran (failed checks are findings, not errors)
   1    the run stopped on a CLI, configuration or API error
   2    a scenario was recorded as a runner failure or was skipped
-  3    --fail-on matched a check verdict, or fixture preflight found an
-       unhealthy fixture (no run was created)
+  3    --fail-on matched a check verdict
+  4    fixture preflight found an unhealthy fixture (no run was created)
   130  interrupted (SIGINT), 143 terminated (SIGTERM)`
   )
   .action(async (options) => {

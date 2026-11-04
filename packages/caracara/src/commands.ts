@@ -1864,6 +1864,16 @@ export async function runCommand(
       runId,
       executedScenarios,
       fixtures: executionSource.fixtures,
+      // Fixtures stay editable during a run; maintain their current versions.
+      loadCurrentFixtures: async () =>
+        (
+          await fetchFixtures({
+            apiBaseUrl: config.apiBaseUrl,
+            accessToken,
+            version: CLI_VERSION,
+            projectSlug,
+          })
+        ).fixtures,
       createRuntime: async (recordUsage) => {
         await loadFixtureHooks()
         return createFixtureRuntime(
@@ -1947,6 +1957,7 @@ async function runPostRunFixtureMaintenance(args: {
   runId: string
   executedScenarios: OrderedScenario[]
   fixtures: Fixture[]
+  loadCurrentFixtures: () => Promise<Fixture[]>
   createRuntime: (
     recordUsage: (usage: RunnerUsageReport) => void
   ) => Promise<FixtureRuntime>
@@ -1958,10 +1969,27 @@ async function runPostRunFixtureMaintenance(args: {
 }) {
   let usage: RunnerUsageReport = { complete: true }
   try {
-    const resetFixtures = selectPostRunResetFixtures(
+    const selected = selectPostRunResetFixtures(
       args.executedScenarios,
       args.fixtures
     )
+    if (selected.length === 0) {
+      return
+    }
+    const current = new Map(
+      (await args.loadCurrentFixtures()).map((fixture) => [fixture.id, fixture])
+    )
+    const resetFixtures: Fixture[] = []
+    for (const fixture of selected) {
+      const latest = current.get(fixture.id)
+      if (latest) {
+        resetFixtures.push(latest)
+      } else {
+        process.stderr.write(
+          `Skipping post-run maintenance for ${fixture.slug}: it was deleted during the run.\n`
+        )
+      }
+    }
     if (resetFixtures.length === 0) {
       return
     }

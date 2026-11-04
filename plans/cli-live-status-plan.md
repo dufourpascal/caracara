@@ -16,6 +16,8 @@ Agreed design (discussion of 2026-11-04): live status panel in a TTY, timestampe
 
 ### 2. Error handling across phases (`--keep-going`)
 
+> Superseded by PR #41 (EXEC_09). Keep-going is now on for every run and skips only the scenarios that depend on the failed one, not the rest of the phase. The two-phases counter resets on any completed scenario, and a run also stops after three runner failures in a row with nothing completing. The design below is kept as it was agreed for #43.
+
 - Today a runner failure marks every later scenario `dependency_failed`.
 - New: `--keep-going` / `--no-keep-going`. Default on when the queue covers more than one phase, off otherwise.
 - With keep-going, after a runner failure in phase P the rest of phase P is skipped (`dependency_failed`, detail "Skipped after an execution error earlier in this phase."). Later phases run. (Dependencies across phases are already rejected by the backend, so no dependency-graph logic is needed.)

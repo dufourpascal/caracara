@@ -443,9 +443,7 @@ export function buildRunnerPrompt(input: {
     "",
     "Use the Chrome DevTools browser tools to perform the task once and inspect the actual frontend.",
     ...(input.downloadsDirectory
-      ? [
-          `Files the application downloads are saved to ${input.downloadsDirectory}. To check a download, list or read that directory with a shell command; chrome:// pages cannot be opened.`,
-        ]
+      ? [buildDownloadsInstruction(input.downloadsDirectory)]
       : []),
     "Before interacting, review every evaluation check and plan the browser states and actions needed to observe each one. Preserve or revisit relevant states so later checks are not skipped.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
@@ -477,6 +475,7 @@ export function buildBlockedRetryPrompt(input: {
   blockedResults: CheckResult[]
   secretNames?: string[]
   evidenceDirectory?: string
+  downloadsDirectory?: string
 }) {
   const secretNames = [...(input.secretNames ?? [])].sort()
   const blockedById = new Map(
@@ -508,6 +507,9 @@ export function buildBlockedRetryPrompt(input: {
       : []),
     "",
     "Use the current browser state. Make one reasonable, safe recovery attempt appropriate to the structured reason, such as navigating back, reloading, reopening the relevant control, or retrying the inspection.",
+    ...(input.downloadsDirectory
+      ? [buildDownloadsInstruction(input.downloadsDirectory)]
+      : []),
     "Do not repeat destructive state-changing actions and do not rerun checks that already passed or failed.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry for each listed check ID.",
     'Use only "passed", "failed", or "blocked". Set blockedReason to null for passed and failed; for blocked, set it to "blocked_by_check", "setup_incomplete", "environment_failure", or "tool_limit".',
@@ -630,19 +632,19 @@ export function redactRunnerExecution(
   }
 }
 
-function redactEvidenceDirectory(
+/** Replaces a local directory path in summaries and evidence before results leave the machine. */
+export function redactLocalDirectory(
   execution: RunnerExecution,
-  evidenceDirectory: string
+  directory: string,
+  placeholder: string
 ) {
   return {
     executionSummary: execution.executionSummary
-      .split(evidenceDirectory)
-      .join("[LOCAL_EVIDENCE_DIR]"),
+      .split(directory)
+      .join(placeholder),
     checkResults: execution.checkResults.map((result) => ({
       ...result,
-      evidence: result.evidence
-        .split(evidenceDirectory)
-        .join("[LOCAL_EVIDENCE_DIR]"),
+      evidence: result.evidence.split(directory).join(placeholder),
     })),
   }
 }
@@ -905,6 +907,17 @@ async function terminateBrowserProcess(browser: ChildProcess) {
   await terminateChildProcess(browser, process.platform !== "win32")
 }
 
+/** Tells the agent where the shared browser saves downloads. */
+export function buildDownloadsInstruction(downloadsDirectory: string) {
+  return `Files the application downloads are saved to ${downloadsDirectory}. It is emptied before each scenario. To check a download, list or read that directory with a shell command; chrome:// pages cannot be opened.`
+}
+
+/** Empties the run's downloads directory so one scenario's files never satisfy the next scenario's checks. */
+export async function resetDownloadsDirectory(downloadsDirectory: string) {
+  await rm(downloadsDirectory, { recursive: true, force: true })
+  await mkdir(downloadsDirectory, { recursive: true })
+}
+
 /**
  * Points the fresh profile's downloads at a run-scoped directory, so agents can
  * verify downloaded files (chrome://downloads is not reachable over DevTools)
@@ -1039,6 +1052,7 @@ class CodexRunner implements RunnerAdapter {
 
     return {
       async executeScenario(scenarioInput: RunnerScenarioInput) {
+        await resetDownloadsDirectory(sharedBrowser.downloadsDirectory)
         return await withTempFiles(async (dir) => {
           const evidenceDirectory = join(dir, "evidence")
           await mkdir(evidenceDirectory)
@@ -1095,6 +1109,7 @@ class CodexRunner implements RunnerAdapter {
                   blockedResults,
                   secretNames,
                   evidenceDirectory,
+                  downloadsDirectory: sharedBrowser.downloadsDirectory,
                 }),
                 {
                   outputSchema: buildBlockedRetryResultSchema(blockedCheckIds),
@@ -1156,7 +1171,15 @@ class CodexRunner implements RunnerAdapter {
 
             return {
               ...redactRunnerExecution(
-                redactEvidenceDirectory(validated, evidenceDirectory),
+                redactLocalDirectory(
+                  redactLocalDirectory(
+                    validated,
+                    evidenceDirectory,
+                    "[LOCAL_EVIDENCE_DIR]"
+                  ),
+                  sharedBrowser.downloadsDirectory,
+                  "[RUN_DOWNLOADS_DIR]"
+                ),
                 input.secrets
               ),
               screenshotEvidence: screenshots.evidence,
@@ -1198,6 +1221,7 @@ class ClaudeRunner implements RunnerAdapter {
     const secretNames = Object.keys(runInput.secrets)
     return {
       async executeScenario(scenarioInput: RunnerScenarioInput) {
+        await resetDownloadsDirectory(sharedBrowser.downloadsDirectory)
         return await withTempFiles(async (dir) => {
           const mcpConfigPath = join(dir, "mcp.json")
           await writeFile(
@@ -1290,6 +1314,7 @@ class ClaudeRunner implements RunnerAdapter {
                     scenario: scenarioInput.scenario,
                     blockedResults,
                     secretNames,
+                    downloadsDirectory: sharedBrowser.downloadsDirectory,
                   }),
                 ],
               })
@@ -1307,7 +1332,14 @@ class ClaudeRunner implements RunnerAdapter {
               )
             }
             return {
-              ...redactRunnerExecution(validated, runInput.secrets),
+              ...redactRunnerExecution(
+                redactLocalDirectory(
+                  validated,
+                  sharedBrowser.downloadsDirectory,
+                  "[RUN_DOWNLOADS_DIR]"
+                ),
+                runInput.secrets
+              ),
               screenshotEvidence: [],
               usage,
             }

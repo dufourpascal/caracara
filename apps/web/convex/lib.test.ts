@@ -63,6 +63,19 @@ describe("convex response mappers", () => {
     expect(
       matchesTerminalScenarioResult(result, { ...result, tokenUsage: usage })
     ).toBe(false)
+    const interrupted = { ...result, status: "interrupted", checkResults: [] }
+    expect(
+      matchesTerminalScenarioResult(
+        { ...interrupted, tokenUsage: usage },
+        interrupted
+      )
+    ).toBe(true)
+    expect(
+      matchesTerminalScenarioResult(
+        { ...interrupted, tokenUsage: usage },
+        { ...interrupted, tokenUsage: { ...usage, outputTokens: 3 } }
+      )
+    ).toBe(false)
     expect(
       matchesTerminalScenarioResult(result, {
         ...result,

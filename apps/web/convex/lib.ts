@@ -1197,7 +1197,13 @@ export function matchesTerminalScenarioResult(
     existing.executionSummary === submitted.executionSummary &&
     existing.failureDetail === submitted.failureDetail &&
     existing.finishedAt === submitted.finishedAt &&
-    matchesTokenUsage(existing.tokenUsage, submitted.tokenUsage) &&
+    matchesTokenUsage(
+      existing.tokenUsage,
+      // An interruption correction without usage keeps the stored usage, so
+      // its retry must still match.
+      submitted.tokenUsage ??
+        (submitted.status === "interrupted" ? existing.tokenUsage : undefined)
+    ) &&
     existing.checkResults.length === submitted.checkResults.length &&
     existing.checkResults.every((check, index) => {
       const candidate = submitted.checkResults[index]

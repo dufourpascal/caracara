@@ -122,7 +122,7 @@ Each run stores the selected environment and normalized target URL so the web ap
 
 `caracara run --phases 1-7,9,10` runs the listed phases, in project order, as one run. Ranges and single phase numbers can be mixed. It can't be combined with `--scenario`, `--suite`, `--phase` or `--through-phase`.
 
-After an execution error, the run skips only the scenarios that depend on the failed one and continues with everything else, in the same phase and later ones. Pass `--no-keep-going` to stop the whole run instead. The run still stops when the browser session is gone, or when two phases in a row fail on their first scenario with no scenario completing in between.
+After an execution error, the run skips only the scenarios that depend on the failed one and continues with everything else, in the same phase and later ones. Pass `--no-keep-going` to stop the whole run instead. The run still stops when the browser session is gone, when two phases in a row fail on their first scenario, or after three runner failures in a row, in each case with no scenario completing in between.
 
 In a terminal, `caracara run` keeps a status panel at the bottom with the current phase and scenario, elapsed time and ETA, check totals, tokens and the agent's current step. In CI, when output is redirected or piped (`> run.log`, `| tee run.log`), or with `--plain`, it prints timestamped lines instead, plus a heartbeat line every 5 minutes while a scenario runs (`--heartbeat 30s`, `--heartbeat 0` to turn it off). `--quiet` prints only a short summary; `--json` prints one JSON event per line (`run.started`, `phase.started`, `scenario.started`, `agent.action`, `scenario.finished`, `run.finished`).
 

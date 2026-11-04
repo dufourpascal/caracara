@@ -1172,6 +1172,9 @@ export async function runCommand(
   // are skipped. Dependencies never cross phases.
   const unfinishedScenarioSlugs = new Map<string, string>()
   let consecutiveFirstScenarioFailures = 0
+  // Runner failures since the last completed scenario; a run where nothing
+  // completes (expired login, exhausted quota) stops instead of trying all.
+  let consecutiveRunnerFailures = 0
   let executedInCurrentPhase = 0
   let finalRunStatus: "completed" | "failed" | "interrupted" | null = null
   let finalFinishedAt: number | null = null
@@ -1386,6 +1389,7 @@ export async function runCommand(
           activeScenarioAttemptId = null
           // A completed scenario shows the run is not broken as a whole.
           consecutiveFirstScenarioFailures = 0
+          consecutiveRunnerFailures = 0
           recordScenario({
             sequenceIndex,
             status: "completed",
@@ -1406,12 +1410,14 @@ export async function runCommand(
           if (item.phase && firstInPhase) {
             consecutiveFirstScenarioFailures += 1
           }
+          consecutiveRunnerFailures += 1
           const sessionBroken =
             runSession === null || runSession.isHealthy?.() === false
           if (
             !keepGoing ||
             sessionBroken ||
-            consecutiveFirstScenarioFailures >= 2
+            consecutiveFirstScenarioFailures >= 2 ||
+            consecutiveRunnerFailures >= 3
           ) {
             stopRemaining = true
           }

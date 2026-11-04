@@ -374,6 +374,30 @@ describe("multi-phase runs", () => {
     ])
   })
 
+  it("stops a single-phase run after three runner failures in a row", async () => {
+    const dataPhase = mocks.executionPlan.phases[1]!
+    const extra = ["data-c", "data-d"].map((slug) => ({
+      ...dataPhase.scenarios[0]!,
+      id: `id-${slug}`,
+      name: slug,
+      slug,
+    }))
+    dataPhase.scenarios.push(...extra)
+    for (const slug of ["data-a", "data-b", "data-c"]) mocks.failing.add(slug)
+    try {
+      await run({ phases: "2" })
+    } finally {
+      dataPhase.scenarios.splice(2)
+    }
+
+    expect(submitted().map(([slug, status]) => `${slug}:${status}`)).toEqual([
+      "data-a:runner_failed",
+      "data-b:runner_failed",
+      "data-c:runner_failed",
+      "data-d:dependency_failed",
+    ])
+  })
+
   it("stops after the first error with --no-keep-going", async () => {
     mocks.failing.add("setup-b")
     await run({ phases: "1-3", keepGoing: false })

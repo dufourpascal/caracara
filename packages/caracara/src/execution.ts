@@ -453,6 +453,7 @@ export function buildRunnerPrompt(input: {
           "Inspect the image itself. Confirm that the failed behavior is clearly visible and that enough surrounding UI is shown to understand the problem. For a missing element, show the region where it should appear.",
           "If the image does not clearly show the defect, adjust the browser and repeat the preview screenshot. Do not save an unrelated, overly broad, obscured, or unreadable screenshot.",
           "Only after visually confirming the image, call take_screenshot again with the exact failure screenshot path listed for that check, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+          nativeDialogEvidence,
           "A failed check is incomplete without its screenshot. Do not capture screenshots for passed or blocked checks. Never include screenshot paths or image bytes in the JSON response.",
         ]
       : []),
@@ -532,6 +533,10 @@ export function buildBlockedRetryPrompt(input: {
   ].join("\n")
 }
 
+/** Native dialogs block chrome-devtools screenshots, so failures shown in one need a nearby capture instead. */
+const nativeDialogEvidence =
+  "Browser-native alert, confirm and prompt dialogs block screenshots and never appear in them. If one is open, record its exact text, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted), then capture the page with the control that opened it in view."
+
 export function buildMissingScreenshotPrompt(input: {
   scenario: OrderedScenario
   evidenceDirectory: string
@@ -546,6 +551,7 @@ export function buildMissingScreenshotPrompt(input: {
     "For each check, call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, and visually inspect the returned image. Capture the visible viewport without a uid.",
     "If the image does not clearly show the defect and enough surrounding context, adjust the browser and repeat the preview screenshot.",
     "Only after visually confirming the image, call take_screenshot again with the listed path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+    nativeDialogEvidence,
     ...checks.map(
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`

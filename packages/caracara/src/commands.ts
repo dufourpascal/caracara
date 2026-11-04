@@ -956,6 +956,7 @@ export async function runCommand(options: RunCommandOptions) {
           version: CLI_VERSION,
           projectSlug,
           scenarioSlug: runSelection.requestedScenarioSlug,
+          signal: runAbortController.signal,
         }).then((response) => {
           runAbortController.signal.throwIfAborted()
           return {

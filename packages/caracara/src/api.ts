@@ -159,11 +159,13 @@ export async function fetchSingleScenario(args: {
   version: string
   projectSlug: string
   scenarioSlug: string
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
     version: args.version,
     accessToken: args.accessToken,
+    init: { signal: args.signal },
     schema: singleScenarioResponseSchema,
   })
 }

@@ -403,6 +403,7 @@ export function buildRunnerPrompt(input: {
   scenario: OrderedScenario
   secretNames?: string[]
   evidenceDirectory?: string
+  downloadsDirectory?: string
 }) {
   const secretNames = [...(input.secretNames ?? [])].sort()
 
@@ -441,6 +442,11 @@ export function buildRunnerPrompt(input: {
       : []),
     "",
     "Use the Chrome DevTools browser tools to perform the task once and inspect the actual frontend.",
+    ...(input.downloadsDirectory
+      ? [
+          `Files the application downloads are saved to ${input.downloadsDirectory}. To check a download, list or read that directory with a shell command; chrome:// pages cannot be opened.`,
+        ]
+      : []),
     "Before interacting, review every evaluation check and plan the browser states and actions needed to observe each one. Preserve or revisit relevant states so later checks are not skipped.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
     'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "blocked" when you could not reach or inspect it.',
@@ -899,6 +905,31 @@ async function terminateBrowserProcess(browser: ChildProcess) {
   await terminateChildProcess(browser, process.platform !== "win32")
 }
 
+/**
+ * Points the fresh profile's downloads at a run-scoped directory, so agents can
+ * verify downloaded files (chrome://downloads is not reachable over DevTools)
+ * and nothing lands in the user's own Downloads folder.
+ */
+export async function writeChromiumDownloadPreferences(input: {
+  userDataDir: string
+  downloadsDirectory: string
+}) {
+  const profileDir = join(input.userDataDir, "Default")
+  await mkdir(profileDir, { recursive: true })
+  await writeFile(
+    join(profileDir, "Preferences"),
+    JSON.stringify({
+      download: {
+        default_directory: input.downloadsDirectory,
+        prompt_for_download: false,
+        directory_upgrade: true,
+      },
+      savefile: { default_directory: input.downloadsDirectory },
+    }),
+    "utf8"
+  )
+}
+
 async function launchSharedChromium(input: {
   cwd: string
   initialUrl: string
@@ -907,7 +938,9 @@ async function launchSharedChromium(input: {
   const runDir = await mkdtemp(join(tmpdir(), "caracara-codex-run-"))
   const userDataDir = join(runDir, "chrome-profile")
   const chromeDevtoolsLogPath = join(runDir, "chrome-devtools-mcp.log")
-  await mkdir(userDataDir, { recursive: true })
+  const downloadsDirectory = join(runDir, "downloads")
+  await mkdir(downloadsDirectory, { recursive: true })
+  await writeChromiumDownloadPreferences({ userDataDir, downloadsDirectory })
   if (input.signal?.aborted) {
     await rm(runDir, { recursive: true, force: true })
     input.signal.throwIfAborted()
@@ -944,6 +977,7 @@ async function launchSharedChromium(input: {
     return {
       wsEndpoint: proxy.wsEndpoint,
       chromeDevtoolsLogPath,
+      downloadsDirectory,
       async close() {
         await proxy.close()
         await terminateBrowserProcess(browser)
@@ -1024,6 +1058,7 @@ class CodexRunner implements RunnerAdapter {
                 ...scenarioInput,
                 secretNames,
                 evidenceDirectory,
+                downloadsDirectory: sharedBrowser.downloadsDirectory,
               }),
               {
                 outputSchema: buildExecutionResultSchema(
@@ -1203,7 +1238,11 @@ class ClaudeRunner implements RunnerAdapter {
                 JSON.stringify(
                   buildExecutionResultSchema(scenarioInput.scenario)
                 ),
-                buildRunnerPrompt({ ...scenarioInput, secretNames }),
+                buildRunnerPrompt({
+                  ...scenarioInput,
+                  secretNames,
+                  downloadsDirectory: sharedBrowser.downloadsDirectory,
+                }),
               ],
             })
             const parsed = parseClaudeJsonResult(execution.stdout)

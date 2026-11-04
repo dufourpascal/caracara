@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { OrderedScenario } from "@workspace/contracts"
 
@@ -14,6 +17,7 @@ import {
   buildExecutionResultSchema,
   buildMissingScreenshotPrompt,
   buildRunnerPrompt,
+  writeChromiumDownloadPreferences,
   buildWindowsTaskkillArgs,
   formatRunnerUsage,
   hasWebpSignature,
@@ -649,5 +653,36 @@ describe("runner usage", () => {
       reasoningOutputTokens: 0,
       estimatedCostUsd: 0.0123,
     })
+  })
+})
+
+describe("run-scoped downloads", () => {
+  it("points the browser profile's downloads at the run directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "caracara-downloads-test-"))
+    try {
+      const userDataDir = join(root, "chrome-profile")
+      const downloadsDirectory = join(root, "downloads")
+      await writeChromiumDownloadPreferences({ userDataDir, downloadsDirectory })
+      const preferences = JSON.parse(
+        await readFile(join(userDataDir, "Default", "Preferences"), "utf8")
+      )
+      expect(preferences.download.default_directory).toBe(downloadsDirectory)
+      expect(preferences.download.prompt_for_download).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("tells the agent where downloads are saved", () => {
+    const prompt = buildRunnerPrompt({
+      environment: "development",
+      targetUrl: "http://localhost:3055/",
+      projectPrompt: "Open http://localhost:3055.",
+      scenario,
+      downloadsDirectory: "/tmp/caracara-run/downloads",
+    })
+    expect(prompt).toContain(
+      "Files the application downloads are saved to /tmp/caracara-run/downloads."
+    )
   })
 })

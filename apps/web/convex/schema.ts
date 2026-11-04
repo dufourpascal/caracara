@@ -26,6 +26,15 @@ const checkResult = v.object({
   blockedReason: v.optional(v.union(v.null(), blockedReason)),
 })
 
+const tokenUsage = v.object({
+  inputTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteInputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningOutputTokens: v.number(),
+  complete: v.boolean(),
+})
+
 export default defineSchema({
   projects: defineTable({
     ownerUserId: v.string(),
@@ -148,7 +157,8 @@ export default defineSchema({
       "projectId",
       "creationAttemptId",
     ])
-    .index("by_project_status", ["projectId", "status"]),
+    .index("by_project_status", ["projectId", "status"])
+    .index("by_project_name", ["projectId", "name"]),
   scenarioResults: defineTable({
     runId: v.id("runs"),
     scenarioId: v.id("scenarios"),
@@ -172,6 +182,7 @@ export default defineSchema({
     executionAttemptId: v.optional(v.string()),
     executionSummary: v.union(v.null(), v.string()),
     failureDetail: v.union(v.null(), v.string()),
+    tokenUsage: v.optional(tokenUsage),
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
   })

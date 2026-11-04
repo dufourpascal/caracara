@@ -27,3 +27,10 @@ export type RunCommandOptions = {
   phase?: string
   throughPhase?: string
 }
+
+export type ResultsCommandOptions = {
+  apiBaseUrl?: string
+  project?: string
+  environment?: string
+  json?: boolean
+}

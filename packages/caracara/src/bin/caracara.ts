@@ -15,6 +15,7 @@ import {
   logoutCommand,
   removeCheckCommand,
   removePhaseCommand,
+  resultsCommand,
   runCommand,
   updateCheckCommand,
   updateScenarioCommand,
@@ -152,6 +153,21 @@ program
   .option("--through-phase <number>")
   .action(async (options) => {
     await runCommand(options)
+  })
+
+program
+  .command("results")
+  .description("print a run's results, verdicts, durations and token usage")
+  .argument("[run]", 'run ID, run name, or "latest"', "latest")
+  .option("--json", "print machine-readable JSON")
+  .option(
+    "--environment <name>",
+    'with "latest": the latest run in this environment'
+  )
+  .option("--api-base-url <url>")
+  .option("--project <slug>")
+  .action(async (run: string, options) => {
+    await resultsCommand(run, options)
   })
 
 program.parseAsync(process.argv).catch((error: unknown) => {

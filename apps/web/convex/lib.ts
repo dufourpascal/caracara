@@ -282,6 +282,7 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     runnerType: result.runnerType,
     executionSummary: result.executionSummary,
     failureDetail: result.failureDetail,
+    tokenUsage: result.tokenUsage ?? null,
     startedAt: result.startedAt,
     finishedAt: result.finishedAt,
     submittedAt: toTimestamp(result._creationTime),
@@ -1061,6 +1062,42 @@ export async function deleteProjectCascade(
 
 export function createRunName() {
   return formatRunName(new Date())
+}
+
+const TOKEN_USAGE_COUNT_FIELDS = [
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+] as const
+
+export function validateTokenUsage(
+  status: string,
+  tokenUsage:
+    | (Record<(typeof TOKEN_USAGE_COUNT_FIELDS)[number], number> & {
+        complete: boolean
+      })
+    | undefined
+) {
+  if (tokenUsage === undefined) {
+    return
+  }
+  if (status === "dependency_failed") {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Dependency-failed scenarios cannot report token usage.",
+    })
+  }
+  for (const field of TOKEN_USAGE_COUNT_FIELDS) {
+    const value = tokenUsage[field]
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: `Token usage ${field} must be a non-negative integer.`,
+      })
+    }
+  }
 }
 
 export function validateCompletedCheckResults(

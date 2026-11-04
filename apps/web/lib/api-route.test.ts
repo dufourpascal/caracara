@@ -11,6 +11,7 @@ import {
   ApiRouteError,
   authorProject,
   createRun,
+  getRunResults,
   handleApiError,
   parseJsonBody,
   requireCliVersion,
@@ -494,6 +495,40 @@ describe("api-route helpers", () => {
         "validation_error",
         "Run ID in URL does not match request body."
       )
+    )
+  })
+
+  it("passes run references and the environment filter to the results query", async () => {
+    vi.mocked(fetchQuery).mockResolvedValueOnce({ run: {}, results: [] })
+
+    await getRunResults({
+      token: "token",
+      projectSlug: "demo-project",
+      runRef: "latest",
+      environment: "staging",
+    })
+
+    expect(fetchQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      { projectSlug: "demo-project", runRef: "latest", environment: "staging" },
+      { token: "token" }
+    )
+  })
+
+  it("maps a missing run to not_found", async () => {
+    vi.mocked(fetchQuery).mockResolvedValueOnce(null)
+
+    await expect(
+      getRunResults({
+        token: "token",
+        projectSlug: "demo-project",
+        runRef: "brave-heron-20261104-120000",
+      })
+    ).rejects.toEqual(new ApiRouteError(404, "not_found", "Run not found."))
+    expect(fetchQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      { projectSlug: "demo-project", runRef: "brave-heron-20261104-120000" },
+      { token: "token" }
     )
   })
 })

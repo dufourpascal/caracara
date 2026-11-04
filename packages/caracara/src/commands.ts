@@ -5,6 +5,7 @@ import {
   CONVEX_TOKEN_TEMPLATE,
   API_NAMESPACE,
   formatRunName,
+  LATEST_RUN_REFERENCE,
   type AuthoringRequest,
   type OrderedScenario,
   type RunnablePhase,
@@ -15,6 +16,7 @@ import {
   fetchExecutionPlan,
   finalizeRun,
   fetchProjects,
+  fetchRunResults,
   fetchSingleScenario,
   fetchWhoAmI,
   startScenarioExecution,
@@ -44,7 +46,16 @@ import {
   RunnerExecutionError,
   type RunnerUsageReport,
 } from "./execution.js"
-import type { InitCommandOptions, RunCommandOptions } from "./types.js"
+import {
+  buildRunResultsReport,
+  formatRunResultsTable,
+  toTokenUsageField,
+} from "./results.js"
+import type {
+  InitCommandOptions,
+  ResultsCommandOptions,
+  RunCommandOptions,
+} from "./types.js"
 
 const CLIENT_ID = "caracara-cli"
 const CLI_VERSION = "0.6.2"
@@ -892,6 +903,9 @@ export async function runCommand(options: RunCommandOptions) {
   let activeScenario: ReturnType<typeof buildScenarioSnapshot> | null = null
   let activeScenarioResultId: string | null = null
   let activeScenarioAttemptId: string | null = null
+  // Token usage of the active scenario. Starts as "nothing consumed" and
+  // becomes unknown once the runner is invoked, until it reports usage.
+  let activeScenarioUsage: RunnerUsageReport | null = null
   let lastPrintedPhaseId: string | null = null
 
   try {
@@ -919,6 +933,7 @@ export async function runCommand(options: RunCommandOptions) {
 
       activeScenario = scenarioSnapshot
       activeScenarioAttemptId = crypto.randomUUID()
+      activeScenarioUsage = { complete: true }
       const startedScenario = await startScenarioExecution({
         apiBaseUrl: config.apiBaseUrl,
         accessToken,
@@ -965,6 +980,7 @@ export async function runCommand(options: RunCommandOptions) {
         activeScenario = null
         activeScenarioResultId = null
         activeScenarioAttemptId = null
+        activeScenarioUsage = null
         continue
       }
 
@@ -979,6 +995,7 @@ export async function runCommand(options: RunCommandOptions) {
         })
         runAbortController.signal.throwIfAborted()
 
+        activeScenarioUsage = { complete: false }
         const execution = await runSession.executeScenario({
           cwd,
           environment: environment.name,
@@ -987,10 +1004,8 @@ export async function runCommand(options: RunCommandOptions) {
           scenario: item.scenario,
           signal: runAbortController.signal,
         })
-        runUsage = mergeRunnerUsage(
-          runUsage,
-          execution.usage ?? { complete: false }
-        )
+        activeScenarioUsage = execution.usage ?? { complete: false }
+        runUsage = mergeRunnerUsage(runUsage, activeScenarioUsage)
 
         if (
           createRunResponse.run.evidencePolicy === "failed_check_screenshot"
@@ -1032,6 +1047,7 @@ export async function runCommand(options: RunCommandOptions) {
               ...(activeScenarioAttemptId
                 ? { executionAttemptId: activeScenarioAttemptId }
                 : {}),
+              ...toTokenUsageField(activeScenarioUsage),
             },
           },
           signal: runAbortController.signal,
@@ -1040,6 +1056,7 @@ export async function runCommand(options: RunCommandOptions) {
         activeScenario = null
         activeScenarioResultId = null
         activeScenarioAttemptId = null
+        activeScenarioUsage = null
         const passed = execution.checkResults.filter(
           (result) => result.verdict === "passed"
         ).length
@@ -1048,6 +1065,7 @@ export async function runCommand(options: RunCommandOptions) {
         )
       } catch (error) {
         if (error instanceof RunnerExecutionError) {
+          activeScenarioUsage = error.usage
           runUsage = mergeRunnerUsage(runUsage, error.usage)
         }
         if (runAbortController.signal.aborted) {
@@ -1073,6 +1091,7 @@ export async function runCommand(options: RunCommandOptions) {
               ...(activeScenarioAttemptId
                 ? { executionAttemptId: activeScenarioAttemptId }
                 : {}),
+              ...toTokenUsageField(activeScenarioUsage),
             },
           },
           signal: runAbortController.signal,
@@ -1081,6 +1100,7 @@ export async function runCommand(options: RunCommandOptions) {
         activeScenario = null
         activeScenarioResultId = null
         activeScenarioAttemptId = null
+        activeScenarioUsage = null
         process.stdout.write(
           `  failed: ${error instanceof Error ? error.message : "Runner failed"}\n`
         )
@@ -1117,6 +1137,7 @@ export async function runCommand(options: RunCommandOptions) {
               ...(activeScenarioAttemptId
                 ? { executionAttemptId: activeScenarioAttemptId }
                 : {}),
+              ...toTokenUsageField(activeScenarioUsage),
             },
           },
           signal: AbortSignal.timeout(10_000),
@@ -1127,6 +1148,7 @@ export async function runCommand(options: RunCommandOptions) {
       activeScenario = null
       activeScenarioResultId = null
       activeScenarioAttemptId = null
+      activeScenarioUsage = null
     }
     finalRunStatus = "interrupted"
     finalFinishedAt = Date.now()
@@ -1211,6 +1233,33 @@ export async function runCommand(options: RunCommandOptions) {
   if (closeError) {
     throw closeError
   }
+}
+
+export async function resultsCommand(
+  runRef: string,
+  options: ResultsCommandOptions
+) {
+  if (options.environment !== undefined && runRef !== LATEST_RUN_REFERENCE) {
+    throw new Error(
+      `--environment only applies to \`caracara results ${LATEST_RUN_REFERENCE}\`.`
+    )
+  }
+  const context = await getAuthoringContext(options)
+  const response = await fetchRunResults({
+    apiBaseUrl: context.apiBaseUrl,
+    accessToken: context.accessToken,
+    version: CLI_VERSION,
+    projectSlug: context.projectSlug,
+    runRef,
+    environment: options.environment,
+  })
+  const report = buildRunResultsReport(response)
+
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : formatRunResultsTable(report)
+  )
 }
 
 function openBrowser(url: string) {

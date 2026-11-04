@@ -10,6 +10,7 @@ import {
   validateCompletedCheckResults,
   validateFailedCheckEvidence,
   validateRunnerMatch,
+  validateTokenUsage,
 } from "./lib"
 
 describe("convex response mappers", () => {
@@ -392,5 +393,69 @@ describe("convex response mappers", () => {
         scenarioId: "scenario-c",
       }),
     ])
+  })
+})
+
+describe("scenario token usage", () => {
+  const usage = {
+    inputTokens: 1_000,
+    cachedInputTokens: 600,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 50,
+    complete: true,
+  }
+  const baseResult = {
+    _id: "result-id",
+    _creationTime: 2000,
+    runId: "run-id",
+    scenarioId: "scenario-id",
+    scenarioSlug: "demo-scenario",
+    scenarioName: "Demo scenario",
+    executionInstructions: "Do the thing",
+    evaluationChecks: [],
+    checkResults: [],
+    sequenceIndex: 0,
+    status: "completed",
+    runnerType: "codex",
+    executionSummary: "Output",
+    failureDetail: null,
+    startedAt: 1000,
+    finishedAt: 1100,
+  }
+
+  it("maps stored usage and defaults older results to null", () => {
+    expect(toScenarioResult(baseResult as never).tokenUsage).toBeNull()
+    expect(
+      toScenarioResult({ ...baseResult, tokenUsage: usage } as never).tokenUsage
+    ).toEqual(usage)
+  })
+
+  it("accepts omitted usage and non-negative integer counts", () => {
+    expect(() => validateTokenUsage("completed", undefined)).not.toThrow()
+    expect(() => validateTokenUsage("runner_failed", usage)).not.toThrow()
+    expect(() =>
+      validateTokenUsage("interrupted", { ...usage, complete: false })
+    ).not.toThrow()
+  })
+
+  it.each([
+    ["a negative count", { ...usage, outputTokens: -1 }],
+    ["a fractional count", { ...usage, inputTokens: 1.5 }],
+    ["a non-finite count", { ...usage, cachedInputTokens: Number.NaN }],
+  ])("rejects %s", (_, tokenUsage) => {
+    expect(() => validateTokenUsage("completed", tokenUsage)).toThrow(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "validation_error" }),
+      })
+    )
+  })
+
+  it("rejects usage on scenarios that never ran", () => {
+    expect(() => validateTokenUsage("dependency_failed", usage)).toThrow(
+      expect.objectContaining({
+        data: expect.objectContaining({ code: "validation_error" }),
+      })
+    )
   })
 })

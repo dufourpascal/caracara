@@ -15,6 +15,7 @@ import {
   slugSchema,
   suiteSchema,
   targetUrlSchema,
+  tokenUsageSchema,
 } from "./domain.js"
 import { maxUtf16Length, minUtf16Length } from "./string-length.js"
 
@@ -406,6 +407,7 @@ export const submitScenarioResultRequestSchema = z.object({
     failureDetail: nullableStringSchema,
     finishedAt: z.number().int().positive(),
     executionAttemptId: z.guid().optional(),
+    tokenUsage: tokenUsageSchema.optional(),
   }),
 })
 
@@ -439,6 +441,14 @@ export const finalizeRunResponseSchema = z.object({
   }),
 })
 
+/** Run reference accepted by `GET /runs/:runRef`: run ID, run name or "latest". */
+export const LATEST_RUN_REFERENCE = "latest"
+
+export const runResultsResponseSchema = z.object({
+  run: runSchema.omit({ ownerUserId: true }),
+  results: z.array(scenarioResultSchema.omit({ executionInstructions: true })),
+})
+
 export const versionMismatchDetailsSchema = z.object({
   apiVersion: z.literal(API_VERSION),
   minimumSupportedCliVersion: z.literal(MIN_SUPPORTED_CLI_VERSION),
@@ -468,3 +478,4 @@ export type RunnablePhase = z.infer<typeof runnablePhaseSchema>
 export type RunEvidenceUploadResponse = z.infer<
   typeof runEvidenceUploadResponseSchema
 >
+export type RunResultsResponse = z.infer<typeof runResultsResponseSchema>

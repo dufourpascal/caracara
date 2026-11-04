@@ -84,7 +84,11 @@ For a completed run, the pass rate is `round(100 * passedCheckCount / totalCheck
 
 The CLI reports local runner usage after each run.
 
-The report includes aggregate token usage and an estimated API-equivalent cost when the runner exposes enough information. Caracara does not submit or persist this usage report.
+The report includes aggregate token usage and an estimated API-equivalent cost when the runner exposes enough information.
+
+The CLI also submits each scenario's token usage with its result: input (including cached and cache-write input), cached input, cache-write input, output, and reasoning output tokens, plus a `complete` flag that is false when a runner turn did not report usage. A scenario that failed before the runner started reports zero usage. Dependency-failed scenarios report none. The cost estimate is not submitted. Run totals are the sum of the scenario usage and are computed when the run is read, so runs from older CLIs show no token usage.
+
+`caracara results [run] [--json]` reads a finished or running run back from the hosted service. `run` is a run ID, the run name printed by `caracara run`, or `latest` (the default; with `--environment`, the latest run in that environment). The table output lists each scenario's phase, status, checks, duration, and tokens, followed by the checks that did not pass. `--json` prints a versioned report with run identity, status, environment, start and end, duration, model when the run records one (otherwise `null`), token totals, and for each scenario its phase, status, timing, tokens, and every authored check with its verdict and reason (`null` when the scenario ended before evaluating it). The command exits 0 regardless of the run's outcome.
 
 ### EXEC_13
 

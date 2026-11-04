@@ -2,11 +2,12 @@ import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import {
   environmentNameSchema,
+  LATEST_RUN_REFERENCE,
   runEnvironmentSchema,
 } from "@workspace/contracts"
 
 import type { Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { mutation, query, type QueryCtx } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
 import {
   computeRunCheckCounts,
@@ -27,6 +28,7 @@ import {
   validateCompletedCheckResults,
   validateFailedCheckEvidence,
   validateRunnerMatch,
+  validateTokenUsage,
 } from "./lib"
 
 const evaluationCheckValidator = v.object({
@@ -52,6 +54,15 @@ const checkResultValidator = v.object({
   ),
   evidence: v.string(),
   blockedReason: v.optional(v.union(v.null(), blockedReasonValidator)),
+})
+
+const tokenUsageValidator = v.object({
+  inputTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteInputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningOutputTokens: v.number(),
+  complete: v.boolean(),
 })
 
 function invalidEnvironment(message: string): never {
@@ -250,6 +261,107 @@ export const getDetail = query({
   },
 })
 
+async function resolveRunReference(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  runRef: string,
+  environment: string | undefined
+) {
+  if (runRef === LATEST_RUN_REFERENCE) {
+    const runs =
+      environment === undefined
+        ? ctx.db
+            .query("runs")
+            .withIndex("by_project_started_at", (query) =>
+              query.eq("projectId", projectId)
+            )
+        : ctx.db
+            .query("runs")
+            .withIndex("by_project_environment_started_at", (query) =>
+              query.eq("projectId", projectId).eq("environment", environment)
+            )
+    return await runs.order("desc").first()
+  }
+
+  const runId = ctx.db.normalizeId("runs", runRef)
+  if (runId) {
+    const run = await ctx.db.get(runId)
+    return run && run.projectId === projectId ? run : null
+  }
+
+  const matches = await ctx.db
+    .query("runs")
+    .withIndex("by_project_name", (query) =>
+      query.eq("projectId", projectId).eq("name", runRef)
+    )
+    .take(2)
+  if (matches.length > 1) {
+    throw new ConvexError({
+      code: "conflict",
+      message: `Run name "${runRef}" matches more than one run. Use the run ID.`,
+    })
+  }
+  return matches[0] ?? null
+}
+
+/**
+ * Run results for export. `runRef` is a run ID, an exact run name, or
+ * "latest" (the most recently started run, optionally in one environment).
+ */
+export const getResults = query({
+  args: {
+    projectSlug: v.string(),
+    runRef: v.string(),
+    environment: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    if (args.environment !== undefined) {
+      if (args.runRef !== LATEST_RUN_REFERENCE) {
+        invalidEnvironment(
+          "An environment filter only applies to the latest run."
+        )
+      }
+      if (!environmentNameSchema.safeParse(args.environment).success) {
+        invalidEnvironment("Environment filter is invalid.")
+      }
+    }
+
+    const run = await resolveRunReference(
+      ctx,
+      project._id,
+      args.runRef,
+      args.environment
+    )
+    if (!run) {
+      return null
+    }
+
+    const results = await ctx.db
+      .query("scenarioResults")
+      .withIndex("by_run_sequence", (query) => query.eq("runId", run._id))
+      .collect()
+
+    // Leaves out the owner ID and the (large) execution instructions.
+    const exportedRun: Partial<ReturnType<typeof toRun>> = toRun(run)
+    delete exportedRun.ownerUserId
+    return {
+      run: exportedRun as Omit<ReturnType<typeof toRun>, "ownerUserId">,
+      results: results
+        .sort((left, right) => left.sequenceIndex - right.sequenceIndex)
+        .map((result) => {
+          const exported: Partial<ReturnType<typeof toScenarioResult>> =
+            toScenarioResult(result)
+          delete exported.executionInstructions
+          return exported as Omit<
+            ReturnType<typeof toScenarioResult>,
+            "executionInstructions"
+          >
+        }),
+    }
+  },
+})
+
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -403,6 +515,7 @@ export const submitScenarioResult = mutation({
       failureDetail: v.union(v.null(), v.string()),
       finishedAt: v.number(),
       executionAttemptId: v.optional(v.string()),
+      tokenUsage: v.optional(tokenUsageValidator),
     }),
   },
   handler: async (ctx, args) => {
@@ -425,6 +538,8 @@ export const submitScenarioResult = mutation({
         message: "You do not have access to this run.",
       })
     }
+
+    validateTokenUsage(args.result.status, args.result.tokenUsage)
 
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 
@@ -520,6 +635,9 @@ export const submitScenarioResult = mutation({
       executionSummary: args.result.executionSummary,
       failureDetail: args.result.failureDetail,
       finishedAt: args.result.finishedAt,
+      // An interruption correction that carries no usage keeps the usage the
+      // earlier terminal submission recorded.
+      ...(args.result.tokenUsage ? { tokenUsage: args.result.tokenUsage } : {}),
     })
 
     await ctx.db.patch(run._id, {

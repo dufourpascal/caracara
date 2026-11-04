@@ -55,3 +55,45 @@ export function formatRunName(date = new Date()) {
 
   return `${base}-${formatRunTimestamp(date)}`
 }
+
+/**
+ * Merges the fixture requirements that apply to one scenario (its own and its
+ * phase's) into one entry per fixture. Mutating access wins, and the scopes of
+ * all mutating requirements are kept.
+ */
+export function mergeFixtureRequirements(
+  requirements: Array<{
+    fixtureId: string
+    access: "read" | "mutates"
+    mutationScope: string | null
+  }>
+) {
+  const merged = new Map<
+    string,
+    { fixtureId: string; access: "read" | "mutates"; scopes: string[] }
+  >()
+  for (const requirement of requirements) {
+    const entry = merged.get(requirement.fixtureId) ?? {
+      fixtureId: requirement.fixtureId,
+      access: "read" as "read" | "mutates",
+      scopes: [],
+    }
+    if (requirement.access === "mutates") {
+      entry.access = "mutates"
+      if (
+        requirement.mutationScope &&
+        !entry.scopes.includes(requirement.mutationScope)
+      ) {
+        entry.scopes.push(requirement.mutationScope)
+      }
+    }
+    merged.set(requirement.fixtureId, entry)
+  }
+  return [...merged.values()]
+    .sort((left, right) => left.fixtureId.localeCompare(right.fixtureId))
+    .map(({ fixtureId, access, scopes }) => ({
+      fixtureId,
+      access,
+      mutationScope: access === "mutates" ? scopes.join("; ") || null : null,
+    }))
+}

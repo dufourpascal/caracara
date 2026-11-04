@@ -115,9 +115,28 @@ export type RunReport = {
   scenarios: RunReportScenario[]
 }
 
-export function toTokenTotals(report: RunnerUsageReport | null | undefined) {
-  if (!report?.usage) {
+/**
+ * Token totals for one scenario. A runner that ran without reporting usage
+ * gives zero totals marked incomplete, so run totals show they are a lower
+ * bound; scenarios that never reached the runner have no totals.
+ */
+export function toTokenTotals(
+  report: RunnerUsageReport | null | undefined
+): TokenTotals | null {
+  if (!report) {
     return null
+  }
+  if (!report.usage) {
+    return {
+      total: 0,
+      input: 0,
+      uncachedInput: 0,
+      cachedInput: 0,
+      cacheWriteInput: 0,
+      output: 0,
+      reasoningOutput: 0,
+      complete: report.complete,
+    }
   }
   const usage: RunnerUsage = report.usage
   return {

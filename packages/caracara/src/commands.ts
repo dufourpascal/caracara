@@ -529,8 +529,11 @@ export function parsePhaseList(value: string) {
         `--phases has an invalid entry "${token}". Use phase numbers or ranges, such as 1-7,9,10.`
       )
     }
-    const start = Number.parseInt(match[1]!, 10)
-    const end = match[2] === undefined ? start : Number.parseInt(match[2], 10)
+    const start = Number(match[1])
+    const end = match[2] === undefined ? start : Number(match[2])
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+      throw new Error(`--phases entry "${token}" is too large.`)
+    }
     if (start <= 0 || end <= 0) {
       throw new Error("--phases entries must be positive phase numbers.")
     }
@@ -809,6 +812,42 @@ export async function runCommand(
       },
       signal: AbortSignal.timeout(10_000),
     })
+  const signalExitCode = () => (interruptedSignal === "SIGINT" ? 130 : 143)
+  // Reports a run that was created but ended before any scenario started,
+  // so JSON consumers still get run.finished and text output a summary.
+  const reportRunEndedEarly = (
+    run: { id: string; name: string },
+    exitCode: number
+  ) => {
+    const progress = new RunProgress(outputMode, io, 0)
+    try {
+      const finishedAt = Date.now()
+      progress.runFinished(
+        buildRunReport({
+          run: {
+            id: run.id,
+            name: run.name,
+            url: buildRunUrl(config.apiBaseUrl, projectSlug, run.id),
+            status: "interrupted",
+            mode: runSelection.mode,
+            selection,
+            environment: environment.name,
+            targetUrl: environment.targetUrl,
+            runnerType,
+            model: config.model ?? null,
+            modelReasoningEffort: config.model_reasoning_effort ?? null,
+            startedAt: runStartedAt,
+            finishedAt,
+            exitCode,
+          },
+          queue: [],
+          scenarios: [],
+        })
+      )
+    } finally {
+      progress.dispose()
+    }
+  }
   const finishSignalInterruption = async (runId: string) => {
     try {
       await finalizeInterruptedRun(
@@ -836,6 +875,7 @@ export async function runCommand(
     }
     if (interruptedSignal) {
       await finishSignalInterruption(createRunResponse.run.id)
+      reportRunEndedEarly(createRunResponse.run, signalExitCode())
       return
     }
   }
@@ -931,6 +971,12 @@ export async function runCommand(
     } finally {
       stopListeningForInterrupts()
     }
+    if (createRunResponse) {
+      reportRunEndedEarly(
+        createRunResponse.run,
+        interruptedSignal ? signalExitCode() : 1
+      )
+    }
     if (setSignalExitCode()) {
       if (finalizationError) {
         reportInterruptedFinalizationError(finalizationError)
@@ -957,6 +1003,12 @@ export async function runCommand(
       finalizationError = error
     } finally {
       stopListeningForInterrupts()
+    }
+    if (createRunResponse) {
+      reportRunEndedEarly(
+        createRunResponse.run,
+        interruptedSignal ? signalExitCode() : 1
+      )
     }
     if (setSignalExitCode()) {
       if (finalizationError) {
@@ -991,6 +1043,7 @@ export async function runCommand(
     }
     if (interruptedSignal) {
       await finishSignalInterruption(createRunResponse.run.id)
+      reportRunEndedEarly(createRunResponse.run, signalExitCode())
       return
     }
   }
@@ -1469,9 +1522,7 @@ export async function runCommand(
     }
 
     exitCode = interruptedSignal
-      ? interruptedSignal === "SIGINT"
-        ? 130
-        : 143
+      ? signalExitCode()
       : finalizationError || runError || closeError
         ? 1
         : resolveRunExitCode({ scenarios: scenarioReports, failOn })

@@ -415,6 +415,19 @@ describe("live panel", () => {
     expect(stderr.text()).toBe("")
   })
 
+  it("skips the panel on terminals that are too narrow", () => {
+    const stderr = stream(true, 30, 40)
+    const progress = new RunProgress(
+      "live",
+      { stdout: stream(true), stderr, env: {}, now: () => T0 },
+      0
+    )
+    progress.runStarted(start)
+    progress.scenarioStarted({ index: 1, slug: "a", phaseOrder: null })
+    expect(stderr.text()).toBe("")
+    progress.dispose()
+  })
+
   it("skips the panel on terminals that are too short", () => {
     let now = T0
     const stderr = stream(true, 100, 4)

@@ -131,8 +131,8 @@ Every run ends with a summary: totals, a row per phase, the scenarios with faile
 | Exit code | Meaning |
 |---|---|
 | 0 | Every scenario ran. Failed checks are findings, not errors. |
-| 1 | CLI, configuration or API error |
-| 2 | A scenario had an execution error or was skipped |
+| 1 | The run stopped on a CLI, configuration or API error |
+| 2 | A scenario was recorded as a runner failure (including a result the API rejected) or was skipped |
 | 3 | `--fail-on failed`, `--fail-on blocked` or `--fail-on failed,blocked` matched a check |
 | 130 / 143 | Interrupted by SIGINT / SIGTERM |
 

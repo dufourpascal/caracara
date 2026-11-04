@@ -180,6 +180,34 @@ describe("run report", () => {
   })
 })
 
+describe("token completeness", () => {
+  it("marks run totals incomplete when a scenario ran without usage", () => {
+    const withUsage = scenarios[0]!
+    const noUsage = buildScenarioReport({
+      sequenceIndex: 1,
+      scenario: scenario("no-usage", 1),
+      phase: null,
+      status: "runner_failed",
+      startedAt: 0,
+      finishedAt: 1,
+      checkResults: [],
+      usage: { complete: false },
+      failureDetail: "Codex crashed.",
+    })
+    const result = buildRunReport({
+      run: { ...buildReport().run, startedAt: 0, finishedAt: 1, exitCode: 2 },
+      queue: [{ phase: null }, { phase: null }],
+      scenarios: [withUsage, noUsage],
+    })
+    expect(noUsage.tokens).toMatchObject({ total: 0, complete: false })
+    expect(result.run.tokens).toMatchObject({
+      total: withUsage.tokens!.total,
+      complete: false,
+    })
+    expect(formatCompactSummary(result)).toContain("1.0M+ tok")
+  })
+})
+
 describe("exit codes", () => {
   it("returns 2 for runner failures or skipped scenarios", () => {
     expect(resolveRunExitCode({ scenarios, failOn: [] })).toBe(2)

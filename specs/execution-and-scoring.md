@@ -114,4 +114,4 @@ When stderr is an interactive terminal outside CI, the CLI keeps a status panel 
 
 The end-of-run summary lists totals, per-phase rows, only the scenarios with failed or blocked checks, each failed or blocked check with its evidence and blocked reason, execution errors with the scenarios they skipped and a rerun command, duration, runner, model, tokens and the run's web app URL.
 
-The CLI exits with 0 when every scenario ran, 1 on CLI, configuration or API errors, 2 when a scenario had a runner failure or was skipped, 3 when `--fail-on` matches a failed or blocked check, and the conventional signal codes (130, 143) when interrupted. Failed checks alone never change the exit code. Earlier CLIs exited 0 after runner failures.
+The CLI exits with 0 when every scenario ran, 1 when a CLI, configuration or API error stops the run, 2 when a scenario was recorded as a runner failure (including a completed result the API rejected, as before) or was skipped, 3 when `--fail-on` matches a failed or blocked check, and the conventional signal codes (130, 143) when interrupted. Failed checks alone never change the exit code. Earlier CLIs exited 0 after runner failures.

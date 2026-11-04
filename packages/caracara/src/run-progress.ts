@@ -37,6 +37,7 @@ export type ProgressIo = {
 
 export const DEFAULT_HEARTBEAT_MS = 5 * 60_000
 const PANEL_REFRESH_MS = 500
+const MIN_PANEL_COLUMNS = 40
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 /**
@@ -441,7 +442,7 @@ export class RunProgress {
 
   private width() {
     const columns = this.io.stderr.columns ?? this.io.stdout.columns
-    return columns && columns > 20 ? columns - 1 : 79
+    return columns && columns > 0 ? Math.max(1, columns - 1) : 79
   }
 
   private stopHeartbeat() {
@@ -571,8 +572,13 @@ export class RunProgress {
     if (this.mode !== "live" || this.disposed) {
       return
     }
-    const rows = this.io.stderr.rows
-    if (rows !== undefined && rows < 6) {
+    // Too small for a panel that never wraps: skip it rather than corrupt
+    // the scrollback.
+    const { rows, columns } = this.io.stderr
+    if (
+      (rows !== undefined && rows < 6) ||
+      (columns !== undefined && columns < MIN_PANEL_COLUMNS)
+    ) {
       return
     }
     const lines = this.renderPanel()

@@ -125,6 +125,8 @@ describe("phase lists", () => {
     expect(() => parsePhaseList("7-1")).toThrow(/low to high/)
     expect(() => parsePhaseList("1-100000000")).toThrow(/at most 100/)
     expect(() => parsePhaseList("1-60,100-160")).toThrow(/at most 100/)
+    expect(() => parsePhaseList("9007199254740992")).toThrow(/too large/)
+    expect(() => parsePhaseList("1-9007199254740993")).toThrow(/too large/)
   })
 
   it("formats phase lists compactly", () => {

@@ -176,8 +176,8 @@ program
     `
 Exit codes:
   0    every scenario ran (failed checks are findings, not errors)
-  1    CLI, configuration or API error
-  2    a scenario had an execution error or was skipped
+  1    the run stopped on a CLI, configuration or API error
+  2    a scenario was recorded as a runner failure or was skipped
   3    --fail-on matched a check verdict
   130  interrupted (SIGINT), 143 terminated (SIGTERM)`
   )

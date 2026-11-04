@@ -410,3 +410,31 @@ describe("JSON output", () => {
     expect(process.exitCode).toBe(2)
   })
 })
+
+describe("runs that end before any scenario", () => {
+  it("reports a created suite run whose plan cannot be loaded", async () => {
+    mocks.fetchExecutionPlan.mockRejectedValueOnce(new Error("plan exploded"))
+    const stdout = output()
+
+    await expect(
+      runCommand(
+        { suite: "smoke", json: true },
+        { stdout: stdout.stream, stderr: output().stream, env: {} }
+      )
+    ).rejects.toThrow("plan exploded")
+
+    expect(finalizedStatus()).toBe("interrupted")
+    const events = stdout
+      .text()
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; exitCode?: number })
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "run.finished",
+        status: "interrupted",
+        exitCode: 1,
+      }),
+    ])
+  })
+})

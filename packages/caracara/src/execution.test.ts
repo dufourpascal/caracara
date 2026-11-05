@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { OrderedScenario } from "@workspace/contracts"
 
@@ -22,6 +25,9 @@ import {
   buildRunnerPrompt,
   annotateLateScreenshots,
   LATE_SCREENSHOT_NOTE,
+  writeChromiumDownloadPreferences,
+  resetDownloadsDirectory,
+  redactLocalDirectory,
   buildWindowsTaskkillArgs,
   formatRunnerUsage,
   hasWebpSignature,
@@ -797,6 +803,93 @@ describe("runner usage", () => {
       reasoningOutputTokens: 0,
       estimatedCostUsd: 0.0123,
     })
+  })
+})
+
+describe("run-scoped downloads", () => {
+  it("points the browser profile's downloads at the run directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "caracara-downloads-test-"))
+    try {
+      const userDataDir = join(root, "chrome-profile")
+      const downloadsDirectory = join(root, "downloads")
+      await writeChromiumDownloadPreferences({ userDataDir, downloadsDirectory })
+      const preferences = JSON.parse(
+        await readFile(join(userDataDir, "Default", "Preferences"), "utf8")
+      )
+      expect(preferences.download.default_directory).toBe(downloadsDirectory)
+      expect(preferences.download.prompt_for_download).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("tells the agent where downloads are saved", () => {
+    const prompt = buildRunnerPrompt({
+      environment: "development",
+      targetUrl: "http://localhost:3055/",
+      projectPrompt: "Open http://localhost:3055.",
+      scenario,
+      downloadsDirectory: "/tmp/caracara-run/downloads",
+    })
+    expect(prompt).toContain(
+      "Files the application downloads are saved to /tmp/caracara-run/downloads."
+    )
+  })
+
+  it("keeps the downloads directory in the blocked-check retry", () => {
+    const prompt = buildBlockedRetryPrompt({
+      environment: "development",
+      targetUrl: "http://localhost:3055/",
+      projectPrompt: "Open http://localhost:3055.",
+      scenario,
+      blockedResults: [
+        {
+          checkId: "00000000-0000-4000-8000-000000000001",
+          verdict: "blocked",
+          evidence: "Attempted: Exported. Blocked: Could not see the file.",
+          blockedReason: "tool_limit",
+        },
+      ],
+      downloadsDirectory: "/tmp/caracara-run/downloads",
+    })
+    expect(prompt).toContain(
+      "Files the application downloads are saved to /tmp/caracara-run/downloads."
+    )
+  })
+
+  it("empties the downloads directory between scenarios", async () => {
+    const root = await mkdtemp(join(tmpdir(), "caracara-downloads-test-"))
+    try {
+      const downloadsDirectory = join(root, "downloads")
+      await resetDownloadsDirectory(downloadsDirectory)
+      await writeFile(join(downloadsDirectory, "report.csv"), "a")
+      await resetDownloadsDirectory(downloadsDirectory)
+      expect(await readdir(downloadsDirectory)).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("redacts the downloads path from evidence", () => {
+    const redacted = redactLocalDirectory(
+      {
+        executionSummary: "Saved /tmp/run/downloads/report.csv",
+        checkResults: [
+          {
+            checkId: "00000000-0000-4000-8000-000000000001",
+            verdict: "passed",
+            evidence: "Found /tmp/run/downloads/report.csv",
+            blockedReason: null,
+          },
+        ],
+      },
+      "/tmp/run/downloads",
+      "[RUN_DOWNLOADS_DIR]"
+    )
+    expect(redacted.executionSummary).toBe("Saved [RUN_DOWNLOADS_DIR]/report.csv")
+    expect(redacted.checkResults[0]?.evidence).toBe(
+      "Found [RUN_DOWNLOADS_DIR]/report.csv"
+    )
   })
 })
 

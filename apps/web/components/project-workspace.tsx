@@ -15,10 +15,12 @@ import {
   CircleDashed,
   CircleHelp,
   Copy,
+  Database,
   FolderCode,
   GitBranch,
   History,
   ImageIcon,
+  ImageOff,
   LoaderCircle,
   ListChecks,
   Maximize2,
@@ -38,9 +40,12 @@ import {
 import { type CSSProperties, useEffect, useRef, useState } from "react"
 import {
   environmentNameSchema,
+  getTokenTotals,
   normalizeSlug,
   projectInputSchema,
   suiteInputSchema,
+  sumRunTokenUsage,
+  type TokenUsage,
 } from "@workspace/contracts"
 import { z } from "zod"
 
@@ -92,12 +97,14 @@ import {
 } from "@workspace/ui/components/tooltip"
 import { cn } from "@workspace/ui/lib/utils"
 import { AppBrand } from "@/components/app-brand"
+import { FixtureEditor, RunFixturePreflight } from "@/components/fixture-editor"
 import { ScenarioGraph } from "@/components/scenario-graph"
 import { getErrorMessage } from "@/lib/errors"
 import { usePersistedPanelLayout } from "@/lib/panel-layout"
 import { wouldCreateDependencyCycle } from "@/lib/scenario-dependencies"
 
-type WorkspaceKind = "project" | "suites" | "scenarios" | "runs" | "phases"
+type WorkspaceKind =
+  "project" | "suites" | "fixtures" | "scenarios" | "runs" | "phases"
 const UNASSIGNED_SCENARIO_PHASE_FILTER = "__unassigned__"
 const SIDEBAR_PAGE_SIZES = [10, 20, 50] as const
 const UNTITLED_SCENARIO_SLUG_PATTERN = /^untitled(?:-\d+)?$/
@@ -114,6 +121,7 @@ const RUN_DETAIL_NAV_PANEL_SIZES = {
 const WORKSPACE_NAVIGATION_ORDER = [
   "project",
   "suites",
+  "fixtures",
   "phases",
   "scenarios",
   "runs",
@@ -135,6 +143,8 @@ function getWorkspaceHref({
       return `/projects/${projectSlug}/runs`
     case "suites":
       return `/projects/${projectSlug}/suites`
+    case "fixtures":
+      return `/projects/${projectSlug}/fixtures`
     case "phases":
       return `/projects/${projectSlug}/phases`
     case "scenarios":
@@ -154,6 +164,8 @@ function getWorkspaceIcon(workspace: WorkspaceKind) {
       return TableOfContents
     case "suites":
       return ListChecks
+    case "fixtures":
+      return Database
     case "scenarios":
       return Pencil
     case "runs":
@@ -440,6 +452,29 @@ function formatRunDisplayName(name: string) {
   return name.replace(/-\d{8}-\d{6}$/, "").replaceAll("-", " ")
 }
 
+type RunModelInfo = {
+  model?: string | null
+  reasoningEffort?: string | null
+}
+
+export function formatRunModelLabel(run: RunModelInfo) {
+  if (!run.model) {
+    return null
+  }
+  return run.reasoningEffort
+    ? `${run.model} · ${run.reasoningEffort}`
+    : run.model
+}
+
+export function formatRunModelTitle(run: RunModelInfo) {
+  if (!run.model) {
+    return "Model not recorded"
+  }
+  return run.reasoningEffort
+    ? `Model: ${run.model}, reasoning effort: ${run.reasoningEffort}`
+    : `Model: ${run.model}`
+}
+
 export function RunEnvironmentFilter({
   environments,
   value,
@@ -543,6 +578,27 @@ export function formatRunDuration(
   ]
     .filter(Boolean)
     .join(" ")
+}
+
+const tokenNumberFormat = new Intl.NumberFormat("en-US")
+
+/** Total tokens, with a trailing "+" when usage is incomplete (a lower bound). */
+export function formatTokenTotal(tokenUsage: TokenUsage | null | undefined) {
+  if (!tokenUsage) {
+    return "n/a"
+  }
+  const totals = getTokenTotals(tokenUsage)
+  return `${tokenNumberFormat.format(totals.total)}${totals.complete ? "" : "+"}`
+}
+
+export function formatTokenBreakdown(
+  tokenUsage: TokenUsage | null | undefined
+) {
+  if (!tokenUsage) {
+    return null
+  }
+  const totals = getTokenTotals(tokenUsage)
+  return `${tokenNumberFormat.format(totals.uncachedInput)} uncached in · ${tokenNumberFormat.format(totals.cachedInput)} cached in · ${tokenNumberFormat.format(totals.output)} out${totals.complete ? "" : " · partial"}`
 }
 
 export function getCheckPassRate(passed: number, total: number) {
@@ -978,6 +1034,11 @@ function AuthenticatedProjectWorkspace({
   const createSuite = useMutation(api.suites.create)
   const updateSuite = useMutation(api.suites.update)
   const removeSuite = useMutation(api.suites.remove)
+  const createFixture = useMutation(api.fixtures.create)
+  const updateFixture = useMutation(api.fixtures.update)
+  const removeFixture = useMutation(api.fixtures.remove)
+  const setFixtureRequirement = useMutation(api.fixtures.setRequirement)
+  const removeFixtureRequirement = useMutation(api.fixtures.removeRequirement)
   const createScenario = useMutation(api.scenarios.create)
   const ensureScenarioNavigationMetadata = useMutation(
     api.scenarios.ensureNavigationMetadataForProject
@@ -992,6 +1053,10 @@ function AuthenticatedProjectWorkspace({
   const suites = useQuery(
     api.suites.listForProject,
     !hasDeletedProject && workspace === "suites" ? { projectSlug } : "skip"
+  )
+  const fixtures = useQuery(
+    api.fixtures.listForProject,
+    !hasDeletedProject && workspace === "fixtures" ? { projectSlug } : "skip"
   )
   const [scenarioSearch, setScenarioSearch] = useState("")
   const [scenarioSortAscending, setScenarioSortAscending] = useState(true)
@@ -1010,6 +1075,10 @@ function AuthenticatedProjectWorkspace({
   const [phaseError, setPhaseError] = useState<string | null>(null)
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null)
   const [suiteError, setSuiteError] = useState<string | null>(null)
+  const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(
+    null
+  )
+  const [fixtureError, setFixtureError] = useState<string | null>(null)
   const normalizedScenarioSearch = scenarioSearch.trim()
   const isScenarioSearchActive = normalizedScenarioSearch.length > 0
   const scenarioSortDirection = scenarioSortAscending ? "asc" : "desc"
@@ -1079,7 +1148,9 @@ function AuthenticatedProjectWorkspace({
   const scenarioSummaries = useQuery(
     api.scenarios.listSummariesForProject,
     !hasDeletedProject &&
-      (workspace === "phases" || (workspace === "scenarios" && mode === "edit"))
+      (workspace === "phases" ||
+        workspace === "fixtures" ||
+        (workspace === "scenarios" && mode === "edit"))
       ? { projectSlug }
       : "skip"
   )
@@ -1142,6 +1213,19 @@ function AuthenticatedProjectWorkspace({
     workspace: "suites",
     scope: "detail",
   })
+  const fixtureListPanelId = getPanelLayoutToken({
+    projectSlug,
+    workspace: "fixtures",
+    scope: "list",
+  })
+  const fixturePanelLayout = usePersistedPanelLayout(
+    getPanelLayoutToken({
+      projectSlug,
+      workspace: "fixtures",
+      scope: "layout",
+    }),
+    [fixtureListPanelId]
+  )
   const runListPanelId = getPanelLayoutToken({
     projectSlug,
     workspace: "runs",
@@ -1363,6 +1447,20 @@ function AuthenticatedProjectWorkspace({
     phases?.find((phase) => phase.id === selectedPhaseId) ?? null
   const selectedSuite =
     suites?.find((suite) => suite.id === selectedSuiteId) ?? null
+  // Show the first fixture until one is chosen or the choice is deleted.
+  const selectedFixture =
+    fixtures?.find((fixture) => fixture.id === selectedFixtureId) ??
+    fixtures?.[0] ??
+    null
+  const createNextFixture = async () => {
+    await runWithErrorMessage(async () => {
+      const created = await createFixture({
+        projectId: project.id as never,
+        name: `Fixture ${(fixtures?.length ?? 0) + 1}`,
+      })
+      setSelectedFixtureId(created.id)
+    }, setFixtureError)
+  }
   const selectedScenarioListFilterLabel = getScenarioPhaseFilterLabel(
     selectedScenarioPhaseFilter,
     phases ?? []
@@ -2011,6 +2109,112 @@ function AuthenticatedProjectWorkspace({
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
+      ) : workspace === "fixtures" ? (
+        <ResizablePanelGroup
+          className="flex-1"
+          defaultLayout={fixturePanelLayout.defaultLayout}
+          key={fixturePanelLayout.storageKey}
+          onLayoutChanged={fixturePanelLayout.onLayoutChanged}
+          orientation="horizontal"
+        >
+          <ResizablePanel {...PRIMARY_NAV_PANEL_SIZES} id={fixtureListPanelId}>
+            <div className="flex h-full flex-col border-r border-border">
+              <div className="border-b border-border bg-muted/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] tracking-[0.2em] text-muted-foreground uppercase">
+                    Fixtures
+                  </p>
+                  <Button
+                    aria-label="Create fixture"
+                    size="icon-sm"
+                    onClick={createNextFixture}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
+                {fixtureError ? (
+                  <p className="mt-3 text-sm text-destructive" role="alert">
+                    {fixtureError}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex-1 overflow-auto px-3 py-3">
+                {fixtures === undefined ? (
+                  <div className="px-2 py-2 text-sm text-muted-foreground">
+                    Loading fixtures...
+                  </div>
+                ) : fixtures.length === 0 ? (
+                  <NavigationEmptyState
+                    description="Fixtures are persistent test data that scenarios rely on but must not change."
+                    icon={Database}
+                    title="No fixtures yet"
+                    action={
+                      <Button size="sm" onClick={createNextFixture}>
+                        <Plus />
+                        Create fixture
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <div className="grid gap-2">
+                    {fixtures.map((fixture) => (
+                      <button
+                        aria-pressed={fixture.id === selectedFixture?.id}
+                        className={cn(
+                          "grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-border px-3 py-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                          fixture.id === selectedFixture?.id
+                            ? "bg-muted/40"
+                            : "bg-background hover:bg-muted/20"
+                        )}
+                        key={fixture.id}
+                        onClick={() => setSelectedFixtureId(fixture.id)}
+                        title={`${fixture.requirements.length} requirements`}
+                        type="button"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">
+                            {fixture.name}
+                          </span>
+                          <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
+                            {fixture.slug}
+                          </span>
+                        </span>
+                        <Badge className="font-mono" variant="outline">
+                          {fixture.requirements.length}
+                        </Badge>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel id={`${fixtureListPanelId}:detail`}>
+            {selectedFixture ? (
+              <FixtureEditor
+                fixture={selectedFixture}
+                key={selectedFixture.id}
+                onDeleted={() => setSelectedFixtureId(null)}
+                phases={phases ?? []}
+                projectId={project.id}
+                removeFixture={removeFixture}
+                removeRequirement={removeFixtureRequirement}
+                scenarios={scenarioSummaries ?? []}
+                setRequirement={setFixtureRequirement}
+                updateFixture={updateFixture}
+              />
+            ) : (
+              <BlankDetailPanel
+                description="Choose a fixture to edit how it is found, kept healthy, and used."
+                icon={Database}
+                title="Select a fixture"
+              />
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
       ) : workspace === "phases" ? (
         <ResizablePanelGroup
           className="flex-1"
@@ -2303,6 +2507,15 @@ function AuthenticatedProjectWorkspace({
                               >
                                 {run.environment ?? "untracked"}
                               </Badge>
+                              {run.model ? (
+                                <Badge
+                                  className="max-w-full truncate font-mono tracking-normal normal-case"
+                                  title={formatRunModelTitle(run)}
+                                  variant="outline"
+                                >
+                                  {formatRunModelLabel(run)}
+                                </Badge>
+                              ) : null}
                               {run.mode === "single" &&
                               run.requestedScenarioSlug ? (
                                 <span
@@ -2440,6 +2653,23 @@ function AuthenticatedProjectWorkspace({
                             value={runDetail.run.passRate}
                           />
                         </div>
+                        <div className="bg-background px-3 py-2">
+                          <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                            Duration
+                          </p>
+                          <p className="mt-1 font-mono text-sm text-foreground">
+                            {formatRunDuration(
+                              runDetail.run.startedAt,
+                              runDetail.run.finishedAt
+                            )}
+                          </p>
+                        </div>
+                        <RunTokenSummary
+                          tokenUsage={sumRunTokenUsage({
+                            runStatus: runDetail.run.status,
+                            results: runDetail.results,
+                          })}
+                        />
                         <div className="col-span-2 bg-background px-3 py-2">
                           <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                             Environment
@@ -2456,6 +2686,29 @@ function AuthenticatedProjectWorkspace({
                             </p>
                           ) : null}
                         </div>
+                        {runDetail.run.runnerType !== "claude-code" ? (
+                          <div className="col-span-2 bg-background px-3 py-2">
+                            <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+                              Model
+                            </p>
+                            <p
+                              className={cn(
+                                "mt-1 truncate font-mono text-sm",
+                                runDetail.run.model
+                                  ? "text-foreground"
+                                  : "text-muted-foreground"
+                              )}
+                              title={runDetail.run.model ?? undefined}
+                            >
+                              {runDetail.run.model ?? "not recorded"}
+                            </p>
+                            {runDetail.run.reasoningEffort ? (
+                              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                reasoning {runDetail.run.reasoningEffort}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {runDetail.run.mode === "suite" &&
                         runDetail.run.requestedSuiteSlug ? (
                           <div className="col-span-2 bg-background px-3 py-2">
@@ -2481,6 +2734,9 @@ function AuthenticatedProjectWorkspace({
                             ) : null}
                           </div>
                         ) : null}
+                        <RunFixturePreflight
+                          entries={runDetail.run.fixturePreflight}
+                        />
                       </div>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -3678,7 +3934,7 @@ function PhaseEditor({
   )
 }
 
-function RunResultDetail({
+export function RunResultDetail({
   result,
 }: {
   result: {
@@ -3700,6 +3956,7 @@ function RunResultDetail({
         | "environment_failure"
         | "tool_limit"
         | null
+      evidenceUnavailableReason?: string | null
     }>
     evidence: Array<{
       id: string
@@ -3712,6 +3969,7 @@ function RunResultDetail({
     }>
     executionSummary: string | null
     failureDetail: string | null
+    tokenUsage?: TokenUsage | null
     runnerType: string
     startedAt: number
     finishedAt: number | null
@@ -3781,6 +4039,11 @@ function RunResultDetail({
           <RunHeaderMeta
             label="Duration"
             value={formatRunDuration(result.startedAt, result.finishedAt)}
+          />
+          <RunHeaderMeta
+            detail={formatTokenBreakdown(result.tokenUsage)}
+            label="Tokens"
+            value={formatTokenTotal(result.tokenUsage)}
           />
         </dl>
       </div>
@@ -3852,6 +4115,11 @@ function RunResultDetail({
                   checkName={check.name}
                   key={screenshot.id}
                 />
+              ) : checkResult?.verdict === "failed" &&
+                checkResult.evidenceUnavailableReason ? (
+                <CheckEvidenceUnavailable
+                  reason={checkResult.evidenceUnavailableReason}
+                />
               ) : null}
             </article>
           )
@@ -3879,6 +4147,18 @@ function RunResultDetail({
           <CopyableTextBlock value={result.executionInstructions} />
         </Field>
       </div>
+    </div>
+  )
+}
+
+function CheckEvidenceUnavailable({ reason }: { reason: string }) {
+  return (
+    <div className="grid max-w-md gap-1 border border-border bg-muted/20 px-3 py-2">
+      <p className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+        <ImageOff aria-hidden className="size-3.5" />
+        Screenshot unavailable
+      </p>
+      <p className="text-sm text-foreground">{reason}</p>
     </div>
   )
 }
@@ -4039,7 +4319,15 @@ function useCoarsePointer() {
   return coarsePointer
 }
 
-function RunHeaderMeta({ label, value }: { label: string; value: string }) {
+function RunHeaderMeta({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string
+  detail?: string | null
+}) {
   return (
     <div className="min-w-[10rem]">
       <dt className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
@@ -4048,6 +4336,29 @@ function RunHeaderMeta({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 font-mono text-[12px] leading-5 text-foreground">
         {value}
       </dd>
+      {detail ? (
+        <dd className="font-mono text-[11px] leading-4 text-muted-foreground">
+          {detail}
+        </dd>
+      ) : null}
+    </div>
+  )
+}
+
+function RunTokenSummary({ tokenUsage }: { tokenUsage: TokenUsage | null }) {
+  const breakdown = formatTokenBreakdown(tokenUsage)
+
+  return (
+    <div className="bg-background px-3 py-2">
+      <p className="text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+        Tokens
+      </p>
+      <p
+        className="mt-1 font-mono text-sm text-foreground"
+        title={breakdown ?? "Token usage was not recorded for this run."}
+      >
+        {formatTokenTotal(tokenUsage)}
+      </p>
     </div>
   )
 }

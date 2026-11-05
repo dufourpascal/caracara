@@ -10,6 +10,7 @@
 
 import type * as crons from "../crons.js";
 import type * as domain from "../domain.js";
+import type * as fixtures from "../fixtures.js";
 import type * as http from "../http.js";
 import type * as lib from "../lib.js";
 import type * as migrations from "../migrations.js";
@@ -30,6 +31,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   domain: typeof domain;
+  fixtures: typeof fixtures;
   http: typeof http;
   lib: typeof lib;
   migrations: typeof migrations;

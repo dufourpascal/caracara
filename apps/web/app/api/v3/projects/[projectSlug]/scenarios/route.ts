@@ -41,6 +41,7 @@ export async function GET(
         phases: scenariosResponse.phases,
         suite: scenariosResponse.suite,
         unassignedScenarioCount: scenariosResponse.unassignedScenarioCount,
+        fixtures: scenariosResponse.fixtures,
       })
     )
   } catch (error) {

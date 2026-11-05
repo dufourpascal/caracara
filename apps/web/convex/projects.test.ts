@@ -88,7 +88,7 @@ describe("project input validation", () => {
 })
 
 describe("project deletion helpers", () => {
-  it("deletes project runs, results, dependencies, and scenarios before the project", async () => {
+  it("deletes project runs, results, dependencies, scenarios, and fixtures before the project", async () => {
     const deletedIds: string[] = []
     const deletedStorageIds: string[] = []
     const ctx = {
@@ -198,7 +198,7 @@ describe("project deletion helpers", () => {
             }
           }
 
-          if (table === "suites") {
+          if (table === "suites" || table === "fixtures") {
             return {
               withIndex(
                 indexName: string,
@@ -217,7 +217,9 @@ describe("project deletion helpers", () => {
 
                 return {
                   async collect() {
-                    return [{ _id: "suite-1" }]
+                    return [
+                      { _id: table === "suites" ? "suite-1" : "fixture-1" },
+                    ]
                   },
                 }
               },
@@ -299,6 +301,7 @@ describe("project deletion helpers", () => {
 
     expect(result).toEqual({
       deletedDependencyCount: 2,
+      deletedFixtureCount: 1,
       deletedPhaseCount: 2,
       deletedProjectId: "project-1",
       deletedResultCount: 3,
@@ -320,6 +323,7 @@ describe("project deletion helpers", () => {
       "phase-1",
       "phase-2",
       "suite-1",
+      "fixture-1",
       "project-1",
     ])
     expect(deletedStorageIds).toEqual(["storage-1"])

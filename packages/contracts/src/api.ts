@@ -4,10 +4,17 @@ import { API_VERSION, MIN_SUPPORTED_CLI_VERSION } from "./constants.js"
 import {
   evaluationCheckSchema,
   environmentNameSchema,
+  fixtureAccessSchema,
+  fixturePreflightEntrySchema,
+  fixtureSchema,
+  fixtureStepSchema,
   nullableStringSchema,
   phaseSchema,
   projectSchema,
+  requestedPhaseOrdersSchema,
   runModeSchema,
+  runModelSchema,
+  runReasoningEffortSchema,
   runSchema,
   runnerTypeSchema,
   scenarioResultSchema,
@@ -15,6 +22,7 @@ import {
   slugSchema,
   suiteSchema,
   targetUrlSchema,
+  tokenUsageSchema,
 } from "./domain.js"
 import { maxUtf16Length, minUtf16Length } from "./string-length.js"
 
@@ -90,6 +98,16 @@ export const orderedScenarioSchema = scenarioSchema
   })
   .extend({
     dependencyIds: z.array(z.string()),
+    /** The scenario's own and its phase's fixture requirements, merged. */
+    fixtureRequirements: z
+      .array(
+        z.object({
+          fixtureId: z.string().min(1),
+          access: fixtureAccessSchema,
+          mutationScope: z.string().min(1).nullable(),
+        })
+      )
+      .default([]),
   })
 
 export const runnablePhaseSchema = phaseSchema
@@ -124,6 +142,8 @@ export const executionPlanResponseSchema = z.object({
   phases: z.array(runnablePhaseSchema),
   suite: suiteSchema.pick({ name: true, slug: true }).nullable().optional(),
   unassignedScenarioCount: z.number().int().nonnegative(),
+  /** Definitions of the fixtures the plan's scenarios require. */
+  fixtures: z.array(fixtureSchema).default([]),
 })
 
 export const singleScenarioResponseSchema = z.object({
@@ -134,6 +154,11 @@ export const singleScenarioResponseSchema = z.object({
     projectPrompt: true,
   }),
   scenario: orderedScenarioSchema,
+  fixtures: z.array(fixtureSchema).default([]),
+})
+
+export const fixtureListResponseSchema = z.object({
+  fixtures: z.array(fixtureSchema),
 })
 
 const addPhaseRequestSchema = z.object({
@@ -203,6 +228,49 @@ const updateCheckRequestSchema = z.object({
   expectation: z.string().trim().min(1).check(maxUtf16Length(2_000)).optional(),
 })
 
+/** Steps and checks from authoring may omit IDs; the server assigns them. */
+const fixtureStepInputSchema = fixtureStepSchema.extend({
+  id: z.guid().optional(),
+})
+const fixtureCheckInputSchema = evaluationCheckSchema.extend({
+  id: z.guid().optional(),
+})
+const fixtureFieldsSchema = z.object({
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
+  slug: slugSchema,
+  description: z.string().check(maxUtf16Length(1_500)),
+  locator: z.string().check(maxUtf16Length(2_000)),
+  protection: z.string().check(maxUtf16Length(4_000)),
+  convergeSteps: z.array(fixtureStepInputSchema).max(20),
+  healthChecks: z.array(fixtureCheckInputSchema).max(20),
+})
+
+const createFixtureRequestSchema = fixtureFieldsSchema
+  .partial()
+  .required({ name: true })
+  .extend({ operation: z.literal("createFixture") })
+
+const updateFixtureRequestSchema = fixtureFieldsSchema.partial().extend({
+  operation: z.literal("updateFixture"),
+  fixtureId: z.string().min(1),
+})
+
+const fixtureTargetSchema = z.object({
+  fixtureId: z.string().min(1),
+  phaseId: z.string().min(1).optional(),
+  scenarioId: z.string().min(1).optional(),
+})
+
+const requireFixtureRequestSchema = fixtureTargetSchema.extend({
+  operation: z.literal("requireFixture"),
+  access: fixtureAccessSchema.default("read"),
+  mutationScope: z.string().trim().min(1).check(maxUtf16Length(500)).optional(),
+})
+
+const unrequireFixtureRequestSchema = fixtureTargetSchema.extend({
+  operation: z.literal("unrequireFixture"),
+})
+
 export const authoringRequestSchema = z
   .discriminatedUnion("operation", [
     addPhaseRequestSchema,
@@ -213,8 +281,33 @@ export const authoringRequestSchema = z
     addCheckRequestSchema,
     removeCheckRequestSchema,
     updateCheckRequestSchema,
+    createFixtureRequestSchema,
+    updateFixtureRequestSchema,
+    requireFixtureRequestSchema,
+    unrequireFixtureRequestSchema,
   ])
   .superRefine((value, ctx) => {
+    if (
+      (value.operation === "requireFixture" ||
+        value.operation === "unrequireFixture") &&
+      (value.phaseId === undefined) === (value.scenarioId === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Name exactly one phase or scenario.",
+      })
+    }
+    if (
+      value.operation === "requireFixture" &&
+      (value.access === "mutates") !== (value.mutationScope !== undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A mutating requirement needs a scope; a read one has none.",
+        path: ["mutationScope"],
+      })
+    }
+
     if (
       value.operation === "updateScenario" &&
       value.name === undefined &&
@@ -267,10 +360,21 @@ const scenarioAuthoringResponseSchema = z.object({
   result: scenarioSchema,
 })
 
+const fixtureAuthoringResponseSchema = z.object({
+  operation: z.enum([
+    "createFixture",
+    "updateFixture",
+    "requireFixture",
+    "unrequireFixture",
+  ]),
+  result: fixtureSchema,
+})
+
 export const authoringResponseSchema = z.union([
   phaseAuthoringResponseSchema,
   removePhaseResponseSchema,
   scenarioAuthoringResponseSchema,
+  fixtureAuthoringResponseSchema,
 ])
 
 export const createRunRequestSchema = z
@@ -279,12 +383,16 @@ export const createRunRequestSchema = z
     runnerType: runnerTypeSchema,
     environment: environmentNameSchema.optional(),
     targetUrl: targetUrlSchema.optional(),
+    model: runModelSchema.optional(),
+    reasoningEffort: runReasoningEffortSchema.optional(),
     requestedScenarioSlug: slugSchema.nullable().optional(),
     requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+    requestedPhaseOrders: requestedPhaseOrdersSchema.nullable().optional(),
     requestedSuiteSlug: slugSchema.nullable().optional(),
     startedAt: z.number().int().positive(),
     creationAttemptId: z.guid().optional(),
     interruptedAt: z.number().int().positive().optional(),
+    fixturePreflight: z.array(fixturePreflightEntrySchema).max(100).optional(),
   })
   .refine(
     (value) =>
@@ -294,6 +402,16 @@ export const createRunRequestSchema = z
     }
   )
   .superRefine((value, ctx) => {
+    if (
+      value.runnerType !== "codex" &&
+      (value.model !== undefined || value.reasoningEffort !== undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Model settings are only supported for Codex runs.",
+        path: ["model"],
+      })
+    }
     if (
       value.interruptedAt !== undefined &&
       value.creationAttemptId === undefined
@@ -306,15 +424,21 @@ export const createRunRequestSchema = z
     }
     const hasScenario = value.requestedScenarioSlug != null
     const hasPhase = value.requestedPhaseOrder != null
+    const hasPhases = value.requestedPhaseOrders != null
     const hasSuite = value.requestedSuiteSlug != null
+    const targetCount = [hasScenario, hasPhase, hasPhases, hasSuite].filter(
+      Boolean
+    ).length
+    const hasModeTarget = {
+      all: true,
+      single: hasScenario,
+      phase: hasPhase,
+      through_phase: hasPhase,
+      suite: hasSuite,
+      phases: hasPhases,
+    }[value.mode]
     const isValid =
-      (value.mode === "all" && !hasScenario && !hasPhase && !hasSuite) ||
-      (value.mode === "single" && hasScenario && !hasPhase && !hasSuite) ||
-      ((value.mode === "phase" || value.mode === "through_phase") &&
-        !hasScenario &&
-        hasPhase &&
-        !hasSuite) ||
-      (value.mode === "suite" && !hasScenario && !hasPhase && hasSuite)
+      hasModeTarget && targetCount === (value.mode === "all" ? 0 : 1)
 
     if (!isValid) {
       ctx.addIssue({
@@ -334,11 +458,15 @@ export const createRunResponseSchema = z.object({
     evidencePolicy: true,
     environment: true,
     targetUrl: true,
+    model: true,
+    reasoningEffort: true,
     requestedScenarioSlug: true,
     requestedPhaseOrder: true,
+    requestedPhaseOrders: true,
     requestedSuiteSlug: true,
     requestedSuiteName: true,
     requestedSuitePhases: true,
+    fixturePreflight: true,
     startedAt: true,
   }),
   evidenceUploadUrl: z.url().optional(),
@@ -406,6 +534,7 @@ export const submitScenarioResultRequestSchema = z.object({
     failureDetail: nullableStringSchema,
     finishedAt: z.number().int().positive(),
     executionAttemptId: z.guid().optional(),
+    tokenUsage: tokenUsageSchema.optional(),
   }),
 })
 
@@ -439,6 +568,14 @@ export const finalizeRunResponseSchema = z.object({
   }),
 })
 
+/** Run reference accepted by `GET /runs/:runRef`: run ID, run name or "latest". */
+export const LATEST_RUN_REFERENCE = "latest"
+
+export const runResultsResponseSchema = z.object({
+  run: runSchema.omit({ ownerUserId: true }),
+  results: z.array(scenarioResultSchema.omit({ executionInstructions: true })),
+})
+
 export const versionMismatchDetailsSchema = z.object({
   apiVersion: z.literal(API_VERSION),
   minimumSupportedCliVersion: z.literal(MIN_SUPPORTED_CLI_VERSION),
@@ -463,8 +600,11 @@ export type CliConfig = z.infer<typeof cliConfigSchema>
 export type ProjectSummary = z.infer<typeof projectSummarySchema>
 export type AuthoringRequest = z.infer<typeof authoringRequestSchema>
 export type AuthoringResponse = z.infer<typeof authoringResponseSchema>
+export type FixtureListResponse = z.infer<typeof fixtureListResponseSchema>
+export type EffectiveFixtureRequirement = OrderedScenario["fixtureRequirements"][number]
 export type OrderedScenario = z.infer<typeof orderedScenarioSchema>
 export type RunnablePhase = z.infer<typeof runnablePhaseSchema>
 export type RunEvidenceUploadResponse = z.infer<
   typeof runEvidenceUploadResponseSchema
 >
+export type RunResultsResponse = z.infer<typeof runResultsResponseSchema>

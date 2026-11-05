@@ -24,6 +24,31 @@ const checkResult = v.object({
   ),
   evidence: v.string(),
   blockedReason: v.optional(v.union(v.null(), blockedReason)),
+  evidenceUnavailableReason: v.optional(v.union(v.null(), v.string())),
+})
+
+const fixtureAccess = v.union(v.literal("read"), v.literal("mutates"))
+
+export const fixturePreflightEntry = v.object({
+  fixtureId: v.string(),
+  fixtureSlug: v.string(),
+  fixtureName: v.string(),
+  access: fixtureAccess,
+  outcome: v.union(
+    v.literal("healthy"),
+    v.literal("repaired"),
+    v.literal("skipped")
+  ),
+  executor: v.union(v.null(), v.literal("hook"), v.literal("agent")),
+})
+
+const tokenUsage = v.object({
+  inputTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteInputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningOutputTokens: v.number(),
+  complete: v.boolean(),
 })
 
 export default defineSchema({
@@ -85,6 +110,36 @@ export default defineSchema({
   })
     .index("by_project", ["projectId"])
     .index("by_project_slug", ["projectId", "slug"]),
+  fixtures: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    slug: v.string(),
+    description: v.string(),
+    locator: v.string(),
+    protection: v.string(),
+    convergeSteps: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        instructions: v.string(),
+        doneWhen: v.string(),
+      })
+    ),
+    healthChecks: v.array(evaluationCheck),
+    // Exactly one of phaseId and scenarioId is set.
+    requirements: v.array(
+      v.object({
+        phaseId: v.union(v.null(), v.id("phases")),
+        scenarioId: v.union(v.null(), v.id("scenarios")),
+        access: fixtureAccess,
+        mutationScope: v.union(v.null(), v.string()),
+      })
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_slug", ["projectId", "slug"]),
   scenarioDependencies: defineTable({
     projectId: v.id("projects"),
     scenarioId: v.id("scenarios"),
@@ -108,10 +163,12 @@ export default defineSchema({
       v.literal("single"),
       v.literal("phase"),
       v.literal("through_phase"),
-      v.literal("suite")
+      v.literal("suite"),
+      v.literal("phases")
     ),
     requestedScenarioSlug: v.union(v.null(), v.string()),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedPhaseOrders: v.optional(v.union(v.null(), v.array(v.number()))),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     requestedSuiteName: v.optional(v.union(v.null(), v.string())),
     requestedSuitePhases: v.optional(
@@ -129,6 +186,9 @@ export default defineSchema({
     ),
     environment: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
+    fixturePreflight: v.optional(v.array(fixturePreflightEntry)),
     passedCheckCount: v.number(),
     totalCheckCount: v.number(),
     startedAt: v.number(),
@@ -148,7 +208,8 @@ export default defineSchema({
       "projectId",
       "creationAttemptId",
     ])
-    .index("by_project_status", ["projectId", "status"]),
+    .index("by_project_status", ["projectId", "status"])
+    .index("by_project_name", ["projectId", "name"]),
   scenarioResults: defineTable({
     runId: v.id("runs"),
     scenarioId: v.id("scenarios"),
@@ -172,6 +233,7 @@ export default defineSchema({
     executionAttemptId: v.optional(v.string()),
     executionSummary: v.union(v.null(), v.string()),
     failureDetail: v.union(v.null(), v.string()),
+    tokenUsage: v.optional(tokenUsage),
     startedAt: v.number(),
     finishedAt: v.union(v.null(), v.number()),
   })

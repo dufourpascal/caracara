@@ -1,6 +1,8 @@
 import { z } from "zod"
 
 import {
+  MAX_REQUESTED_PHASE_ORDERS,
+  MIN_REQUESTED_PHASE_ORDERS,
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
   PROJECT_PROMPT_MAX_LENGTH,
@@ -30,6 +32,7 @@ export const runModeSchema = z.enum([
   "phase",
   "through_phase",
   "suite",
+  "phases",
 ])
 export const evidencePolicySchema = z.enum([
   "text_only",
@@ -71,6 +74,28 @@ export const targetUrlSchema = z
     }
   })
   .transform((value) => new URL(value).toString())
+// Reasoning efforts the CLI can pass to Codex. The server stores any
+// runReasoningEffortSchema token so a newer CLI never fails run creation.
+export const modelReasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+])
+export const runModelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .check(maxUtf16Length(100))
+  .regex(/^[\x21-\x7e]+$/, {
+    error: "Model must be printable ASCII without spaces.",
+  })
+export const runReasoningEffortSchema = z.string().regex(/^[a-z0-9_-]{1,32}$/, {
+  error: "Reasoning effort must be a short lowercase token.",
+})
 export const runEnvironmentSchema = z.object({
   environment: environmentNameSchema,
   targetUrl: targetUrlSchema,
@@ -133,6 +158,13 @@ export const BLOCKED_REASONS = [
   "tool_limit",
 ] as const
 export const blockedReasonSchema = z.enum(BLOCKED_REASONS)
+export const EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH = 500
+/** Why a failed check has no screenshot, for example a native dialog that blocked every capture. */
+export const evidenceUnavailableReasonSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .check(maxUtf16Length(EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH))
 export const checkVerdictSchema = z.enum([
   "passed",
   "failed",
@@ -145,6 +177,9 @@ export const checkResultSchema = z
     verdict: checkVerdictSchema,
     evidence: z.string().min(1).check(maxUtf16Length(2_000)),
     blockedReason: blockedReasonSchema.nullable().optional(),
+    evidenceUnavailableReason: evidenceUnavailableReasonSchema
+      .nullable()
+      .optional(),
   })
   .superRefine((result, context) => {
     if (result.verdict === "blocked" && !result.blockedReason) {
@@ -165,7 +200,35 @@ export const checkResultSchema = z
         path: ["blockedReason"],
       })
     }
+    if (
+      result.verdict !== "failed" &&
+      result.evidenceUnavailableReason !== undefined &&
+      result.evidenceUnavailableReason !== null
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Only failed checks can include an evidence-unavailable reason.",
+        path: ["evidenceUnavailableReason"],
+      })
+    }
   })
+
+const tokenCountSchema = z.number().int().nonnegative()
+
+/**
+ * Agent runtime token usage for one scenario execution. `inputTokens`
+ * includes cached and cache-write input tokens. `complete` is false when at
+ * least one runner turn did not report usage, so the counts are a lower bound.
+ */
+export const tokenUsageSchema = z.object({
+  inputTokens: tokenCountSchema,
+  cachedInputTokens: tokenCountSchema,
+  cacheWriteInputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  reasoningOutputTokens: tokenCountSchema,
+  complete: z.boolean(),
+})
 
 export const projectSchema = z.object({
   id: z.string(),
@@ -250,6 +313,81 @@ export const scenarioDependencySchema = z.object({
   createdAt: timestampSchema,
 })
 
+export const requestedPhaseOrdersSchema = z
+  .array(z.number().int().positive())
+  .min(MIN_REQUESTED_PHASE_ORDERS, {
+    error: `A phases run needs at least ${MIN_REQUESTED_PHASE_ORDERS} phases.`,
+  })
+  .max(MAX_REQUESTED_PHASE_ORDERS, {
+    error: `A phases run can include at most ${MAX_REQUESTED_PHASE_ORDERS} phases.`,
+  })
+  .refine(
+    (orders) =>
+      orders.every((order, index) => index === 0 || order > orders[index - 1]!),
+    { error: "Requested phase orders must be sorted and unique." }
+  )
+
+export const fixtureAccessSchema = z.enum(["read", "mutates"])
+export const fixtureStepSchema = z.object({
+  id: z.guid(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
+  instructions: z.string().trim().min(1).check(maxUtf16Length(20_000)),
+  doneWhen: z.string().trim().min(1).check(maxUtf16Length(2_000)),
+})
+/** A phase or scenario that relies on a fixture. Exactly one target is set. */
+export const fixtureRequirementSchema = z
+  .object({
+    phaseId: z.string().min(1).nullable(),
+    scenarioId: z.string().min(1).nullable(),
+    access: fixtureAccessSchema,
+    mutationScope: z
+      .string()
+      .trim()
+      .min(1)
+      .check(maxUtf16Length(500))
+      .nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.phaseId === null) === (value.scenarioId === null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A requirement targets exactly one phase or scenario.",
+      })
+    }
+    if ((value.access === "mutates") !== (value.mutationScope !== null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A mutating requirement needs a scope; a read one has none.",
+        path: ["mutationScope"],
+      })
+    }
+  })
+export const fixtureSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string().trim().min(1).check(maxUtf16Length(120)),
+  slug: slugSchema,
+  description: z.string().check(maxUtf16Length(1_500)),
+  /** How to find the fixture in the application. */
+  locator: z.string().check(maxUtf16Length(2_000)),
+  /** Extra rules for evaluation runs that use the fixture. */
+  protection: z.string().check(maxUtf16Length(4_000)),
+  convergeSteps: z.array(fixtureStepSchema).max(20),
+  healthChecks: z.array(evaluationCheckSchema).max(20),
+  requirements: z.array(fixtureRequirementSchema),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+})
+/** What a run reported about each fixture it required, before it started. */
+export const fixturePreflightEntrySchema = z.object({
+  fixtureId: z.string().min(1),
+  fixtureSlug: slugSchema,
+  fixtureName: z.string().min(1).check(maxUtf16Length(120)),
+  access: fixtureAccessSchema,
+  outcome: z.enum(["healthy", "repaired", "skipped"]),
+  executor: z.enum(["hook", "agent"]).nullable(),
+})
+
 export const runSchema = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -259,6 +397,10 @@ export const runSchema = z.object({
   mode: runModeSchema,
   requestedScenarioSlug: slugSchema.nullable(),
   requestedPhaseOrder: z.number().int().positive().nullable().optional(),
+  requestedPhaseOrders: z
+    .array(z.number().int().positive())
+    .nullable()
+    .optional(),
   requestedSuiteSlug: slugSchema.nullable().optional(),
   requestedSuiteName: z
     .string()
@@ -271,6 +413,9 @@ export const runSchema = z.object({
   evidencePolicy: evidencePolicySchema,
   environment: environmentNameSchema.nullable().optional(),
   targetUrl: targetUrlSchema.nullable().optional(),
+  model: z.string().min(1).nullable().optional(),
+  reasoningEffort: z.string().min(1).nullable().optional(),
+  fixturePreflight: z.array(fixturePreflightEntrySchema).optional(),
   passedCheckCount: z.number().int().nonnegative(),
   totalCheckCount: z.number().int().nonnegative(),
   passRate: z.number().int().min(0).max(100).nullable(),
@@ -297,11 +442,17 @@ export const scenarioResultSchema = z.object({
   runnerType: runnerTypeSchema,
   executionSummary: nullableStringSchema,
   failureDetail: nullableStringSchema,
+  tokenUsage: tokenUsageSchema.nullable().optional(),
   startedAt: timestampSchema,
   finishedAt: timestampSchema.nullable(),
   submittedAt: timestampSchema,
 })
 
+export type FixtureAccess = z.infer<typeof fixtureAccessSchema>
+export type FixtureStep = z.infer<typeof fixtureStepSchema>
+export type FixtureRequirement = z.infer<typeof fixtureRequirementSchema>
+export type Fixture = z.infer<typeof fixtureSchema>
+export type FixturePreflightEntry = z.infer<typeof fixturePreflightEntrySchema>
 export type ScenarioStatus = z.infer<typeof scenarioStatusSchema>
 export type RunStatus = z.infer<typeof runStatusSchema>
 export type ScenarioResultStatus = z.infer<typeof scenarioResultStatusSchema>
@@ -309,6 +460,7 @@ export type EvaluationCheck = z.infer<typeof evaluationCheckSchema>
 export type BlockedReason = z.infer<typeof blockedReasonSchema>
 export type CheckVerdict = z.infer<typeof checkVerdictSchema>
 export type CheckResult = z.infer<typeof checkResultSchema>
+export type TokenUsage = z.infer<typeof tokenUsageSchema>
 export type RunnerType = z.infer<typeof runnerTypeSchema>
 export type RunMode = z.infer<typeof runModeSchema>
 export type EvidencePolicy = z.infer<typeof evidencePolicySchema>

@@ -495,6 +495,7 @@ export function buildRunnerPrompt(input: {
     ...(input.evidenceDirectory
       ? [
           "For every failed check, put the browser in the state that demonstrates the failure. Scroll to the relevant region and remove unrelated overlays.",
+          transientFailureEvidence,
           "Call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, so you can visually inspect the returned image. Capture the visible viewport without a uid.",
           "Inspect the image itself. Confirm that the failed behavior is clearly visible and that enough surrounding UI is shown to understand the problem. For a missing element, show the region where it should appear.",
           "If the image does not clearly show the defect, adjust the browser and repeat the preview screenshot. Do not save an unrelated, overly broad, obscured, or unreadable screenshot.",
@@ -585,6 +586,38 @@ export function buildBlockedRetryPrompt(input: {
   ].join("\n")
 }
 
+/** Progress text, toasts and running states disappear, so their screenshots must be taken when seen. */
+const transientFailureEvidence =
+  "Some failures are transient: progress or status text, toasts, loading states and running jobs. When you observe one, save its screenshot to the listed failure path immediately, before previewing, because the state may vanish within seconds. Afterwards you may preview and overwrite the same path if you find a clearer view."
+
+/** Appended to evidence whose screenshot was only captured in the correction turn. */
+export const LATE_SCREENSHOT_NOTE =
+  "Screenshot captured after the scenario; a transient state may no longer be visible in it."
+
+/** Marks checks whose screenshot came from the correction turn, keeping evidence within the 2,000 character limit. */
+export function annotateLateScreenshots(
+  execution: RunnerExecution,
+  lateCheckIds: string[]
+): RunnerExecution {
+  const late = new Set(lateCheckIds)
+  return {
+    ...execution,
+    checkResults: execution.checkResults.map((result) => {
+      if (!late.has(result.checkId)) return result
+      const room = 2_000 - LATE_SCREENSHOT_NOTE.length - 1
+      const base =
+        result.evidence.length > room
+          ? `${result.evidence.slice(0, room - 1)}…`
+          : result.evidence
+      return { ...result, evidence: `${base} ${LATE_SCREENSHOT_NOTE}` }
+    }),
+  }
+}
+
+/** A correction turn cannot bring back a transient state, so it captures where the failure appeared instead of failing the run. */
+const transientFailureCorrection =
+  "If the failure was transient and can no longer be shown, this replaces the rule about repeating until the defect is visible: save the closest view of where it appeared, such as the finished row, status area or the control that started it. Caracara notes on that check that its screenshot was taken afterwards."
+
 /** Native dialogs block chrome-devtools screenshots, so a failure shown in one needs a nearby capture instead. */
 const nativeDialogEvidence =
   "Browser-native alert, confirm and prompt dialogs block screenshots and never appear in them. If one is open, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted). If the failure is the dialog itself, record its exact text in the evidence and capture the page with the control that opened it in view; otherwise capture the failure region as usual."
@@ -607,6 +640,7 @@ export function buildMissingScreenshotPrompt(input: {
     "For each check, call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false, and visually inspect the returned image. Capture the visible viewport without a uid.",
     "If the image does not clearly show the defect and enough surrounding context, adjust the browser and repeat the preview screenshot.",
     "Only after visually confirming the image, call take_screenshot again with the listed path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+    transientFailureCorrection,
     nativeDialogCorrection,
     ...checks.map(
       (check) =>
@@ -1372,6 +1406,7 @@ class CodexRunner implements RunnerAdapter {
               checkIds: failedCheckIds,
             })
 
+            const initiallyMissingCheckIds = screenshots.missingCheckIds
             if (screenshots.missingCheckIds.length > 0) {
               let reasons = new Map<string, string>()
               let fallbackReason = MISSING_SCREENSHOT_FALLBACK_REASON
@@ -1433,9 +1468,16 @@ class CodexRunner implements RunnerAdapter {
             }
 
             return {
-              ...redactRunnerExecution(
-                redactEvidenceDirectory(validated, evidenceDirectory),
-                input.secrets
+              // Redact before annotating: the note truncates evidence, which could split a secret.
+              ...annotateLateScreenshots(
+                redactRunnerExecution(
+                  redactEvidenceDirectory(validated, evidenceDirectory),
+                  input.secrets
+                ),
+                // Checks still missing a screenshot are evidence unavailable, not late.
+                initiallyMissingCheckIds.filter(
+                  (checkId) => !screenshots.missingCheckIds.includes(checkId)
+                )
               ),
               screenshotEvidence: screenshots.evidence,
               usage,

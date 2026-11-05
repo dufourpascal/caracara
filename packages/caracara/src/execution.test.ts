@@ -20,6 +20,8 @@ import {
   parseScreenshotUnavailableReasons,
   SCREENSHOT_CORRECTION_FAILED_REASON,
   buildRunnerPrompt,
+  annotateLateScreenshots,
+  LATE_SCREENSHOT_NOTE,
   buildWindowsTaskkillArgs,
   formatRunnerUsage,
   hasWebpSignature,
@@ -379,6 +381,8 @@ describe("Codex configuration", () => {
     expect(correction).toContain("visually inspect the returned image")
     expect(correction).toContain("Only after visually confirming the image")
     expect(correction).toContain("Valid article slug")
+    expect(prompt).toContain("Some failures are transient")
+    expect(correction).toContain("can no longer be shown")
     expect(correction).toContain("handle_dialog")
     expect(prompt).toContain("handle_dialog")
   })
@@ -793,5 +797,42 @@ describe("runner usage", () => {
       reasoningOutputTokens: 0,
       estimatedCostUsd: 0.0123,
     })
+  })
+})
+
+describe("late screenshot evidence", () => {
+  it("notes only checks whose screenshot came from the correction turn", () => {
+    const annotated = annotateLateScreenshots(
+      {
+        executionSummary: "Exported once.",
+        checkResults: [
+          {
+            checkId: "a",
+            verdict: "failed",
+            evidence: "Progress said Getting things ready twice.",
+            blockedReason: null,
+          },
+          {
+            checkId: "b",
+            verdict: "failed",
+            evidence: "x".repeat(2_000),
+            blockedReason: null,
+          },
+          {
+            checkId: "c",
+            verdict: "failed",
+            evidence: "Captured in time.",
+            blockedReason: null,
+          },
+        ],
+      },
+      ["a", "b"]
+    )
+    expect(annotated.checkResults[0]?.evidence).toBe(
+      `Progress said Getting things ready twice. ${LATE_SCREENSHOT_NOTE}`
+    )
+    expect(annotated.checkResults[1]?.evidence.length).toBeLessThanOrEqual(2_000)
+    expect(annotated.checkResults[1]?.evidence.endsWith(LATE_SCREENSHOT_NOTE)).toBe(true)
+    expect(annotated.checkResults[2]?.evidence).toBe("Captured in time.")
   })
 })

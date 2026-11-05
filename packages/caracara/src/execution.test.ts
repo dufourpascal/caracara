@@ -247,6 +247,7 @@ describe("Codex configuration", () => {
               "/tmp/chrome-devtools-mcp.log",
               "--workspace",
               "/tmp/project",
+              "--experimentalVision=true",
             ],
             required: true,
             default_tools_approval_mode: "approve",
@@ -294,6 +295,7 @@ describe("Codex configuration", () => {
       "/tmp/chrome-devtools.log",
       "--workspace",
       "/home/user/project",
+      "--experimentalVision=true",
     ])
   })
 
@@ -364,6 +366,7 @@ describe("Codex configuration", () => {
     )
     expect(prompt).toContain("Do not merely restate the check")
     expect(prompt).toContain("Never include screenshot paths or image bytes")
+    expect(prompt).toContain("click_at")
 
     const correction = buildMissingScreenshotPrompt({
       scenario,

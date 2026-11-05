@@ -284,7 +284,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     "--config",
     'mcp_servers.chrome-devtools.command="npx"',
     "--config",
-    'mcp_servers.chrome-devtools.args=["-y", "chrome-devtools-mcp@latest", "--wsEndpoint", "ws://127.0.0.1:9222/devtools/browser/test", "--logFile", "/tmp/chrome-devtools-mcp.log", "--workspace", "/tmp/project"]',
+    'mcp_servers.chrome-devtools.args=["-y", "chrome-devtools-mcp@latest", "--wsEndpoint", "ws://127.0.0.1:9222/devtools/browser/test", "--logFile", "/tmp/chrome-devtools-mcp.log", "--workspace", "/tmp/project", "--experimentalVision=true"]',
     "--config",
     "mcp_servers.chrome-devtools.required=true",
     "--config",

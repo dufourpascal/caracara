@@ -2,12 +2,20 @@ import { ConvexError, v } from "convex/values"
 import { paginationOptsValidator } from "convex/server"
 import {
   environmentNameSchema,
+  fixturePreflightEntrySchema,
+  type FixturePreflightEntry,
+  LATEST_RUN_REFERENCE,
+  requestedPhaseOrdersSchema,
   runEnvironmentSchema,
+  runModelSchema,
+  runReasoningEffortSchema,
 } from "@workspace/contracts"
+import { z } from "zod"
 
 import type { Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { mutation, query, type QueryCtx } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
+import { fixturePreflightEntry } from "./schema"
 import {
   computeRunCheckCounts,
   createRunName,
@@ -25,8 +33,10 @@ import {
   toRunEvidence,
   toScenarioResult,
   validateCompletedCheckResults,
+  rejectEvidenceUnavailableReasons,
   validateFailedCheckEvidence,
   validateRunnerMatch,
+  validateTokenUsage,
 } from "./lib"
 
 const evaluationCheckValidator = v.object({
@@ -52,6 +62,16 @@ const checkResultValidator = v.object({
   ),
   evidence: v.string(),
   blockedReason: v.optional(v.union(v.null(), blockedReasonValidator)),
+  evidenceUnavailableReason: v.optional(v.union(v.null(), v.string())),
+})
+
+const tokenUsageValidator = v.object({
+  inputTokens: v.number(),
+  cachedInputTokens: v.number(),
+  cacheWriteInputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningOutputTokens: v.number(),
+  complete: v.boolean(),
 })
 
 function invalidEnvironment(message: string): never {
@@ -76,6 +96,90 @@ export function parseRunEnvironment(input: {
     )
   }
 
+  return parsed.data
+}
+
+function invalidRunModel(message: string): never {
+  throw new ConvexError({ code: "validation_error", message })
+}
+
+export function parseRunModel(input: {
+  runnerType: "codex" | "claude-code"
+  model?: string
+  reasoningEffort?: string
+}) {
+  if (input.model === undefined && input.reasoningEffort === undefined) {
+    return {}
+  }
+  if (input.runnerType !== "codex") {
+    invalidRunModel("Model settings are only supported for Codex runs.")
+  }
+
+  const model =
+    input.model === undefined
+      ? undefined
+      : runModelSchema.safeParse(input.model)
+  if (model && !model.success) {
+    invalidRunModel(model.error.issues[0]?.message ?? "Model is invalid.")
+  }
+  const reasoningEffort =
+    input.reasoningEffort === undefined
+      ? undefined
+      : runReasoningEffortSchema.safeParse(input.reasoningEffort)
+  if (reasoningEffort && !reasoningEffort.success) {
+    invalidRunModel(
+      reasoningEffort.error.issues[0]?.message ??
+        "Reasoning effort is invalid."
+    )
+  }
+
+  return {
+    ...(model ? { model: model.data } : {}),
+    ...(reasoningEffort ? { reasoningEffort: reasoningEffort.data } : {}),
+  }
+}
+
+export function matchesRunModel(
+  run: { model?: string; reasoningEffort?: string },
+  runModel: { model?: string; reasoningEffort?: string }
+) {
+  // A run stored without settings (for example by a server deployed before
+  // this field existed) accepts the retry; the original snapshot is kept.
+  if (run.model === undefined && run.reasoningEffort === undefined) {
+    return true
+  }
+  return (
+    run.model === runModel.model &&
+    run.reasoningEffort === runModel.reasoningEffort
+  )
+}
+
+export function parseRequestedPhaseOrders(input: {
+  mode: string
+  requestedPhaseOrders?: number[] | null
+}) {
+  const isPhasesRun = input.mode === "phases"
+  if (isPhasesRun !== (input.requestedPhaseOrders != null)) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Run mode and requested target do not match.",
+    })
+  }
+  if (input.requestedPhaseOrders == null) {
+    return null
+  }
+
+  const parsed = requestedPhaseOrdersSchema.safeParse(
+    input.requestedPhaseOrders
+  )
+  if (!parsed.success) {
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        parsed.error.issues[0]?.message ??
+        "Requested phase orders are invalid.",
+    })
+  }
   return parsed.data
 }
 
@@ -137,6 +241,40 @@ export function matchesScenarioExecutionAttempt(
     existingAttemptId === undefined ||
     submittedAttemptId === existingAttemptId
   )
+}
+
+// Suite runs snapshot their phases at creation, before the CLI fetches the
+// plan, and authoring stays open in between. Reject scenarios from a phase
+// that is not in the run's snapshot (or was renamed or reordered since), so
+// that even CLIs without their own check cannot run a different suite than
+// the run reports.
+export function assertScenarioPhaseInSuiteRun(
+  run: {
+    mode: string
+    requestedSuitePhases?: Array<{ id: string; name: string; order: number }>
+  },
+  scenarioPhase: {
+    phaseId?: string | null
+    phaseName?: string | null
+    phaseOrder?: number | null
+  }
+) {
+  if (run.mode !== "suite") {
+    return
+  }
+  const snapshot = (run.requestedSuitePhases ?? []).find(
+    (phase) => phase.id === scenarioPhase.phaseId
+  )
+  if (
+    !snapshot ||
+    snapshot.name !== scenarioPhase.phaseName ||
+    snapshot.order !== scenarioPhase.phaseOrder
+  ) {
+    throw new ConvexError({
+      code: "conflict",
+      message: "The suite changed after this run was created. Start the run again.",
+    })
+  }
 }
 
 export const listForProject = query({
@@ -250,6 +388,113 @@ export const getDetail = query({
   },
 })
 
+export function validateRunResultsFilter(
+  runRef: string,
+  environment: string | undefined
+) {
+  if (environment === undefined) {
+    return
+  }
+  if (runRef !== LATEST_RUN_REFERENCE) {
+    invalidEnvironment("An environment filter only applies to the latest run.")
+  }
+  if (!environmentNameSchema.safeParse(environment).success) {
+    invalidEnvironment("Environment filter is invalid.")
+  }
+}
+
+async function resolveRunReference(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  runRef: string,
+  environment: string | undefined
+) {
+  if (runRef === LATEST_RUN_REFERENCE) {
+    const runs =
+      environment === undefined
+        ? ctx.db
+            .query("runs")
+            .withIndex("by_project_started_at", (query) =>
+              query.eq("projectId", projectId)
+            )
+        : ctx.db
+            .query("runs")
+            .withIndex("by_project_environment_started_at", (query) =>
+              query.eq("projectId", projectId).eq("environment", environment)
+            )
+    return await runs.order("desc").first()
+  }
+
+  const runId = ctx.db.normalizeId("runs", runRef)
+  if (runId) {
+    const run = await ctx.db.get(runId)
+    return run && run.projectId === projectId ? run : null
+  }
+
+  const matches = await ctx.db
+    .query("runs")
+    .withIndex("by_project_name", (query) =>
+      query.eq("projectId", projectId).eq("name", runRef)
+    )
+    .take(2)
+  if (matches.length > 1) {
+    throw new ConvexError({
+      code: "conflict",
+      message: `Run name "${runRef}" matches more than one run. Use the run ID.`,
+    })
+  }
+  return matches[0] ?? null
+}
+
+/**
+ * Run results for export. `runRef` is a run ID, an exact run name, or
+ * "latest" (the most recently started run, optionally in one environment).
+ */
+export const getResults = query({
+  args: {
+    projectSlug: v.string(),
+    runRef: v.string(),
+    environment: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
+    validateRunResultsFilter(args.runRef, args.environment)
+
+    const run = await resolveRunReference(
+      ctx,
+      project._id,
+      args.runRef,
+      args.environment
+    )
+    if (!run) {
+      return null
+    }
+
+    const results = await ctx.db
+      .query("scenarioResults")
+      .withIndex("by_run_sequence", (query) => query.eq("runId", run._id))
+      .collect()
+
+    // Leaves out the owner ID and the (large) execution instructions.
+    const exportedRun: Partial<ReturnType<typeof toRun>> = toRun(run)
+    delete exportedRun.ownerUserId
+    return {
+      run: exportedRun as Omit<ReturnType<typeof toRun>, "ownerUserId">,
+      results: results
+        .sort((left, right) => left.sequenceIndex - right.sequenceIndex)
+        .map((result) => {
+          const exported: Partial<ReturnType<typeof toScenarioResult>> =
+            toScenarioResult(result)
+          delete exported.executionInstructions
+          return exported as Omit<
+            ReturnType<typeof toScenarioResult>,
+            "executionInstructions"
+          >
+        }),
+    }
+  },
+})
+
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -258,7 +503,8 @@ export const create = mutation({
       v.literal("single"),
       v.literal("phase"),
       v.literal("through_phase"),
-      v.literal("suite")
+      v.literal("suite"),
+      v.literal("phases")
     ),
     runnerType: v.union(v.literal("codex"), v.literal("claude-code")),
     evidencePolicy: v.optional(
@@ -266,12 +512,16 @@ export const create = mutation({
     ),
     environment: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
     requestedScenarioSlug: v.optional(v.union(v.null(), v.string())),
     requestedPhaseOrder: v.optional(v.union(v.null(), v.number())),
+    requestedPhaseOrders: v.optional(v.union(v.null(), v.array(v.number()))),
     requestedSuiteSlug: v.optional(v.union(v.null(), v.string())),
     startedAt: v.number(),
     creationAttemptId: v.optional(v.string()),
     interruptedAt: v.optional(v.number()),
+    fixturePreflight: v.optional(v.array(fixturePreflightEntry)),
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProjectOwnerById(
@@ -284,6 +534,7 @@ export const create = mutation({
         message: "Interrupted run creation requires a creation attempt ID.",
       })
     }
+    const runModel = parseRunModel(args)
     if (args.creationAttemptId) {
       const existing = await ctx.db
         .query("runs")
@@ -294,6 +545,11 @@ export const create = mutation({
         )
         .unique()
       if (existing) {
+        if (!matchesRunModel(existing, runModel)) {
+          invalidRunModel(
+            "Run creation retry does not match the original model settings."
+          )
+        }
         const creationState = getRunCreationState(args.interruptedAt)
         if (
           creationState.status === "interrupted" &&
@@ -312,6 +568,7 @@ export const create = mutation({
         return toRun(existing)
       }
     }
+    const requestedPhaseOrders = parseRequestedPhaseOrders(args)
     const isSuiteRun = args.mode === "suite"
     if (isSuiteRun !== (args.requestedSuiteSlug != null)) {
       throw new ConvexError({
@@ -336,6 +593,7 @@ export const create = mutation({
       })
     }
     const environment = parseRunEnvironment(args)
+    const fixturePreflight = parseFixturePreflight(args.fixturePreflight)
     const timestamp = Date.now()
     if (environment) {
       const runEnvironmentNames = addRunEnvironmentName(
@@ -354,6 +612,7 @@ export const create = mutation({
       mode: args.mode,
       requestedScenarioSlug: args.requestedScenarioSlug ?? null,
       requestedPhaseOrder: args.requestedPhaseOrder ?? null,
+      requestedPhaseOrders,
       requestedSuiteSlug: suite?.slug ?? null,
       requestedSuiteName: suite?.name ?? null,
       ...(suite
@@ -368,6 +627,8 @@ export const create = mutation({
       runnerType: args.runnerType,
       evidencePolicy: args.evidencePolicy ?? "text_only",
       ...(environment ?? {}),
+      ...runModel,
+      ...(fixturePreflight ? { fixturePreflight } : {}),
       passedCheckCount: 0,
       totalCheckCount: 0,
       startedAt: args.startedAt,
@@ -386,6 +647,26 @@ export const create = mutation({
   },
 })
 
+/** Stores the preflight as the CLI reported it; only its shape is checked. */
+export function parseFixturePreflight(
+  entries: FixturePreflightEntry[] | undefined
+) {
+  if (entries === undefined) {
+    return undefined
+  }
+  const parsed = z
+    .array(fixturePreflightEntrySchema)
+    .max(100)
+    .safeParse(entries)
+  if (!parsed.success) {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Fixture preflight is invalid.",
+    })
+  }
+  return parsed.data
+}
+
 export const submitScenarioResult = mutation({
   args: {
     projectId: v.id("projects"),
@@ -403,6 +684,7 @@ export const submitScenarioResult = mutation({
       failureDetail: v.union(v.null(), v.string()),
       finishedAt: v.number(),
       executionAttemptId: v.optional(v.string()),
+      tokenUsage: v.optional(tokenUsageValidator),
     }),
   },
   handler: async (ctx, args) => {
@@ -425,6 +707,8 @@ export const submitScenarioResult = mutation({
         message: "You do not have access to this run.",
       })
     }
+
+    validateTokenUsage(args.result.status, args.result.tokenUsage)
 
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 
@@ -487,16 +771,23 @@ export const submitScenarioResult = mutation({
         existing.evaluationChecks,
         args.result.checkResults
       )
-      const failedCheckIds = new Set(
-        args.result.checkResults
-          .filter((check) => check.verdict === "failed")
-          .map((check) => check.checkId)
-      )
-      await deleteScenarioResultEvidence(ctx, existing._id, failedCheckIds)
-      if (
+      const requiresScreenshots =
         (run.evidencePolicy ?? "text_only") === "failed_check_screenshot" &&
         existing.runnerType === "codex"
-      ) {
+      if (!requiresScreenshots) {
+        rejectEvidenceUnavailableReasons(args.result.checkResults)
+      }
+      // A failed check recorded as evidence unavailable keeps no screenshot.
+      const screenshotCheckIds = new Set(
+        args.result.checkResults
+          .filter(
+            (check) =>
+              check.verdict === "failed" && !check.evidenceUnavailableReason
+          )
+          .map((check) => check.checkId)
+      )
+      await deleteScenarioResultEvidence(ctx, existing._id, screenshotCheckIds)
+      if (requiresScreenshots) {
         const evidence = await ctx.db
           .query("runEvidence")
           .withIndex("by_result", (query) =>
@@ -520,6 +811,9 @@ export const submitScenarioResult = mutation({
       executionSummary: args.result.executionSummary,
       failureDetail: args.result.failureDetail,
       finishedAt: args.result.finishedAt,
+      // An interruption correction that carries no usage keeps the usage the
+      // earlier terminal submission recorded.
+      ...(args.result.tokenUsage ? { tokenUsage: args.result.tokenUsage } : {}),
     })
 
     await ctx.db.patch(run._id, {
@@ -588,6 +882,7 @@ export const startScenarioExecution = mutation({
     }
 
     validateRunnerMatch(run.runnerType, args.result.runnerType)
+    assertScenarioPhaseInSuiteRun(run, args.result)
 
     const scenario = await getScenarioById(ctx, args.result.scenarioId)
 

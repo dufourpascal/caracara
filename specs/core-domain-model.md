@@ -71,3 +71,15 @@ A suite has a name, slug, and unordered set of phase IDs. A phase may belong to 
 Suite-targeted runs preserve their target identity.
 
 When a run targets a suite, the run snapshots the suite name, slug, and each selected phase's ID, name, and order so history remains intelligible after the suite or its phases change or are deleted.
+
+### DOMAIN_13
+
+A fixture is project-owned persistent test data that scenarios rely on but must not change.
+
+A fixture has a name, unique project-scoped slug, description, a locator ("how to find it"), protection rules for evaluation runs, up to 20 ordered converge steps (name, instructions, done-when), and up to 20 health checks shaped like evaluation checks. Verify checks the health checks; converge creates or repairs the fixture idempotently. There is no reset operation.
+
+### DOMAIN_14
+
+Phases and scenarios declare fixture requirements.
+
+A requirement targets exactly one phase or scenario of the fixture's project and has access `read` or `mutates`; a mutating requirement names the scope it may change. A scenario's effective requirements are its own plus its phase's, merged per fixture: `mutates` wins and all mutating scopes are kept.

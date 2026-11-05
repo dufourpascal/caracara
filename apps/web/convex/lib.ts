@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values"
 
 import {
+  EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH,
   createUniqueSlug,
   formatRunName,
   normalizeSlug,
@@ -142,9 +143,13 @@ export async function requireProjectOwnerBySlug(ctx: Ctx, slug: string) {
   return { identity, project }
 }
 
-export async function assertProjectAuthoringUnlocked(
+// Authoring stays open while a run is running: the CLI executes the
+// definitions it fetched at run start and stores them on each scenario result.
+// Only writes that would cut a running run off from its project are blocked.
+export async function assertNoRunningProjectRun(
   ctx: Ctx,
-  projectId: Id<"projects">
+  projectId: Id<"projects">,
+  action: string
 ) {
   const runningRun = await ctx.db
     .query("runs")
@@ -156,7 +161,7 @@ export async function assertProjectAuthoringUnlocked(
   if (runningRun) {
     throw new ConvexError({
       code: "conflict",
-      message: `Authoring is unavailable while run ${runningRun.name} is running.`,
+      message: `${action} is unavailable while run ${runningRun.name} is running. Finish or delete that run to continue.`,
     })
   }
 }
@@ -244,6 +249,7 @@ export function toRun(run: Doc<"runs">) {
     mode: run.mode,
     requestedScenarioSlug: run.requestedScenarioSlug,
     requestedPhaseOrder: run.requestedPhaseOrder ?? null,
+    requestedPhaseOrders: run.requestedPhaseOrders ?? null,
     requestedSuiteSlug: run.requestedSuiteSlug ?? null,
     requestedSuiteName: run.requestedSuiteName ?? null,
     requestedSuitePhases: run.requestedSuitePhases ?? [],
@@ -251,6 +257,9 @@ export function toRun(run: Doc<"runs">) {
     evidencePolicy: run.evidencePolicy ?? "text_only",
     environment: run.environment ?? null,
     targetUrl: run.targetUrl ?? null,
+    model: run.model ?? null,
+    reasoningEffort: run.reasoningEffort ?? null,
+    ...(run.fixturePreflight ? { fixturePreflight: run.fixturePreflight } : {}),
     passedCheckCount: run.passedCheckCount,
     totalCheckCount: run.totalCheckCount,
     passRate:
@@ -282,6 +291,7 @@ export function toScenarioResult(result: Doc<"scenarioResults">) {
     runnerType: result.runnerType,
     executionSummary: result.executionSummary,
     failureDetail: result.failureDetail,
+    tokenUsage: result.tokenUsage ?? null,
     startedAt: result.startedAt,
     finishedAt: result.finishedAt,
     submittedAt: toTimestamp(result._creationTime),
@@ -420,6 +430,13 @@ export async function getProjectPhases(ctx: Ctx, projectId: Id<"projects">) {
 export async function getProjectSuites(ctx: Ctx, projectId: Id<"projects">) {
   return await ctx.db
     .query("suites")
+    .withIndex("by_project", (query) => query.eq("projectId", projectId))
+    .collect()
+}
+
+export async function getProjectFixtures(ctx: Ctx, projectId: Id<"projects">) {
+  return await ctx.db
+    .query("fixtures")
     .withIndex("by_project", (query) => query.eq("projectId", projectId))
     .collect()
 }
@@ -987,14 +1004,36 @@ export async function interruptRunScenarioResults(
   return interrupted.length
 }
 
+/**
+ * Each failed check needs exactly one screenshot, unless it is recorded as
+ * evidence unavailable with a reason; then it must have none.
+ */
 export function validateFailedCheckEvidence(
-  checkResults: Array<{ checkId: string; verdict: string }>,
+  checkResults: Array<{
+    checkId: string
+    verdict: string
+    evidenceUnavailableReason?: string | null
+  }>,
   evidence: Array<{ checkId: string }>
 ) {
-  const failedCheckIds = checkResults
-    .filter((check) => check.verdict === "failed")
+  const failedChecks = checkResults.filter(
+    (check) => check.verdict === "failed"
+  )
+  const failedCheckIds = failedChecks
+    .filter((check) => !check.evidenceUnavailableReason)
+    .map((check) => check.checkId)
+  const unavailableCheckIds = failedChecks
+    .filter((check) => check.evidenceUnavailableReason)
     .map((check) => check.checkId)
   const evidenceIds = evidence.map((item) => item.checkId)
+
+  if (evidenceIds.some((checkId) => unavailableCheckIds.includes(checkId))) {
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        "A failed check cannot have both a screenshot and an evidence-unavailable reason.",
+    })
+  }
 
   if (
     evidenceIds.length !== failedCheckIds.length ||
@@ -1003,7 +1042,27 @@ export function validateFailedCheckEvidence(
   ) {
     throw new ConvexError({
       code: "validation_error",
-      message: "Every failed check requires exactly one screenshot.",
+      message:
+        "Every failed check requires exactly one screenshot or an evidence-unavailable reason.",
+    })
+  }
+}
+
+/** Evidence-unavailable reasons only make sense where screenshots are required. */
+export function rejectEvidenceUnavailableReasons(
+  checkResults: Array<{ evidenceUnavailableReason?: string | null }>
+) {
+  if (
+    checkResults.some(
+      (check) =>
+        check.evidenceUnavailableReason !== undefined &&
+        check.evidenceUnavailableReason !== null
+    )
+  ) {
+    throw new ConvexError({
+      code: "validation_error",
+      message:
+        "Evidence-unavailable reasons are only accepted for runs that require screenshots.",
     })
   }
 }
@@ -1012,16 +1071,18 @@ export async function deleteProjectCascade(
   ctx: MutationCtx,
   projectId: Id<"projects">
 ) {
-  const [dependencies, phases, scenarios, suites, runs] = await Promise.all([
-    getProjectDependencies(ctx, projectId),
-    getProjectPhases(ctx, projectId),
-    getProjectScenarios(ctx, projectId),
-    getProjectSuites(ctx, projectId),
-    ctx.db
-      .query("runs")
-      .withIndex("by_project", (query) => query.eq("projectId", projectId))
-      .collect(),
-  ])
+  const [dependencies, phases, scenarios, suites, fixtures, runs] =
+    await Promise.all([
+      getProjectDependencies(ctx, projectId),
+      getProjectPhases(ctx, projectId),
+      getProjectScenarios(ctx, projectId),
+      getProjectSuites(ctx, projectId),
+      getProjectFixtures(ctx, projectId),
+      ctx.db
+        .query("runs")
+        .withIndex("by_project", (query) => query.eq("projectId", projectId))
+        .collect(),
+    ])
 
   let deletedResultCount = 0
 
@@ -1046,10 +1107,15 @@ export async function deleteProjectCascade(
     await ctx.db.delete(suite._id)
   }
 
+  for (const fixture of fixtures) {
+    await ctx.db.delete(fixture._id)
+  }
+
   await ctx.db.delete(projectId)
 
   return {
     deletedDependencyCount: dependencies.length,
+    deletedFixtureCount: fixtures.length,
     deletedPhaseCount: phases.length,
     deletedProjectId: projectId,
     deletedResultCount,
@@ -1063,6 +1129,38 @@ export function createRunName() {
   return formatRunName(new Date())
 }
 
+const TOKEN_USAGE_COUNT_FIELDS = [
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+] as const
+
+export function validateTokenUsage(
+  status: string,
+  tokenUsage: TokenUsageRecord | undefined
+) {
+  if (tokenUsage === undefined) {
+    return
+  }
+  if (status === "dependency_failed") {
+    throw new ConvexError({
+      code: "validation_error",
+      message: "Dependency-failed scenarios cannot report token usage.",
+    })
+  }
+  for (const field of TOKEN_USAGE_COUNT_FIELDS) {
+    const value = tokenUsage[field]
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new ConvexError({
+        code: "validation_error",
+        message: `Token usage ${field} must be a non-negative integer.`,
+      })
+    }
+  }
+}
+
 export function validateCompletedCheckResults(
   evaluationChecks: Array<{ id: string }>,
   checkResults: Array<{
@@ -1070,6 +1168,7 @@ export function validateCompletedCheckResults(
     verdict: string
     evidence: string
     blockedReason?: string | null
+    evidenceUnavailableReason?: string | null
   }>
 ) {
   const expectedIds = evaluationChecks.map((check) => check.id)
@@ -1090,6 +1189,17 @@ export function validateCompletedCheckResults(
             "tool_limit",
           ].includes(check.blockedReason ?? "")
         : check.blockedReason !== undefined && check.blockedReason !== null
+    ) ||
+    checkResults.some((check) =>
+      check.evidenceUnavailableReason === undefined ||
+      check.evidenceUnavailableReason === null
+        ? false
+        : check.verdict !== "failed" ||
+          check.evidenceUnavailableReason.trim() === "" ||
+          check.evidenceUnavailableReason !==
+            check.evidenceUnavailableReason.trim() ||
+          check.evidenceUnavailableReason.length >
+            EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH
     )
   ) {
     throw new ConvexError({
@@ -1111,6 +1221,26 @@ export function validateRunnerMatch(
   }
 }
 
+type TokenUsageRecord = Record<
+  (typeof TOKEN_USAGE_COUNT_FIELDS)[number],
+  number
+> & { complete: boolean }
+
+function matchesTokenUsage(
+  existing: TokenUsageRecord | undefined,
+  submitted: TokenUsageRecord | undefined
+) {
+  if (!existing || !submitted) {
+    return existing === submitted
+  }
+  return (
+    existing.complete === submitted.complete &&
+    TOKEN_USAGE_COUNT_FIELDS.every(
+      (field) => existing[field] === submitted[field]
+    )
+  )
+}
+
 export function matchesTerminalScenarioResult(
   existing: {
     status: string
@@ -1119,10 +1249,12 @@ export function matchesTerminalScenarioResult(
       verdict: string
       evidence: string
       blockedReason?: string | null
+      evidenceUnavailableReason?: string | null
     }>
     executionSummary: string | null
     failureDetail: string | null
     finishedAt: number | null
+    tokenUsage?: TokenUsageRecord
   },
   submitted: {
     status: string
@@ -1131,10 +1263,12 @@ export function matchesTerminalScenarioResult(
       verdict: string
       evidence: string
       blockedReason?: string | null
+      evidenceUnavailableReason?: string | null
     }>
     executionSummary: string | null
     failureDetail: string | null
     finishedAt: number
+    tokenUsage?: TokenUsageRecord
   }
 ) {
   return (
@@ -1142,6 +1276,13 @@ export function matchesTerminalScenarioResult(
     existing.executionSummary === submitted.executionSummary &&
     existing.failureDetail === submitted.failureDetail &&
     existing.finishedAt === submitted.finishedAt &&
+    matchesTokenUsage(
+      existing.tokenUsage,
+      // An interruption correction without usage keeps the stored usage, so
+      // its retry must still match.
+      submitted.tokenUsage ??
+        (submitted.status === "interrupted" ? existing.tokenUsage : undefined)
+    ) &&
     existing.checkResults.length === submitted.checkResults.length &&
     existing.checkResults.every((check, index) => {
       const candidate = submitted.checkResults[index]
@@ -1149,7 +1290,9 @@ export function matchesTerminalScenarioResult(
         candidate?.checkId === check.checkId &&
         candidate.verdict === check.verdict &&
         candidate.evidence === check.evidence &&
-        (candidate.blockedReason ?? null) === (check.blockedReason ?? null)
+        (candidate.blockedReason ?? null) === (check.blockedReason ?? null) &&
+        (candidate.evidenceUnavailableReason ?? null) ===
+          (check.evidenceUnavailableReason ?? null)
       )
     })
   )

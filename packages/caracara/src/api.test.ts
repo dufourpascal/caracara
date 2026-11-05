@@ -4,6 +4,7 @@ import {
   createRun,
   fetchExecutionPlan,
   fetchProjects,
+  fetchRunResults,
   finalizeRun,
   submitAuthoringOperation,
   submitScenarioResult,
@@ -366,5 +367,56 @@ describe("api client", () => {
 
     await expect(finalization).rejects.toThrow(/aborted/i)
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it("requests run results by encoded reference and environment", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({ code: "not_found", message: "Run not found." }),
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(
+      fetchRunResults({
+        apiBaseUrl: "https://example.com",
+        accessToken: "token",
+        version: "0.6.2",
+        projectSlug: "demo",
+        runRef: "latest",
+        environment: "preview",
+      })
+    ).rejects.toThrow("not_found: Run not found.")
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/api/v3/projects/demo/runs/latest?environment=preview",
+      expect.anything()
+    )
+  })
+
+  it("explains a non-JSON response from a server without the results endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'")
+        },
+      }))
+    )
+
+    await expect(
+      fetchRunResults({
+        apiBaseUrl: "https://example.com",
+        accessToken: "token",
+        version: "0.6.2",
+        projectSlug: "demo",
+        runRef: "brave-heron-20261104-120000",
+      })
+    ).rejects.toThrow(
+      /non-JSON API response \(404 Not Found\)\. The server may not support `caracara results` yet/
+    )
   })
 })

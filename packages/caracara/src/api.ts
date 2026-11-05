@@ -11,8 +11,11 @@ import {
   executionPlanResponseSchema,
   finalizeRunRequestSchema,
   finalizeRunResponseSchema,
+  fixtureListResponseSchema,
   parseApiError,
+  projectDetailResponseSchema,
   projectListResponseSchema,
+  runResultsResponseSchema,
   runEvidenceUploadResponseSchema,
   singleScenarioResponseSchema,
   startScenarioExecutionRequestSchema,
@@ -68,6 +71,7 @@ async function request<T>(args: {
   accessToken: string
   init?: RequestInit
   retryTransient?: boolean
+  nonJsonHint?: string
   schema: { parse: (value: unknown) => T }
 }) {
   const init = {
@@ -86,7 +90,15 @@ async function request<T>(args: {
   const response = args.retryTransient
     ? await fetchWithTransientRetries(args.url, init)
     : await fetch(args.url, init)
-  const json = await response.json()
+  let json: unknown
+  try {
+    json = await response.json()
+  } catch (error) {
+    throw new Error(
+      `Unexpected non-JSON API response (${response.status} ${response.statusText}).${args.nonJsonHint ? ` ${args.nonJsonHint}` : ""}`,
+      { cause: error }
+    )
+  }
 
   if (!response.ok) {
     const error = parseApiError(json)
@@ -128,6 +140,20 @@ export async function fetchProjects(
   })
 }
 
+export async function fetchProject(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${encodeURIComponent(args.projectSlug)}`,
+    version: args.version,
+    accessToken: args.accessToken,
+    schema: projectDetailResponseSchema,
+  })
+}
+
 export async function fetchExecutionPlan(args: {
   apiBaseUrl: string
   accessToken: string
@@ -149,17 +175,57 @@ export async function fetchExecutionPlan(args: {
   })
 }
 
+export async function fetchRunResults(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+  runRef: string
+  environment?: string
+}) {
+  const search =
+    args.environment !== undefined
+      ? `?${new URLSearchParams({ environment: args.environment })}`
+      : ""
+
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${encodeURIComponent(args.projectSlug)}/runs/${encodeURIComponent(args.runRef)}${search}`,
+    version: args.version,
+    accessToken: args.accessToken,
+    retryTransient: true,
+    nonJsonHint:
+      "The server may not support `caracara results` yet; check --api-base-url or update the server.",
+    schema: runResultsResponseSchema,
+  })
+}
+
+export async function fetchFixtures(args: {
+  apiBaseUrl: string
+  accessToken: string
+  version: string
+  projectSlug: string
+}) {
+  return request({
+    url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${encodeURIComponent(args.projectSlug)}/fixtures`,
+    version: args.version,
+    accessToken: args.accessToken,
+    schema: fixtureListResponseSchema,
+  })
+}
+
 export async function fetchSingleScenario(args: {
   apiBaseUrl: string
   accessToken: string
   version: string
   projectSlug: string
   scenarioSlug: string
+  signal?: AbortSignal
 }) {
   return request({
     url: `${args.apiBaseUrl}/api/${API_NAMESPACE}/projects/${args.projectSlug}/scenarios/${args.scenarioSlug}`,
     version: args.version,
     accessToken: args.accessToken,
+    init: { signal: args.signal },
     schema: singleScenarioResponseSchema,
   })
 }

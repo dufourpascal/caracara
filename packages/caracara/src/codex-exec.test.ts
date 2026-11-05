@@ -107,6 +107,10 @@ if (mode === "failed") {
   emit({ type: "turn.failed", error: { message: "model refused" } })
   process.exit(1)
 }
+emit({ type: "item.started", item: { id: "item_2", type: "mcp_tool_call", server: "chrome-devtools", tool: "click", arguments: { uid: "1_2" }, result: null, error: null, status: "in_progress" } })
+emit({ type: "item.completed", item: { id: "item_2", type: "mcp_tool_call", server: "chrome-devtools", tool: "click", arguments: { uid: "1_2" }, result: { content: [] }, error: null, status: "completed" } })
+emit({ type: "item.started", item: { id: "item_3", type: "command_execution", command: "bash -lc 'ls'", aggregated_output: "", exit_code: null, status: "in_progress" } })
+emit({ type: "item.completed", item: { id: "item_3", type: "command_execution", command: "bash -lc 'ls'", aggregated_output: "a\\n", exit_code: 0, status: "completed" } })
 emit({ type: "item.completed", item: { id: "item_0", type: "reasoning", text: "thinking" } })
 emit({ type: "item.completed", item: { id: "item_1", type: "agent_message", text: '{"ok":true}' } })
 emit({
@@ -355,6 +359,47 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
         reasoning_output_tokens: 5,
       },
     })
+  })
+
+  it("forwards item events while the turn runs", async () => {
+    const thread = createClient().startThread(
+      buildCodexThreadOptions({ cwd: "/tmp/project" })
+    )
+    const events: Array<{ type: string; id?: string; itemType: string }> = []
+
+    const turn = await thread.run("Test the app.", {
+      onItemEvent: (event) => {
+        events.push({
+          type: event.type,
+          id: event.item.id,
+          itemType: event.item.type,
+        })
+      },
+    })
+
+    expect(turn.finalResponse).toBe('{"ok":true}')
+    expect(events).toEqual([
+      { type: "item.started", id: "item_2", itemType: "mcp_tool_call" },
+      { type: "item.completed", id: "item_2", itemType: "mcp_tool_call" },
+      { type: "item.started", id: "item_3", itemType: "command_execution" },
+      { type: "item.completed", id: "item_3", itemType: "command_execution" },
+      { type: "item.completed", id: "item_0", itemType: "reasoning" },
+      { type: "item.completed", id: "item_1", itemType: "agent_message" },
+    ])
+  })
+
+  it("keeps the turn going when the item callback throws", async () => {
+    const thread = createClient().startThread(
+      buildCodexThreadOptions({ cwd: "/tmp/project" })
+    )
+
+    const turn = await thread.run("Test the app.", {
+      onItemEvent: () => {
+        throw new Error("render failed")
+      },
+    })
+
+    expect(turn.finalResponse).toBe('{"ok":true}')
   })
 
   it("passes the none reasoning effort as a config override", async () => {

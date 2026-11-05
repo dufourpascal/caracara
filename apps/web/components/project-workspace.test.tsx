@@ -11,11 +11,14 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   formatRunDuration,
+  formatRunModelLabel,
+  formatRunModelTitle,
   getCheckPassRate,
   getRunHref,
   ProjectSettingsPanel,
   readRunSelectionFromLocation,
   RunEnvironmentFilter,
+  RunResultDetail,
   ScenarioEditor,
   SuiteEditor,
 } from "./project-workspace"
@@ -23,6 +26,23 @@ import {
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }))
+
+describe("run model labels", () => {
+  it("labels recorded models and hides missing ones", () => {
+    expect(
+      formatRunModelLabel({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    ).toBe("gpt-6.1-sol · high")
+    expect(formatRunModelLabel({ model: "gpt-6.1-sol" })).toBe("gpt-6.1-sol")
+    expect(formatRunModelLabel({ model: null, reasoningEffort: "high" })).toBe(
+      null
+    )
+    expect(formatRunModelLabel({})).toBe(null)
+    expect(
+      formatRunModelTitle({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    ).toBe("Model: gpt-6.1-sol, reasoning effort: high")
+    expect(formatRunModelTitle({})).toBe("Model not recorded")
+  })
+})
 
 describe("run environment filter", () => {
   afterEach(cleanup)
@@ -80,6 +100,89 @@ describe("run result metrics", () => {
     expect(formatRunDuration(1_000, null)).toBe("In progress")
     expect(getCheckPassRate(7, 7)).toBe(100)
     expect(getCheckPassRate(5, 7)).toBe(71)
+  })
+})
+
+describe("run result detail", () => {
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  it("shows the reason in place of a missing screenshot", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    const check = (id: string) => ({
+      id,
+      name: `Check ${id}`,
+      expectation: `Expectation ${id}`,
+    })
+    render(
+      <RunResultDetail
+        result={{
+          scenarioName: "Delete item",
+          scenarioSlug: "delete-item",
+          status: "completed",
+          evaluationChecks: [check("dialog"), check("shown"), check("legacy")],
+          checkResults: [
+            {
+              checkId: "dialog",
+              verdict: "failed",
+              evidence:
+                "Attempted: delete. Failed: the dialog named another item.",
+              evidenceUnavailableReason:
+                "A native confirm dialog blocked every screenshot.",
+            },
+            {
+              checkId: "shown",
+              verdict: "failed",
+              evidence: "Attempted: save. Failed: the toast showed an error.",
+              evidenceUnavailableReason: null,
+            },
+            {
+              checkId: "legacy",
+              verdict: "failed",
+              evidence: "Attempted: export. Failed: nothing downloaded.",
+            },
+          ],
+          evidence: [
+            {
+              id: "evidence-1",
+              checkId: "shown",
+              kind: "screenshot",
+              contentType: "image/webp",
+              byteSize: 10,
+              sha256: "a".repeat(64),
+              createdAt: 1,
+            },
+          ],
+          executionSummary: "Done.",
+          failureDetail: null,
+          runnerType: "codex",
+          startedAt: 1,
+          finishedAt: 2,
+          submittedAt: 2,
+          executionInstructions: "Delete the item.",
+        }}
+      />
+    )
+
+    expect(screen.getAllByText("Screenshot unavailable")).toHaveLength(1)
+    expect(
+      screen.getByText("A native confirm dialog blocked every screenshot.")
+    ).toBeTruthy()
+    expect(
+      screen.getByRole("button", { name: "Open screenshot for Check shown" })
+    ).toBeTruthy()
+    expect(
+      screen.queryByRole("button", { name: "Open screenshot for Check dialog" })
+    ).toBeNull()
   })
 })
 

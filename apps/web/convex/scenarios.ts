@@ -4,14 +4,16 @@ import { paginationOptsValidator } from "convex/server"
 import type { Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { selectSuitePhases } from "./domain"
+import { attachFixtureRequirements, stripFixtureRequirements } from "./fixtures"
 import {
-  assertProjectAuthoringUnlocked,
+  assertNoRunningProjectRun,
   deleteDependenciesTouchingScenarioIds,
   ensureScenarioOwnership,
   ensureUniqueScenarioSlug,
   getExecutionPlan,
   getOrderedScenarios,
   getProjectDependencies,
+  getProjectFixtures,
   getProjectPhases,
   getProjectScenarios,
   getScenarioDependencyIds,
@@ -214,11 +216,13 @@ export const getBySlug = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const [scenario, dependencyIdsByScenario, phases] = await Promise.all([
-      getScenarioBySlug(ctx, project._id, args.scenarioSlug),
-      getScenarioDependencyIds(ctx, project._id),
-      getProjectPhases(ctx, project._id),
-    ])
+    const [scenario, dependencyIdsByScenario, phases, fixtures] =
+      await Promise.all([
+        getScenarioBySlug(ctx, project._id, args.scenarioSlug),
+        getScenarioDependencyIds(ctx, project._id),
+        getProjectPhases(ctx, project._id),
+        getProjectFixtures(ctx, project._id),
+      ])
 
     if (!scenario) {
       return null
@@ -232,10 +236,12 @@ export const getBySlug = query({
         (candidate) => candidate._id === (scenario.phaseId ?? null)
       ) ?? null
 
-    return {
-      ...toScenario(scenario, phase),
-      dependencyIds,
-    }
+    const withFixtures = attachFixtureRequirements(
+      [{ ...toScenario(scenario, phase), dependencyIds }],
+      fixtures
+    )
+
+    return { ...withFixtures.scenarios[0]!, fixtures: withFixtures.fixtures }
   },
 })
 
@@ -246,12 +252,20 @@ export const executionPlanForProject = query({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    const [executionPlan, suite] = await Promise.all([
+    const [executionPlan, suite, projectFixtures] = await Promise.all([
       getExecutionPlan(ctx, project._id, { activeOnly: true }),
       args.suiteSlug
         ? getSuiteBySlug(ctx, project._id, args.suiteSlug)
         : Promise.resolve(null),
+      getProjectFixtures(ctx, project._id),
     ])
+    const selectedPhases = suite
+      ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
+      : executionPlan.phases
+    const { fixtures } = attachFixtureRequirements(
+      selectedPhases.flatMap((phase) => phase.scenarios),
+      projectFixtures
+    )
 
     return {
       projectPrompt: project.projectPrompt,
@@ -260,11 +274,14 @@ export const executionPlanForProject = query({
         name: project.name,
         slug: project.slug,
       },
-      phases: suite
-        ? selectSuitePhases(executionPlan.phases, suite.phaseIds)
-        : executionPlan.phases,
+      phases: selectedPhases.map((phase) => ({
+        ...phase,
+        scenarios: attachFixtureRequirements(phase.scenarios, projectFixtures)
+          .scenarios,
+      })),
       suite: suite ? { name: suite.name, slug: suite.slug } : null,
       unassignedScenarioCount: executionPlan.unassignedScenarioCount,
+      fixtures,
     }
   },
 })
@@ -283,7 +300,6 @@ export const create = mutation({
   handler: async (ctx, args) => {
     validateEvaluationChecks(args.status, args.evaluationChecks)
     const { project } = await requireProjectOwnerById(ctx, args.projectId)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const timestamp = Date.now()
     const slug = await ensureUniqueScenarioSlug(
@@ -347,7 +363,6 @@ export const ensureNavigationMetadataForProject = mutation({
   },
   handler: async (ctx, args) => {
     const { project } = await requireProjectOwnerBySlug(ctx, args.projectSlug)
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const scenarios = await getProjectScenarios(ctx, project._id)
     const needsRebuild = scenarios.some(
       (scenario) =>
@@ -386,7 +401,6 @@ export const update = mutation({
       ctx,
       args.scenarioId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const slug = await ensureUniqueScenarioSlug(
       ctx,
@@ -479,7 +493,6 @@ export const updateDetails = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const phases = await getProjectPhases(ctx, project._id)
     const status = args.status ?? scenario.status
     const selectedPhaseId =
@@ -558,7 +571,6 @@ export const addCheck = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     const evaluationChecks = [...scenario.evaluationChecks, args.check]
     validateEvaluationChecks(scenario.status, evaluationChecks)
     await ctx.db.patch(scenario._id, {
@@ -594,7 +606,6 @@ export const removeCheck = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
 
     if (!scenario.evaluationChecks.some((check) => check.id === args.checkId)) {
       throw new ConvexError({
@@ -649,7 +660,6 @@ export const updateCheck = mutation({
       args.scenarioId,
       args.projectId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
     let found = false
     const evaluationChecks = scenario.evaluationChecks.map((check) => {
       if (check.id !== args.checkId) {
@@ -702,7 +712,9 @@ export const remove = mutation({
       ctx,
       args.scenarioId
     )
-    await assertProjectAuthoringUnlocked(ctx, project._id)
+    // A running run reports results against this scenario ID, which must keep
+    // resolving to a scenario of this project until the run ends.
+    await assertNoRunningProjectRun(ctx, project._id, "Scenario deletion")
 
     const dependencies = await getProjectDependencies(ctx, project._id)
     const relatedDependencies = dependencies.filter(
@@ -715,6 +727,7 @@ export const remove = mutation({
       await ctx.db.delete(dependency._id)
     }
 
+    await stripFixtureRequirements(ctx, project._id, scenario._id)
     await ctx.db.delete(scenario._id)
     await rebuildScenarioNavigationMetadata(ctx, project._id)
 

@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => {
             phaseId: "phase-1",
             phaseName: "Setup",
             phaseOrder: 1,
-            dependencyIds: [],
+            dependencyIds: [] as string[],
           },
         ],
       },
@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
       id: "run-1",
       name: "steady-hawk-20260827-120000",
       evidencePolicy: "text_only",
+      requestedSuitePhases: [{ id: "phase-1", name: "Setup", order: 1 }],
     },
   }
 
@@ -73,6 +74,7 @@ const mocks = vi.hoisted(() => {
       return {
         close,
         executeScenario,
+        runTask: vi.fn(),
       }
     }),
     submitScenarioResult: vi.fn(async (args?: { signal?: AbortSignal }) => {
@@ -114,11 +116,165 @@ vi.mock("./execution.js", async (importOriginal) => ({
 }))
 
 import { runCommand } from "./commands.js"
+import { readResolvedConfig } from "./config.js"
 
 afterEach(() => {
   process.exitCode = undefined
   vi.clearAllMocks()
   vi.restoreAllMocks()
+})
+
+describe("scenario token usage", () => {
+  const runnerUsage = {
+    inputTokens: 1_000,
+    cachedInputTokens: 600,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 50,
+    estimatedCostUsd: 0.01,
+  }
+  const storedUsage = {
+    inputTokens: 1_000,
+    cachedInputTokens: 600,
+    cacheWriteInputTokens: 0,
+    outputTokens: 200,
+    reasoningOutputTokens: 50,
+    complete: true,
+  }
+  const zeroUsage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    complete: true,
+  }
+
+  function submittedResults() {
+    return (
+      mocks.submitScenarioResult.mock.calls as unknown as Array<
+        [{ payload: { result: { status: string; tokenUsage?: unknown } } }]
+      >
+    ).map(([args]) => args.payload.result)
+  }
+
+  it("submits the runner's usage with a completed scenario", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: true },
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed", tokenUsage: storedUsage }),
+    ])
+  })
+
+  it("keeps the usage when the completed submission fails", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: false },
+    })
+    mocks.submitScenarioResult.mockRejectedValueOnce(new Error("Bad gateway"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed" }),
+      expect.objectContaining({
+        status: "runner_failed",
+        tokenUsage: { ...storedUsage, complete: false },
+      }),
+    ])
+  })
+
+  it("submits usage carried by a runner error", async () => {
+    const { RunnerExecutionError } = await import("./execution.js")
+    mocks.executeScenario.mockRejectedValueOnce(
+      new RunnerExecutionError("Invalid output", {
+        usage: runnerUsage,
+        complete: true,
+      })
+    )
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({
+        status: "runner_failed",
+        tokenUsage: storedUsage,
+      }),
+    ])
+  })
+
+  it("records zero usage when the runner never started", async () => {
+    mocks.startRun.mockRejectedValueOnce(new Error("Codex not found"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({
+        status: "runner_failed",
+        tokenUsage: zeroUsage,
+      }),
+    ])
+  })
+
+  it("omits usage when the runner failed without reporting any", async () => {
+    mocks.executeScenario.mockRejectedValueOnce(new Error("Runner crashed"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    const [result] = submittedResults()
+    expect(result?.status).toBe("runner_failed")
+    expect(result).not.toHaveProperty("tokenUsage")
+  })
+
+  it("keeps the usage when the completed submission is interrupted", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Complete",
+      usage: { usage: runnerUsage, complete: true },
+    })
+    mocks.submitScenarioResult.mockImplementationOnce(
+      (args?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          args?.signal?.addEventListener(
+            "abort",
+            () => reject(args.signal?.reason),
+            { once: true }
+          )
+        })
+    )
+    const existingListeners = new Set(process.listeners("SIGINT"))
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    const run = runCommand({})
+    await vi.waitFor(() =>
+      expect(mocks.submitScenarioResult).toHaveBeenCalledOnce()
+    )
+    process
+      .listeners("SIGINT")
+      .find((listener) => !existingListeners.has(listener))
+      ?.("SIGINT")
+    await run
+
+    expect(submittedResults()).toEqual([
+      expect.objectContaining({ status: "completed", tokenUsage: storedUsage }),
+      expect.objectContaining({
+        status: "interrupted",
+        tokenUsage: storedUsage,
+      }),
+    ])
+  })
 })
 
 describe("run interruption", () => {
@@ -295,7 +451,7 @@ describe("run interruption", () => {
     expect(process.exitCode).toBe(130)
   })
 
-  it("listens before a suite run is created", async () => {
+  it("listens while a suite run is created after its plan is fetched", async () => {
     let finishCreatingRun:
       | ((value: Awaited<ReturnType<typeof mocks.createRun>>) => void)
       | undefined
@@ -315,17 +471,14 @@ describe("run interruption", () => {
       .find((listener) => !existingListeners.has(listener))
     expect(interrupt).toBeDefined()
     interrupt?.("SIGINT")
-    finishCreatingRun?.({
-      run: {
-        id: "run-1",
-        name: "steady-hawk-20260827-120000",
-        evidencePolicy: "text_only",
-      },
-    })
+    finishCreatingRun?.(mocks.createRunResponse)
 
     await run
 
-    expect(mocks.fetchExecutionPlan).not.toHaveBeenCalled()
+    expect(mocks.fetchExecutionPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteSlug: "smoke" })
+    )
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
     expect(mocks.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({ status: "interrupted" }),
@@ -447,7 +600,7 @@ describe("run interruption", () => {
     }
   )
 
-  it("preserves the signal exit code when plan-fetch cleanup fails", async () => {
+  it("creates no suite run when interrupted during the plan fetch", async () => {
     mocks.fetchExecutionPlan.mockImplementationOnce(
       (args?: { signal?: AbortSignal }) =>
         new Promise((_, reject) => {
@@ -458,12 +611,8 @@ describe("run interruption", () => {
           )
         })
     )
-    mocks.finalizeRun.mockRejectedValueOnce(new Error("API unavailable"))
     const existingListeners = new Set(process.listeners("SIGINT"))
     vi.spyOn(process.stdout, "write").mockImplementation(() => true)
-    const stderr = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true)
 
     const run = runCommand({ suite: "smoke" })
     await vi.waitFor(() => expect(mocks.fetchExecutionPlan).toHaveBeenCalled())
@@ -473,87 +622,16 @@ describe("run interruption", () => {
     expect(interrupt).toBeDefined()
     interrupt?.("SIGINT")
 
-    await run
-
-    expect(mocks.executeScenario).not.toHaveBeenCalled()
-    expect(mocks.fetchExecutionPlan).toHaveBeenCalledWith(
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
-    expect(mocks.finalizeRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: expect.objectContaining({ status: "interrupted" }),
-      })
-    )
-    expect(process.exitCode).toBe(130)
-    expect(stderr).toHaveBeenCalledWith(
-      "Failed to finalize interrupted run: API unavailable\n"
-    )
-    expect(
-      process
-        .listeners("SIGINT")
-        .filter((listener) => !existingListeners.has(listener))
-    ).toHaveLength(0)
-  })
-
-  it("preserves the signal exit code during plan-error cleanup", async () => {
-    let finishFinalization: (() => void) | undefined
-    mocks.fetchExecutionPlan.mockRejectedValueOnce(new Error("Plan failed"))
-    mocks.finalizeRun.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishFinalization = () => resolve(undefined)
-        })
-    )
-    const existingListeners = new Set(process.listeners("SIGINT"))
-    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
-
-    const run = runCommand({ suite: "smoke" })
-    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalled())
-    const interrupt = process
-      .listeners("SIGINT")
-      .find((listener) => !existingListeners.has(listener))
-    expect(interrupt).toBeDefined()
-    interrupt?.("SIGINT")
-    finishFinalization?.()
-
     await expect(run).resolves.toBeUndefined()
 
+    expect(mocks.createRun).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).not.toHaveBeenCalled()
     expect(process.exitCode).toBe(130)
     expect(
       process
         .listeners("SIGINT")
         .filter((listener) => !existingListeners.has(listener))
     ).toHaveLength(0)
-  })
-
-  it("preserves the signal exit code during empty-suite cleanup", async () => {
-    let finishFinalization: (() => void) | undefined
-    mocks.fetchExecutionPlan.mockResolvedValueOnce({
-      ...mocks.executionPlan,
-      phases: [],
-    })
-    mocks.finalizeRun.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishFinalization = () => resolve(undefined)
-        })
-    )
-    const existingListeners = new Set(process.listeners("SIGINT"))
-    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
-
-    const run = runCommand({ suite: "smoke" })
-    await vi.waitFor(() => expect(mocks.finalizeRun).toHaveBeenCalled())
-    const interrupt = process
-      .listeners("SIGINT")
-      .find((listener) => !existingListeners.has(listener))
-    expect(interrupt).toBeDefined()
-    interrupt?.("SIGINT")
-    finishFinalization?.()
-
-    await expect(run).resolves.toBeUndefined()
-
-    expect(mocks.executeScenario).not.toHaveBeenCalled()
-    expect(process.exitCode).toBe(130)
   })
 
   it("corrects finalization when a signal arrives during the request", async () => {
@@ -805,5 +883,281 @@ describe("run interruption", () => {
     expect(stderr).toHaveBeenCalledWith(
       "Failed to finalize interrupted run: API unavailable\n"
     )
+  })
+})
+
+describe("run model", () => {
+  const configWithModel = {
+    accessToken: "token",
+    apiBaseUrl: "https://caracara.example.com",
+    defaultEnvironment: "development",
+    environments: { development: "http://localhost:3000/" },
+    expiresAt: null,
+    runner: "codex" as const,
+    selectedProjectSlug: "demo",
+    userEmail: "test@example.com",
+    model: "gpt-6.1-terra",
+    model_reasoning_effort: "low" as const,
+  }
+  const completedExecution = {
+    executionSummary: "Opened the application.",
+    checkResults: [],
+    usage: { complete: true },
+  }
+
+  it("sends the same flag overrides to run creation and to Codex", async () => {
+    vi.mocked(readResolvedConfig).mockResolvedValueOnce(configWithModel)
+    mocks.createRun.mockResolvedValueOnce({
+      run: {
+        ...mocks.createRunResponse.run,
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+      } as typeof mocks.createRunResponse.run,
+    })
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await runCommand({
+      model: " gpt-6.1-sol ",
+      modelReasoningEffort: "high",
+    })
+
+    expect(mocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          model: "gpt-6.1-sol",
+          reasoningEffort: "high",
+        }),
+      })
+    )
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-6.1-sol",
+        modelReasoningEffort: "high",
+      })
+    )
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringContaining("codex · gpt-6.1-sol · high")
+    )
+    expect(stderr).not.toHaveBeenCalledWith(
+      expect.stringContaining("did not record")
+    )
+  })
+
+  it("uses the config defaults and warns when the server drops them", async () => {
+    vi.mocked(readResolvedConfig).mockResolvedValueOnce(configWithModel)
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await runCommand({})
+
+    expect(mocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          model: "gpt-6.1-terra",
+          reasoningEffort: "low",
+        }),
+      })
+    )
+    expect(mocks.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-6.1-terra",
+        modelReasoningEffort: "low",
+      })
+    )
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining("did not record this run's model settings")
+    )
+  })
+
+  it("omits model fields when nothing is configured", async () => {
+    mocks.executeScenario.mockResolvedValueOnce(completedExecution)
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({})
+
+    const payload = mocks.createRun.mock.calls[0]?.[0] as unknown as {
+      payload: Record<string, unknown>
+    }
+    expect(payload.payload).not.toHaveProperty("model")
+    expect(payload.payload).not.toHaveProperty("reasoningEffort")
+  })
+})
+
+describe("suite plan check during run start", () => {
+  it("interrupts the run when the suite changed after run creation", async () => {
+    mocks.fetchExecutionPlan.mockResolvedValueOnce({
+      ...mocks.executionPlan,
+      phases: [
+        ...mocks.executionPlan.phases,
+        { id: "phase-2", name: "Checkout", order: 2, scenarios: [] },
+      ],
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await expect(runCommand({ suite: "smoke" })).rejects.toThrow(
+      'Suite "smoke" changed while the run was starting. Run it again.'
+    )
+
+    expect(mocks.executeScenario).not.toHaveBeenCalled()
+    expect(mocks.startScenarioExecution).not.toHaveBeenCalled()
+    expect(mocks.finalizeRun).toHaveBeenCalledOnce()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        payload: expect.objectContaining({ status: "interrupted" }),
+      })
+    )
+  })
+
+  it("runs the suite when its phases are unchanged", async () => {
+    mocks.executeScenario.mockResolvedValueOnce({
+      checkResults: [],
+      executionSummary: "Opened the application.",
+    })
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+
+    await runCommand({ suite: "smoke" })
+
+    expect(mocks.executeScenario).toHaveBeenCalledOnce()
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "completed" }),
+      })
+    )
+  })
+})
+
+describe("run failures", () => {
+  const scenario = (id: string, phaseId: string, dependencyIds: string[]) => ({
+    id,
+    name: id,
+    slug: id,
+    status: "active",
+    instructions: `Run ${id}.`,
+    evaluationChecks: [],
+    phaseId,
+    phaseName: phaseId,
+    phaseOrder: phaseId === "phase-1" ? 1 : 2,
+    dependencyIds,
+  })
+  const originalPhases = mocks.executionPlan.phases
+
+  afterEach(() => {
+    mocks.executionPlan.phases = originalPhases
+    mocks.executeScenario.mockReset()
+    mocks.startRun.mockReset()
+  })
+
+  function useDependencyPlan() {
+    mocks.executionPlan.phases = [
+      {
+        id: "phase-1",
+        name: "Setup",
+        order: 1,
+        scenarios: [
+          scenario("create-item", "phase-1", []),
+          scenario("edit-item", "phase-1", ["create-item"]),
+          scenario("delete-item", "phase-1", ["edit-item"]),
+          scenario("open-settings", "phase-1", []),
+        ],
+      },
+      {
+        id: "phase-2",
+        name: "Reports",
+        order: 2,
+        scenarios: [scenario("export-report", "phase-2", [])],
+      },
+    ]
+  }
+
+  function submittedResults() {
+    return mocks.submitScenarioResult.mock.calls.map((call) => {
+      const args = call[0] as unknown as {
+        payload: {
+          result: {
+            scenarioId: string
+            status: string
+            failureDetail: string | null
+          }
+        }
+      }
+      const { scenarioId, status, failureDetail } = args.payload.result
+      return { scenarioId, status, failureDetail }
+    })
+  }
+
+  it("skips only scenarios that depend on a failed one", async () => {
+    useDependencyPlan()
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    mocks.startRun.mockImplementation(async () => ({
+      close: mocks.close,
+      executeScenario: mocks.executeScenario,
+      runTask: vi.fn(),
+    }))
+    mocks.executeScenario
+      .mockRejectedValueOnce(new Error("Codex crashed"))
+      .mockResolvedValue({ executionSummary: "Done.", checkResults: [] })
+
+    await runCommand({})
+
+    expect(submittedResults()).toEqual([
+      {
+        scenarioId: "create-item",
+        status: "runner_failed",
+        failureDetail: "Codex crashed",
+      },
+      {
+        scenarioId: "edit-item",
+        status: "dependency_failed",
+        failureDetail:
+          "Skipped because dependency create-item did not complete.",
+      },
+      {
+        scenarioId: "delete-item",
+        status: "dependency_failed",
+        failureDetail: "Skipped because dependency edit-item did not complete.",
+      },
+      { scenarioId: "open-settings", status: "completed", failureDetail: null },
+      { scenarioId: "export-report", status: "completed", failureDetail: null },
+    ])
+    expect(mocks.executeScenario).toHaveBeenCalledTimes(3)
+    expect(mocks.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ status: "failed" }),
+      })
+    )
+  })
+
+  it("skips the rest of the run when the runner cannot start", async () => {
+    useDependencyPlan()
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    mocks.startRun.mockRejectedValue(new Error("Chromium did not start"))
+
+    await runCommand({})
+
+    expect(mocks.startRun).toHaveBeenCalledOnce()
+    expect(submittedResults()).toEqual([
+      {
+        scenarioId: "create-item",
+        status: "runner_failed",
+        failureDetail: "Chromium did not start",
+      },
+      ...["edit-item", "delete-item", "open-settings", "export-report"].map(
+        (scenarioId) => ({
+          scenarioId,
+          status: "dependency_failed",
+          failureDetail: "Dependency chain stopped after an earlier failure.",
+        })
+      ),
+    ])
   })
 })

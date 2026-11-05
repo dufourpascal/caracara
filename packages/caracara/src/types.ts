@@ -22,8 +22,26 @@ export type RunCommandOptions = {
   project?: string
   runner?: RunnerType
   environment?: string
+  model?: string
+  modelReasoningEffort?: string
   scenario?: string
   suite?: string
   phase?: string
   throughPhase?: string
+  phases?: string
+  keepGoing?: boolean
+  json?: boolean
+  quiet?: boolean
+  plain?: boolean
+  heartbeat?: string
+  failOn?: string
+  /** Fixture preflight: check (default), repair or skip. */
+  fixtures?: string
+}
+
+export type ResultsCommandOptions = {
+  apiBaseUrl?: string
+  project?: string
+  environment?: string
+  json?: boolean
 }

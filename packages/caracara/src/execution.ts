@@ -5,10 +5,14 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 
-import { BLOCKED_REASONS } from "@workspace/contracts"
+import {
+  BLOCKED_REASONS,
+  EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH,
+} from "@workspace/contracts"
 import type {
   BlockedReason,
   CheckResult,
+  Fixture,
   OrderedScenario,
   RunnerType,
 } from "@workspace/contracts"
@@ -19,16 +23,20 @@ import {
   getCodexVersion,
   resolveCodexExecutable,
   type CodexClientOptions,
+  type CodexItemEvent,
   type CodexSandboxMode,
   type CodexThreadOptions,
   type CodexUsage,
 } from "./codex-exec.js"
 import { startCdpWindowProxy } from "./cdp-proxy.js"
 import type { ModelReasoningEffort } from "./config.js"
+import { writeDiagnostic } from "./diagnostics.js"
+import { buildProtectedFixturesSection } from "./fixture-prompts.js"
 import {
   buildWindowsTaskkillArgs,
   terminateChildProcess,
 } from "./process-control.js"
+import { toSingleLine, truncateToWidth } from "./terminal-text.js"
 
 export { buildWindowsTaskkillArgs, terminateChildProcess }
 
@@ -70,13 +78,41 @@ export type ScreenshotEvidence = {
   sha256: string
 }
 
+/** One step of the agent's work, reduced to a short, redacted label. */
+export type RunnerActivity = {
+  /** Runner item ID, so a step that starts and completes counts once. */
+  id: string | null
+  label: string
+  /** Commands, MCP tools, web searches and file edits. */
+  toolCall: boolean
+  status: "started" | "completed"
+}
+
 export type RunnerScenarioInput = {
   cwd: string
   environment: string
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  /** Definitions of the fixtures the scenario requires. */
+  fixtures?: Fixture[]
   signal?: AbortSignal
+  /** Called for agent steps when the runner can report them live. */
+  onActivity?: (activity: RunnerActivity) => void
+}
+
+/** A single agent turn with a custom prompt, such as a fixture task. */
+export type RunnerTaskInput = {
+  cwd: string
+  prompt: string
+  checks: Array<{ id: string }>
+  signal?: AbortSignal
+}
+
+export type RunnerTaskResult = {
+  executionSummary: string
+  checkResults: CheckResult[]
+  usage?: RunnerUsageReport
 }
 
 export type RunnerSecrets = Record<string, string>
@@ -99,6 +135,10 @@ export interface RunnerAdapter {
 
 export interface RunnerSession {
   executeScenario(input: RunnerScenarioInput): Promise<RunnerExecution>
+  /** One turn, no blocked retry and no screenshots. */
+  runTask(input: RunnerTaskInput): Promise<RunnerTaskResult>
+  /** False once the session can no longer run scenarios (browser exited). */
+  isHealthy?(): boolean
   close(): Promise<void>
 }
 
@@ -401,6 +441,7 @@ export function buildRunnerPrompt(input: {
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  fixtures?: Fixture[]
   secretNames?: string[]
   evidenceDirectory?: string
 }) {
@@ -420,6 +461,10 @@ export function buildRunnerPrompt(input: {
     "",
     "Task instructions:",
     input.scenario.instructions.trim(),
+    ...buildProtectedFixturesSection(
+      input.scenario.fixtureRequirements,
+      input.fixtures
+    ),
     "",
     "Evaluation checks:",
     ...input.scenario.evaluationChecks.flatMap((check) => [
@@ -454,6 +499,7 @@ export function buildRunnerPrompt(input: {
           "Inspect the image itself. Confirm that the failed behavior is clearly visible and that enough surrounding UI is shown to understand the problem. For a missing element, show the region where it should appear.",
           "If the image does not clearly show the defect, adjust the browser and repeat the preview screenshot. Do not save an unrelated, overly broad, obscured, or unreadable screenshot.",
           "Only after visually confirming the image, call take_screenshot again with the exact failure screenshot path listed for that check, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+          nativeDialogEvidence,
           "A failed check is incomplete without its screenshot. Do not capture screenshots for passed or blocked checks. Never include screenshot paths or image bytes in the JSON response.",
         ]
       : []),
@@ -469,6 +515,7 @@ export function buildBlockedRetryPrompt(input: {
   targetUrl: string
   projectPrompt: string
   scenario: OrderedScenario
+  fixtures?: Fixture[]
   blockedResults: CheckResult[]
   secretNames?: string[]
   evidenceDirectory?: string
@@ -493,6 +540,10 @@ export function buildBlockedRetryPrompt(input: {
     "",
     "Task instructions:",
     input.scenario.instructions.trim(),
+    ...buildProtectedFixturesSection(
+      input.scenario.fixtureRequirements,
+      input.fixtures
+    ),
     ...(secretNames.length > 0
       ? [
           "",
@@ -525,6 +576,7 @@ export function buildBlockedRetryPrompt(input: {
           "If a retry changes a check to failed, put the browser in the state that demonstrates the failure and capture the visible viewport only.",
           "First call chrome-devtools take_screenshot without a filePath, with format webp, quality 80, and fullPage false. Inspect the image itself and adjust the browser until the defect and enough surrounding context are clearly visible.",
           "Only then call take_screenshot again with the listed failure screenshot path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
+          nativeDialogEvidence,
         ]
       : []),
     'For failed evidence use: "Attempted: <specific action and expected result>. Failed: <exact observed behavior>."',
@@ -565,6 +617,14 @@ export function annotateLateScreenshots(
 const transientFailureCorrection =
   "If the failure was transient and can no longer be shown, this replaces the rule about repeating until the defect is visible: save the closest view of where it appeared, such as the finished row, status area or the control that started it. Caracara notes on that check that its screenshot was taken afterwards."
 
+/** Native dialogs block chrome-devtools screenshots, so a failure shown in one needs a nearby capture instead. */
+const nativeDialogEvidence =
+  "Browser-native alert, confirm and prompt dialogs block screenshots and never appear in them. If one is open, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted). If the failure is the dialog itself, record its exact text in the evidence and capture the page with the control that opened it in view; otherwise capture the failure region as usual."
+
+/** Correction turns only save screenshots, so they skip the instruction to record the dialog text. */
+const nativeDialogCorrection =
+  "Browser-native alert, confirm and prompt dialogs block screenshots. If one is open, close it with chrome-devtools handle_dialog (dismiss unless the scenario needs it accepted). If the failure is the dialog itself, capture the page with the control that opened it in view; otherwise capture the failure region as usual."
+
 export function buildMissingScreenshotPrompt(input: {
   scenario: OrderedScenario
   evidenceDirectory: string
@@ -580,12 +640,122 @@ export function buildMissingScreenshotPrompt(input: {
     "If the image does not clearly show the defect and enough surrounding context, adjust the browser and repeat the preview screenshot.",
     "Only after visually confirming the image, call take_screenshot again with the listed path, using the same visible viewport without a uid, format webp, quality 80, and fullPage false.",
     transientFailureCorrection,
+    nativeDialogCorrection,
     ...checks.map(
       (check) =>
         `- ${check.name} [${check.id}]: ${join(input.evidenceDirectory, `${check.id}.webp`)}`
     ),
+    "Use screenshotUnavailableReason only as a last resort, when no screenshot can show the failure or where it appeared, for example because the screenshot tool keeps failing. Then save nothing for that check and set a short, specific reason. For every check whose screenshot you saved, set it to null.",
+    "Return JSON with exactly one checks entry per listed check ID.",
     "Do not include secret values, screenshot paths, or image bytes in your response.",
   ].join("\n")
+}
+
+export function buildMissingScreenshotResultSchema(missingCheckIds: string[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["checks"],
+    properties: {
+      checks: {
+        type: "array",
+        minItems: missingCheckIds.length,
+        maxItems: missingCheckIds.length,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["checkId", "screenshotUnavailableReason"],
+          properties: {
+            checkId: { type: "string", enum: missingCheckIds },
+            screenshotUnavailableReason: {
+              anyOf: [
+                {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH,
+                },
+                { type: "null" },
+              ],
+            },
+          },
+        },
+      },
+    },
+  } as const
+}
+
+/** Written by the CLI when Codex saved no screenshot and gave no reason of its own. */
+export const MISSING_SCREENSHOT_FALLBACK_REASON =
+  "Caracara: no screenshot was saved and Codex gave no reason."
+
+/** Written by the CLI when the screenshot follow-up turn itself failed. */
+export const SCREENSHOT_CORRECTION_FAILED_REASON =
+  "Caracara: the screenshot follow-up turn failed before a screenshot was saved."
+
+/** Reads the reasons from a correction turn; an unreadable response yields none. */
+export function parseScreenshotUnavailableReasons(finalResponse: string) {
+  const reasons = new Map<string, string>()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(finalResponse)
+  } catch {
+    return reasons
+  }
+  const checks = (parsed as { checks?: unknown } | null)?.checks
+  if (!Array.isArray(checks)) {
+    return reasons
+  }
+  for (const check of checks as Array<Record<string, unknown> | null>) {
+    const checkId = check?.checkId
+    const reason = check?.screenshotUnavailableReason
+    if (typeof checkId === "string" && typeof reason === "string") {
+      const trimmed = reason.trim()
+      if (trimmed !== "") {
+        reasons.set(checkId, trimmed)
+      }
+    }
+  }
+  return reasons
+}
+
+/**
+ * Records failed checks that still have no screenshot as evidence unavailable,
+ * so the scenario completes with its verdicts instead of failing the runner.
+ */
+export function applyEvidenceUnavailableReasons(
+  execution: RunnerExecution,
+  missingCheckIds: string[],
+  reasons: Map<string, string>,
+  fallbackReason = MISSING_SCREENSHOT_FALLBACK_REASON
+): RunnerExecution {
+  const missing = new Set(missingCheckIds)
+  return {
+    ...execution,
+    checkResults: execution.checkResults.map((result) => {
+      const { evidenceUnavailableReason: _ignored, ...rest } = result
+      void _ignored
+      return result.verdict === "failed" && missing.has(result.checkId)
+        ? {
+            ...rest,
+            evidenceUnavailableReason:
+              reasons.get(result.checkId) ?? fallbackReason,
+          }
+        : rest
+    }),
+  }
+}
+
+/** Limits UTF-16 length like the server, without leaving half a surrogate pair. */
+export function limitEvidenceUnavailableReason(reason: string) {
+  if (reason.length <= EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH) {
+    return reason
+  }
+  let end = EVIDENCE_UNAVAILABLE_REASON_MAX_LENGTH - 1
+  const last = reason.charCodeAt(end - 1)
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end -= 1
+  }
+  return `${reason.slice(0, end)}…`
 }
 
 const maxScreenshotBytes = 3 * 1024 * 1024
@@ -645,6 +815,86 @@ export function redactSecretValues(text: string, secrets: RunnerSecrets) {
     )
 }
 
+const COMMAND_LABEL_WIDTH = 80
+const SHELL_WRAPPER =
+  /^(?:\S*\/)?(?:bash|sh|zsh)\s+-l?c\s+(['"])([\s\S]*)\1\s*$/
+
+function redactForDisplay(text: string, secrets: RunnerSecrets) {
+  const encoded = Object.fromEntries(
+    Object.entries(secrets).map(([name, value]) => [
+      `${name}__encoded`,
+      encodeURIComponent(value),
+    ])
+  )
+  return redactSecretValues(text, { ...secrets, ...encoded })
+}
+
+/**
+ * Short label for a shell command. The whole command is redacted before it
+ * is unwrapped or cut, so a secret is never split by truncation.
+ */
+export function formatCommandLabel(command: string, secrets: RunnerSecrets) {
+  const redacted = redactForDisplay(command, secrets)
+  const unwrapped = SHELL_WRAPPER.exec(redacted.trim())?.[2] ?? redacted
+  const firstLine =
+    unwrapped
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line !== "") ?? ""
+  return `$ ${truncateToWidth(toSingleLine(firstLine), COMMAND_LABEL_WIDTH)}`
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() !== ""
+    ? toSingleLine(value)
+    : null
+}
+
+/**
+ * Maps a Codex item event to a runner activity. Only the item type and, for
+ * tools, the tool name or redacted command are used; arguments, outputs and
+ * reasoning text never leave this function.
+ */
+export function describeCodexItemEvent(
+  event: CodexItemEvent,
+  secrets: RunnerSecrets
+): RunnerActivity | null {
+  const { item } = event
+  const status = event.type === "item.completed" ? "completed" : "started"
+  const id = typeof item.id === "string" ? item.id : null
+  const activity = (label: string, toolCall: boolean): RunnerActivity => ({
+    id,
+    label: truncateToWidth(label, COMMAND_LABEL_WIDTH + 2),
+    toolCall,
+    status,
+  })
+
+  switch (item.type) {
+    case "mcp_tool_call": {
+      const server = readString(item.server)
+      const tool = readString(item.tool)
+      return activity(
+        server && tool ? `${server}.${tool}` : (tool ?? "tool call"),
+        true
+      )
+    }
+    case "command_execution": {
+      const command = typeof item.command === "string" ? item.command : ""
+      return activity(formatCommandLabel(command, secrets), true)
+    }
+    case "web_search":
+      return activity("web search", true)
+    case "file_change":
+      return activity("editing files", true)
+    case "reasoning":
+      return activity("thinking", false)
+    case "agent_message":
+      return activity("writing result", false)
+    default:
+      return null
+  }
+}
+
 export function redactRunnerExecution(
   execution: RunnerExecution,
   secrets: RunnerSecrets
@@ -654,6 +904,14 @@ export function redactRunnerExecution(
     checkResults: execution.checkResults.map((result) => ({
       ...result,
       evidence: redactSecretValues(result.evidence, secrets),
+      // Redaction can lengthen the reason, so the limit is applied afterwards.
+      ...(result.evidenceUnavailableReason
+        ? {
+            evidenceUnavailableReason: limitEvidenceUnavailableReason(
+              redactSecretValues(result.evidenceUnavailableReason, secrets)
+            ),
+          }
+        : {}),
     })),
   }
 }
@@ -671,6 +929,13 @@ function redactEvidenceDirectory(
       evidence: result.evidence
         .split(evidenceDirectory)
         .join("[LOCAL_EVIDENCE_DIR]"),
+      ...(result.evidenceUnavailableReason
+        ? {
+            evidenceUnavailableReason: result.evidenceUnavailableReason
+              .split(evidenceDirectory)
+              .join("[LOCAL_EVIDENCE_DIR]"),
+          }
+        : {}),
     })),
   }
 }
@@ -978,12 +1243,15 @@ async function launchSharedChromium(input: {
     return {
       wsEndpoint: proxy.wsEndpoint,
       chromeDevtoolsLogPath,
+      isRunning() {
+        return browser.exitCode === null && browser.signalCode === null
+      },
       async close() {
         await proxy.close()
         await terminateBrowserProcess(browser)
         if (process.env.CARACARA_KEEP_RUN_DIR === "1") {
           // The profile holds the run's session cookies; delete it when done.
-          process.stderr.write(`Kept browser run directory: ${runDir}\n`)
+          writeDiagnostic(`Kept browser run directory: ${runDir}\n`)
           return
         }
         await rm(runDir, { recursive: true, force: true })
@@ -1006,7 +1274,7 @@ class CodexRunner implements RunnerAdapter {
       throw new Error(problem.message)
     }
     if (problem) {
-      process.stderr.write(`Warning: ${problem.message}\n`)
+      writeDiagnostic(`Warning: ${problem.message}\n`)
     }
   }
 
@@ -1044,6 +1312,15 @@ class CodexRunner implements RunnerAdapter {
           await mkdir(evidenceDirectory)
           let usage: RunnerUsageReport = { complete: true }
           let waitingForUsage = false
+          const { onActivity } = scenarioInput
+          const onItemEvent = onActivity
+            ? (event: CodexItemEvent) => {
+                const activity = describeCodexItemEvent(event, input.secrets)
+                if (activity) {
+                  onActivity(activity)
+                }
+              }
+            : undefined
           try {
             const thread = codex.startThread(
               buildCodexThreadOptions({
@@ -1064,6 +1341,7 @@ class CodexRunner implements RunnerAdapter {
                   scenarioInput.scenario
                 ),
                 signal: scenarioInput.signal,
+                onItemEvent,
               }
             )
             waitingForUsage = false
@@ -1091,6 +1369,7 @@ class CodexRunner implements RunnerAdapter {
                   targetUrl: scenarioInput.targetUrl,
                   projectPrompt: scenarioInput.projectPrompt,
                   scenario: scenarioInput.scenario,
+                  fixtures: scenarioInput.fixtures,
                   blockedResults,
                   secretNames,
                   evidenceDirectory,
@@ -1098,6 +1377,7 @@ class CodexRunner implements RunnerAdapter {
                 {
                   outputSchema: buildBlockedRetryResultSchema(blockedCheckIds),
                   signal: scenarioInput.signal,
+                  onItemEvent,
                 }
               )
               waitingForUsage = false
@@ -1122,35 +1402,64 @@ class CodexRunner implements RunnerAdapter {
               checkIds: failedCheckIds,
             })
 
-            const lateScreenshotCheckIds = screenshots.missingCheckIds
+            const initiallyMissingCheckIds = screenshots.missingCheckIds
             if (screenshots.missingCheckIds.length > 0) {
-              waitingForUsage = true
-              const correction = await thread.run(
-                buildMissingScreenshotPrompt({
-                  scenario: scenarioInput.scenario,
-                  evidenceDirectory,
-                  missingCheckIds: screenshots.missingCheckIds,
-                }),
-                { signal: scenarioInput.signal }
-              )
-              waitingForUsage = false
-              const correctionUsage = toCodexRunnerUsage(
-                correction.usage,
-                input.model
-              )
-              usage = mergeRunnerUsage(usage, {
-                usage: correctionUsage,
-                complete: correctionUsage !== undefined,
-              })
+              let reasons = new Map<string, string>()
+              let fallbackReason = MISSING_SCREENSHOT_FALLBACK_REASON
+              try {
+                waitingForUsage = true
+                const correction = await thread.run(
+                  buildMissingScreenshotPrompt({
+                    scenario: scenarioInput.scenario,
+                    evidenceDirectory,
+                    missingCheckIds: screenshots.missingCheckIds,
+                  }),
+                  {
+                    outputSchema: buildMissingScreenshotResultSchema(
+                      screenshots.missingCheckIds
+                    ),
+                    signal: scenarioInput.signal,
+                    onItemEvent,
+                  }
+                )
+                waitingForUsage = false
+                const correctionUsage = toCodexRunnerUsage(
+                  correction.usage,
+                  input.model
+                )
+                usage = mergeRunnerUsage(usage, {
+                  usage: correctionUsage,
+                  complete: correctionUsage !== undefined,
+                })
+                reasons = parseScreenshotUnavailableReasons(
+                  correction.finalResponse
+                )
+              } catch (error) {
+                // The verdicts already stand; only cancellation ends the scenario here.
+                if (scenarioInput.signal?.aborted) {
+                  throw error
+                }
+                const message = (
+                  error instanceof Error ? error.message : "Codex failed."
+                )
+                  .split(evidenceDirectory)
+                  .join("[LOCAL_EVIDENCE_DIR]")
+                writeDiagnostic(
+                  `Warning: screenshot follow-up turn failed: ${redactSecretValues(message, input.secrets)}\n`
+                )
+                waitingForUsage = false
+                usage = { ...usage, complete: false }
+                fallbackReason = SCREENSHOT_CORRECTION_FAILED_REASON
+              }
               screenshots = await readScreenshotEvidence({
                 evidenceDirectory,
                 checkIds: failedCheckIds,
               })
-            }
-
-            if (screenshots.missingCheckIds.length > 0) {
-              throw new Error(
-                `Codex did not capture required screenshot evidence for ${screenshots.missingCheckIds.length} failed check${screenshots.missingCheckIds.length === 1 ? "" : "s"}.`
+              validated = applyEvidenceUnavailableReasons(
+                validated,
+                screenshots.missingCheckIds,
+                reasons,
+                fallbackReason
               )
             }
 
@@ -1161,7 +1470,10 @@ class CodexRunner implements RunnerAdapter {
                   redactEvidenceDirectory(validated, evidenceDirectory),
                   input.secrets
                 ),
-                lateScreenshotCheckIds
+                // Checks still missing a screenshot are evidence unavailable, not late.
+                initiallyMissingCheckIds.filter(
+                  (checkId) => !screenshots.missingCheckIds.includes(checkId)
+                )
               ),
               screenshotEvidence: screenshots.evidence,
               usage,
@@ -1182,6 +1494,41 @@ class CodexRunner implements RunnerAdapter {
           }
         })
       },
+      async runTask(task: RunnerTaskInput) {
+        const checkIds = task.checks.map((check) => check.id)
+        let usage: RunnerUsageReport = { complete: false }
+        try {
+          const thread = codex.startThread(
+            buildCodexThreadOptions({
+              cwd: task.cwd,
+              model: input.model,
+              modelReasoningEffort: input.modelReasoningEffort,
+            })
+          )
+          const turn = await thread.run(task.prompt, {
+            outputSchema: buildResultSchema(checkIds),
+            signal: task.signal,
+          })
+          const turnUsage = toCodexRunnerUsage(turn.usage, input.model)
+          usage = { usage: turnUsage, complete: turnUsage !== undefined }
+          const validated = validateExecution(
+            checkIds,
+            JSON.parse(turn.finalResponse) as RunnerExecution
+          )
+          return { ...redactRunnerExecution(validated, input.secrets), usage }
+        } catch (error) {
+          throw new RunnerExecutionError(
+            redactSecretValues(
+              error instanceof Error ? error.message : "Codex failed.",
+              input.secrets
+            ),
+            usage
+          )
+        }
+      },
+      isHealthy() {
+        return sharedBrowser.isRunning()
+      },
       async close() {
         await sharedBrowser.close()
       },
@@ -1200,26 +1547,30 @@ class ClaudeRunner implements RunnerAdapter {
     })
     const runnerEnv = { ...process.env, ...runInput.secrets }
     const secretNames = Object.keys(runInput.secrets)
+    const writeMcpConfig = async (dir: string) => {
+      const mcpConfigPath = join(dir, "mcp.json")
+      await writeFile(
+        mcpConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            "chrome-devtools": {
+              command: "npx",
+              args: buildCodexChromeMcpArgs({
+                logFilePath: sharedBrowser.chromeDevtoolsLogPath,
+                wsEndpoint: sharedBrowser.wsEndpoint,
+                workspaceRoot: runInput.cwd,
+              }),
+            },
+          },
+        }),
+        "utf8"
+      )
+      return mcpConfigPath
+    }
     return {
       async executeScenario(scenarioInput: RunnerScenarioInput) {
         return await withTempFiles(async (dir) => {
-          const mcpConfigPath = join(dir, "mcp.json")
-          await writeFile(
-            mcpConfigPath,
-            JSON.stringify({
-              mcpServers: {
-                "chrome-devtools": {
-                  command: "npx",
-                  args: buildCodexChromeMcpArgs({
-                    logFilePath: sharedBrowser.chromeDevtoolsLogPath,
-                    wsEndpoint: sharedBrowser.wsEndpoint,
-                    workspaceRoot: runInput.cwd,
-                  }),
-                },
-              },
-            }),
-            "utf8"
-          )
+          const mcpConfigPath = await writeMcpConfig(dir)
           let usage: RunnerUsageReport = { complete: false }
           try {
             const execution = await runChildCommand({
@@ -1288,6 +1639,7 @@ class ClaudeRunner implements RunnerAdapter {
                     targetUrl: scenarioInput.targetUrl,
                     projectPrompt: scenarioInput.projectPrompt,
                     scenario: scenarioInput.scenario,
+                    fixtures: scenarioInput.fixtures,
                     blockedResults,
                     secretNames,
                   }),
@@ -1321,6 +1673,56 @@ class ClaudeRunner implements RunnerAdapter {
             )
           }
         })
+      },
+      async runTask(task: RunnerTaskInput) {
+        const checkIds = task.checks.map((check) => check.id)
+        return await withTempFiles(async (dir) => {
+          let usage: RunnerUsageReport = { complete: false }
+          try {
+            const result = await runChildCommand({
+              command: "claude",
+              cwd: task.cwd,
+              env: runnerEnv,
+              secrets: runInput.secrets,
+              signal: task.signal,
+              commandArgs: [
+                "-p",
+                "--permission-mode",
+                process.env.CARACARA_CLAUDE_PERMISSION_MODE ??
+                  "bypassPermissions",
+                "--output-format",
+                "json",
+                "--mcp-config",
+                await writeMcpConfig(dir),
+                "--strict-mcp-config",
+                "--json-schema",
+                JSON.stringify(buildResultSchema(checkIds)),
+                task.prompt,
+              ],
+            })
+            const parsed = parseClaudeJsonResult(result.stdout)
+            usage = {
+              usage: parsed.usage,
+              complete: parsed.usage !== undefined,
+            }
+            const validated = validateExecution(checkIds, parsed.execution)
+            return {
+              ...redactRunnerExecution(validated, runInput.secrets),
+              usage,
+            }
+          } catch (error) {
+            throw new RunnerExecutionError(
+              redactSecretValues(
+                error instanceof Error ? error.message : "Claude Code failed.",
+                runInput.secrets
+              ),
+              usage
+            )
+          }
+        })
+      },
+      isHealthy() {
+        return sharedBrowser.isRunning()
       },
       async close() {
         await sharedBrowser.close()

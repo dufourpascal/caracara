@@ -62,9 +62,9 @@ When a scenario is changed, the system must ensure past runs still reference the
 
 ### AUTHORING_11
 
-The CLI exposes eight narrow authoring commands.
+The CLI exposes twelve narrow authoring commands.
 
-The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, and `updateCheck`. They update live records directly and return structured results. The CLI does not expose a generic patch or scenario deletion command.
+The supported mutations are `addPhase`, `editPhase`, `removePhase`, `createScenario`, `updateScenario`, `addCheck`, `removeCheck`, `updateCheck`, `createFixture`, `updateFixture`, `requireFixture`, and `unrequireFixture`. They update live records directly and return structured results. The CLI does not expose a generic patch or scenario deletion command.
 
 ### AUTHORING_12
 
@@ -74,12 +74,20 @@ Commands do not create proposals, authored versions, delayed activations, or und
 
 ### AUTHORING_13
 
-Authoring is locked while a project run is running.
+Authoring stays open while a project run is running, and edits never change a running run.
 
-Every phase and scenario write is rejected while the project has a running run. Changes apply immediately when no run is active. This server-side rule applies to both web and CLI callers so an evaluation agent cannot change its own requirements.
+Phase, scenario, check, suite, and project prompt writes apply immediately, also while the project has a running run. The CLI fetches the execution plan, including the project prompt, once when the run starts and executes only that copy. Each scenario result stores the scenario name, slug, phase, instructions, and checks it was executed and scored against, so verdict validation and run results never read the live definitions. Edits made during a run therefore apply to later runs only, which also means an evaluation agent cannot change the requirements of the run it is part of.
+
+Writes that would cut a running run off from its project stay blocked while it runs, on both web and CLI callers: deleting a scenario, changing the project slug, and deleting the project.
 
 ### AUTHORING_14
 
 Suite authoring is frontend-only and direct.
 
-The frontend supports direct suite create, update, and delete operations using a name, slug, and phase membership checkboxes. Suite writes use the same running-run authoring lock. These operations are intentionally absent from the CLI authoring API.
+The frontend supports direct suite create, update, and delete operations using a name, slug, and phase membership checkboxes. Suite writes stay open during runs like other authoring writes. These operations are intentionally absent from the CLI authoring API.
+
+### AUTHORING_15
+
+Fixtures are authored on the web and through the CLI.
+
+The web Fixtures workspace edits every fixture field and its requirements and deletes fixtures. The CLI creates and updates fixtures (steps and checks as whole JSON arrays) and adds or removes requirements; it does not delete fixtures. Fixture writes stay open during runs: a run uses the definitions it fetched with its plan.

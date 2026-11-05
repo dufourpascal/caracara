@@ -69,6 +69,44 @@ describe("contracts", () => {
     ).toBe("not_observed")
   })
 
+  it("accepts an evidence-unavailable reason only on failed checks", () => {
+    const failed = {
+      checkId: "00000000-0000-4000-8000-000000000001",
+      verdict: "failed",
+      evidence:
+        "Attempted: delete. Failed: the confirm dialog named the wrong item.",
+    }
+
+    expect(
+      checkResultSchema.parse({
+        ...failed,
+        evidenceUnavailableReason:
+          "  Native confirm dialog blocked screenshots.  ",
+      }).evidenceUnavailableReason
+    ).toBe("Native confirm dialog blocked screenshots.")
+    expect(
+      checkResultSchema.parse({ ...failed, evidenceUnavailableReason: null })
+        .evidenceUnavailableReason
+    ).toBeNull()
+    expect(
+      checkResultSchema.safeParse({ ...failed, evidenceUnavailableReason: " " })
+        .success
+    ).toBe(false)
+    expect(
+      checkResultSchema.safeParse({
+        ...failed,
+        evidenceUnavailableReason: "x".repeat(501),
+      }).success
+    ).toBe(false)
+    expect(() =>
+      checkResultSchema.parse({
+        ...failed,
+        verdict: "passed",
+        evidenceUnavailableReason: "No screenshot.",
+      })
+    ).toThrow(/only failed/i)
+  })
+
   it("validates core project and scenario shapes", () => {
     const project = projectSchema.parse({
       id: "project_1",
@@ -300,6 +338,221 @@ describe("contracts", () => {
         startedAt: 1,
       })
     ).toThrow(/target do not match/i)
+  })
+
+  it("validates multi-phase run targets", () => {
+    const base = { runnerType: "codex", startedAt: 1 } as const
+    expect(
+      createRunRequestSchema.parse({
+        ...base,
+        mode: "phases",
+        requestedPhaseOrders: [1, 2, 3, 7],
+      }).requestedPhaseOrders
+    ).toEqual([1, 2, 3, 7])
+    expect(
+      createRunRequestSchema.parse({
+        ...base,
+        mode: "phases",
+        requestedPhaseOrders: Array.from({ length: 100 }, (_, i) => i + 1),
+      }).requestedPhaseOrders
+    ).toHaveLength(100)
+
+    for (const [requestedPhaseOrders, message] of [
+      [[3, 1], /sorted and unique/],
+      [[1, 2, 2], /sorted and unique/],
+      [[2], /at least 2 phases/],
+      [[], /at least 2 phases/],
+      [Array.from({ length: 101 }, (_, i) => i + 1), /at most 100 phases/],
+      [[0, 1], /too small|>0/i],
+      [[1, 2.5], /int/i],
+    ] as const) {
+      expect(() =>
+        createRunRequestSchema.parse({
+          ...base,
+          mode: "phases",
+          requestedPhaseOrders,
+        })
+      ).toThrow(message)
+    }
+
+    for (const body of [
+      { mode: "phases" },
+      { mode: "phases", requestedPhaseOrders: null },
+      { mode: "phases", requestedPhaseOrder: 2 },
+      {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2],
+        requestedScenarioSlug: "login",
+      },
+      {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2],
+        requestedPhaseOrder: 1,
+      },
+      {
+        mode: "phases",
+        requestedPhaseOrders: [1, 2],
+        requestedSuiteSlug: "demo-only",
+      },
+      { mode: "all", requestedPhaseOrders: [1, 2] },
+      {
+        mode: "single",
+        requestedScenarioSlug: "login",
+        requestedPhaseOrders: [1, 2],
+      },
+      { mode: "phase", requestedPhaseOrder: 1, requestedPhaseOrders: [1, 2] },
+      {
+        mode: "through_phase",
+        requestedPhaseOrder: 2,
+        requestedPhaseOrders: [1, 2],
+      },
+      {
+        mode: "suite",
+        requestedSuiteSlug: "demo-only",
+        requestedPhaseOrders: [1, 2],
+      },
+    ]) {
+      expect(() => createRunRequestSchema.parse({ ...base, ...body })).toThrow(
+        /target do not match/i
+      )
+    }
+    for (const body of [
+      { mode: "all", requestedPhaseOrders: null },
+      { mode: "phase", requestedPhaseOrder: 1, requestedPhaseOrders: null },
+    ]) {
+      expect(
+        createRunRequestSchema.safeParse({ ...base, ...body }).success
+      ).toBe(true)
+    }
+
+    const run = {
+      id: "run-1",
+      projectId: "project-1",
+      ownerUserId: "user-1",
+      name: "calm-macaw-20260827-120000",
+      status: "running",
+      mode: "phases",
+      requestedScenarioSlug: null,
+      runnerType: "codex",
+      evidencePolicy: "failed_check_screenshot",
+      passedCheckCount: 0,
+      totalCheckCount: 0,
+      passRate: null,
+      startedAt: 1,
+      finishedAt: null,
+      createdAt: 1,
+      updatedAt: 1,
+    } as const
+    expect(
+      runSchema.parse({ ...run, requestedPhaseOrders: [1, 3] })
+        .requestedPhaseOrders
+    ).toEqual([1, 3])
+    expect(
+      runSchema.parse({ ...run, mode: "all", requestedPhaseOrders: null })
+        .requestedPhaseOrders
+    ).toBeNull()
+    expect(runSchema.parse({ ...run, mode: "all" })).not.toHaveProperty(
+      "requestedPhaseOrders"
+    )
+
+    const createdRun = {
+      id: run.id,
+      name: run.name,
+      status: run.status,
+      mode: run.mode,
+      runnerType: run.runnerType,
+      evidencePolicy: run.evidencePolicy,
+      requestedScenarioSlug: null,
+      startedAt: 1,
+    }
+    expect(
+      createRunResponseSchema.parse({
+        run: { ...createdRun, requestedPhaseOrders: [2, 4] },
+      }).run.requestedPhaseOrders
+    ).toEqual([2, 4])
+    expect(
+      createRunResponseSchema.parse({
+        run: { ...createdRun, mode: "all", requestedPhaseOrders: null },
+      }).run.requestedPhaseOrders
+    ).toBeNull()
+    expect(
+      createRunResponseSchema.parse({ run: { ...createdRun, mode: "all" } }).run
+    ).not.toHaveProperty("requestedPhaseOrders")
+  })
+
+  it("records the run model and reasoning effort additively", () => {
+    expect(
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        model: " gpt-6.1-sol ",
+        reasoningEffort: "high",
+        startedAt: 1,
+      })
+    ).toMatchObject({ model: "gpt-6.1-sol", reasoningEffort: "high" })
+    // The server accepts effort tokens newer than this contract version.
+    expect(
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        reasoningEffort: "ultra",
+        startedAt: 1,
+      }).reasoningEffort
+    ).toBe("ultra")
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        model: "gpt 6",
+        startedAt: 1,
+      })
+    ).toThrow(/printable ASCII/)
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "codex",
+        reasoningEffort: "High Effort",
+        startedAt: 1,
+      })
+    ).toThrow(/lowercase token/)
+    expect(() =>
+      createRunRequestSchema.parse({
+        mode: "all",
+        runnerType: "claude-code",
+        model: "gpt-6.1-sol",
+        startedAt: 1,
+      })
+    ).toThrow(/only supported for Codex/)
+
+    const legacyRun = {
+      id: "run-1",
+      projectId: "project-1",
+      ownerUserId: "user-1",
+      name: "calm-macaw-20260827-120000",
+      status: "completed",
+      mode: "all",
+      requestedScenarioSlug: null,
+      runnerType: "codex",
+      evidencePolicy: "text_only",
+      passedCheckCount: 1,
+      totalCheckCount: 1,
+      passRate: 100,
+      startedAt: 1,
+      finishedAt: 2,
+      createdAt: 1,
+      updatedAt: 2,
+    }
+    expect(runSchema.parse(legacyRun).model).toBeUndefined()
+    expect(
+      runSchema.parse({ ...legacyRun, model: null, reasoningEffort: null })
+    ).toMatchObject({ model: null, reasoningEffort: null })
+    expect(
+      runSchema.parse({
+        ...legacyRun,
+        model: "gpt-6.1-terra",
+        reasoningEffort: "xhigh",
+      })
+    ).toMatchObject({ model: "gpt-6.1-terra", reasoningEffort: "xhigh" })
   })
 
   it("validates environment-aware run creation", () => {

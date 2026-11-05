@@ -13,6 +13,12 @@ import {
   buildCodexThreadOptions,
   buildExecutionResultSchema,
   buildMissingScreenshotPrompt,
+  buildMissingScreenshotResultSchema,
+  applyEvidenceUnavailableReasons,
+  limitEvidenceUnavailableReason,
+  MISSING_SCREENSHOT_FALLBACK_REASON,
+  parseScreenshotUnavailableReasons,
+  SCREENSHOT_CORRECTION_FAILED_REASON,
   buildRunnerPrompt,
   annotateLateScreenshots,
   LATE_SCREENSHOT_NOTE,
@@ -44,6 +50,7 @@ const scenario: OrderedScenario = {
     },
   ],
   dependencyIds: [],
+  fixtureRequirements: [],
 }
 
 function processGroupExistsForTest(pid: number) {
@@ -373,6 +380,128 @@ describe("Codex configuration", () => {
     expect(correction).toContain("Valid article slug")
     expect(prompt).toContain("Some failures are transient")
     expect(correction).toContain("can no longer be shown")
+    expect(correction).toContain("handle_dialog")
+    expect(prompt).toContain("handle_dialog")
+  })
+
+  it("asks the correction turn for a reason per missing screenshot", () => {
+    const correction = buildMissingScreenshotPrompt({
+      scenario,
+      evidenceDirectory: "/tmp/caracara-evidence",
+      missingCheckIds: ["00000000-0000-4000-8000-000000000001"],
+    })
+    expect(correction).toContain(
+      "Use screenshotUnavailableReason only as a last resort"
+    )
+    expect(correction).toContain("exactly one checks entry per listed check ID")
+    const schema = buildMissingScreenshotResultSchema(["a", "b"])
+    expect(schema.properties.checks.minItems).toBe(2)
+    expect(schema.properties.checks.maxItems).toBe(2)
+    expect(schema.properties.checks.items.required).toEqual([
+      "checkId",
+      "screenshotUnavailableReason",
+    ])
+    expect(schema.properties.checks.items.properties.checkId.enum).toEqual([
+      "a",
+      "b",
+    ])
+  })
+
+  it("parses correction reasons and ignores unusable responses", () => {
+    expect(
+      parseScreenshotUnavailableReasons(
+        JSON.stringify({
+          checks: [
+            {
+              checkId: "a",
+              screenshotUnavailableReason: "  Native dialog open.  ",
+            },
+            { checkId: "b", screenshotUnavailableReason: null },
+            { checkId: "c", screenshotUnavailableReason: " " },
+          ],
+        })
+      )
+    ).toEqual(new Map([["a", "Native dialog open."]]))
+    expect(
+      parseScreenshotUnavailableReasons("Saved both screenshots.")
+    ).toEqual(new Map())
+    expect(parseScreenshotUnavailableReasons("null")).toEqual(new Map())
+  })
+
+  it("records failed checks without a screenshot as evidence unavailable", () => {
+    const failed = (checkId: string) => ({
+      checkId,
+      verdict: "failed" as const,
+      evidence: `Attempted: ${checkId}. Failed: wrong.`,
+      blockedReason: null,
+    })
+    const result = applyEvidenceUnavailableReasons(
+      {
+        executionSummary: "Done.",
+        checkResults: [
+          failed("dialog"),
+          failed("silent"),
+          // Codex returned a reason, but the screenshot exists: it wins.
+          { ...failed("shown"), evidenceUnavailableReason: "stale" },
+          {
+            checkId: "passed",
+            verdict: "passed",
+            evidence: "Visible.",
+            blockedReason: null,
+          },
+        ],
+      },
+      ["dialog", "silent", "passed"],
+      new Map([["dialog", "A native confirm dialog blocked every capture."]])
+    )
+    expect(
+      result.checkResults.map((check) => check.evidenceUnavailableReason)
+    ).toEqual([
+      "A native confirm dialog blocked every capture.",
+      MISSING_SCREENSHOT_FALLBACK_REASON,
+      undefined,
+      undefined,
+    ])
+    expect(result.checkResults[2]).not.toHaveProperty(
+      "evidenceUnavailableReason"
+    )
+    expect(
+      applyEvidenceUnavailableReasons(
+        result,
+        ["silent"],
+        new Map(),
+        SCREENSHOT_CORRECTION_FAILED_REASON
+      ).checkResults[1]?.evidenceUnavailableReason
+    ).toBe(SCREENSHOT_CORRECTION_FAILED_REASON)
+  })
+
+  it("limits reasons without splitting a surrogate pair", () => {
+    const limited = limitEvidenceUnavailableReason(`${"x".repeat(498)}😀tail`)
+    expect(limited).toBe(`${"x".repeat(498)}…`)
+    expect(limitEvidenceUnavailableReason("short")).toBe("short")
+  })
+
+  it("redacts and then limits evidence-unavailable reasons", () => {
+    const secret = "s3cret"
+    const redacted = redactRunnerExecution(
+      {
+        executionSummary: "Done.",
+        checkResults: [
+          {
+            checkId: "00000000-0000-4000-8000-000000000001",
+            verdict: "failed",
+            evidence: "Failed.",
+            evidenceUnavailableReason: `${secret} `.repeat(90).trim(),
+          },
+        ],
+      },
+      { CARACARA_SECRET_TOKEN: secret }
+    )
+    const reason = redacted.checkResults[0]?.evidenceUnavailableReason ?? ""
+    expect(reason).not.toContain(secret)
+    expect(reason.startsWith("[REDACTED] [REDACTED]")).toBe(true)
+    expect(reason).toHaveLength(500)
+    expect(reason.endsWith("…")).toBe(true)
   })
 
   it("recognizes only WebP file signatures", () => {
@@ -488,6 +617,18 @@ describe("Codex configuration", () => {
     expect(prompt).toContain("- CARACARA_SECRET_USERNAME")
     expect(prompt).toContain("Previous reason: environment_failure")
     expect(schema.properties.checkResults.minItems).toBe(1)
+    expect(prompt).not.toContain("handle_dialog")
+    expect(
+      buildBlockedRetryPrompt({
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+        projectPrompt: "Use the seeded demo account.",
+        scenario,
+        blockedResults: [blockedResult],
+        secretNames: ["CARACARA_SECRET_USERNAME"],
+        evidenceDirectory: "/tmp/caracara-evidence",
+      })
+    ).toContain("handle_dialog")
 
     const retry = validateBlockedRetryExecution([checkId], {
       executionSummary: "Reloaded the editor.",

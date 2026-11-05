@@ -34,7 +34,7 @@ When the CLI submits a scenario result, the backend stores the scenario data tha
 
 Runs and per-scenario results are stored separately.
 
-A run stores overall execution state, passed and total check counts, and the selected environment name plus target URL when supplied by the CLI. The project keeps the distinct run environment names as a compact summary for history filters. Each scenario result stores its status, check snapshot, evidenced verdicts, optional failure detail, and timing. The run also persists its generated human-readable name.
+A run stores overall execution state, passed and total check counts, and the selected environment name plus target URL when supplied by the CLI. The project keeps the distinct run environment names as a compact summary for history filters. Each scenario result stores its status, check snapshot, evidenced verdicts, optional failure detail, timing, and optional runner token usage. Run token totals are summed from the scenario results when read rather than stored on the run. The run also persists its generated human-readable name.
 
 ### DATA_07
 
@@ -79,3 +79,9 @@ CLI and web authoring overwrite the current scenario or phase record. The data m
 Suites store phase references and follow project lifecycle rules.
 
 The `suites` table stores project ID, unique project-scoped slug, name, and phase IDs. Deleting a phase removes it from every suite membership; deleting a project deletes its suites. Deleting a suite does not affect phases or scenarios. Suite-targeted runs store the requested suite slug, resolved suite name, and selected phase IDs, names, and orders as immutable metadata. These run fields remain optional for runs created before suite support.
+
+### DATA_14
+
+Fixtures embed their steps, checks, and requirements.
+
+The `fixtures` table stores project ID, name, unique project-scoped slug, description, locator, protection, converge steps, health checks, and requirements (`phaseId` or `scenarioId`, access, mutation scope), plus timestamps. Steps and checks keep stable IDs; the server assigns missing ones. Deleting a phase or scenario removes requirements that target it; deleting a project deletes its fixtures. Deleting a fixture is always allowed. Runs store the CLI-reported `fixturePreflight` entries (fixture ID, slug, name, access, outcome, executor) as an immutable snapshot that is only shape-validated; the field is absent on runs without a preflight.

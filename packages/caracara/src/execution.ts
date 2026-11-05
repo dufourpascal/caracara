@@ -1155,12 +1155,13 @@ class CodexRunner implements RunnerAdapter {
             }
 
             return {
-              ...redactRunnerExecution(
-                redactEvidenceDirectory(
-                  annotateLateScreenshots(validated, lateScreenshotCheckIds),
-                  evidenceDirectory
+              // Redact before annotating: the note truncates evidence, which could split a secret.
+              ...annotateLateScreenshots(
+                redactRunnerExecution(
+                  redactEvidenceDirectory(validated, evidenceDirectory),
+                  input.secrets
                 ),
-                input.secrets
+                lateScreenshotCheckIds
               ),
               screenshotEvidence: screenshots.evidence,
               usage,

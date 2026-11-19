@@ -190,7 +190,7 @@ Both settings are optional. Without them, Codex uses its own configuration. You 
 Override either setting for one run without changing the config:
 
 ```bash
-caracara run --model gpt-6.1-sol --model-reasoning-effort high
+caracara run --model gpt-6.2-sol --model-reasoning-effort high
 ```
 
 Flags take precedence over `.caracara/config.json`. Reasoning effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. The flags only apply to the `codex` runner.

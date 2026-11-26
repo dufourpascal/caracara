@@ -309,35 +309,6 @@ describe("startCdpWindowProxy", () => {
     expect(replies.map((reply) => reply.id)).toEqual([1, 2])
   })
 
-  it("reconnects the setup connection and sets every context up again", async () => {
-    const browser = await startBrowser()
-    const proxy = await startProxy(browser.endpoint, {
-      downloadsDirectory: "/tmp/run/downloads",
-    })
-    const { client } = await connect(proxy.wsEndpoint)
-    client.send(
-      JSON.stringify({ id: 1, method: "Target.createBrowserContext" })
-    )
-    await expect.poll(() => browser.setup.length).toBe(5)
-
-    browser.sockets[0]!.terminate()
-    await expect.poll(() => browser.sockets.length).toBe(3)
-    const resent = browser.bySocket[2]!
-    await expect.poll(() => resent.length).toBe(5)
-    expect(
-      resent.map((message) => [
-        message.method,
-        (message.params as { browserContextId?: string }).browserContextId,
-      ])
-    ).toEqual([
-      ["Browser.setPermission", undefined],
-      ["Browser.setPermission", undefined],
-      ["Browser.setDownloadBehavior", "CTX1"],
-      ["Browser.setPermission", "CTX1"],
-      ["Browser.setPermission", "CTX1"],
-    ])
-  })
-
   it("fails to start when the browser never finishes the handshake", async () => {
     // Accepts the TCP connection and never answers the upgrade request.
     const server = createServer()

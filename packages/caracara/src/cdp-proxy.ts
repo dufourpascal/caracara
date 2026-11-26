@@ -135,8 +135,8 @@ function readReplyId(data: RawData): number | undefined {
  * Holds the browser context setup for the whole run. Chromium drops a
  * context's permission and download overrides when the DevTools connection
  * that set them closes, and every scenario's MCP server connects and leaves
- * again, so the proxy sets them on a connection of its own. If that
- * connection drops, it reconnects and sets every known context up again.
+ * again, so the proxy sets them on a connection of its own. That connection
+ * only closes with the browser, which ends the run anyway.
  */
 async function openContextSetupConnection(
   upstreamWsEndpoint: string,
@@ -144,56 +144,38 @@ async function openContextSetupConnection(
 ) {
   let nextId = 1
   const waiting = new Map<number, () => void>()
-  const browserContexts = new Set<string>()
   let closing = false
 
-  const connect = async (): Promise<WebSocket> => {
-    const socket = new WebSocket(upstreamWsEndpoint, {
-      maxPayload: maxCdpPayloadBytes,
-      perMessageDeflate: false,
-      handshakeTimeout: options.setupConnectTimeoutMs ?? setupConnectTimeoutMs,
-    })
-    // A reply (an error too, such as for a context that is gone) ends the wait.
-    socket.on("message", (data) => {
-      const id = readReplyId(data)
-      if (id !== undefined) {
-        waiting.get(id)?.()
-        waiting.delete(id)
-      }
-    })
-    socket.on("error", (error) => {
+  const control = new WebSocket(upstreamWsEndpoint, {
+    maxPayload: maxCdpPayloadBytes,
+    perMessageDeflate: false,
+    handshakeTimeout: options.setupConnectTimeoutMs ?? setupConnectTimeoutMs,
+  })
+  // A reply (an error too, such as for a context that is gone) ends the wait.
+  control.on("message", (data) => {
+    const id = readReplyId(data)
+    if (id !== undefined) {
+      waiting.get(id)?.()
+      waiting.delete(id)
+    }
+  })
+  control.on("error", (error) => {
+    writeDiagnostic(
+      `Chrome DevTools setup connection error: ${error.message}\n`
+    )
+  })
+  await once(control, "open")
+  control.on("close", () => {
+    for (const resolve of waiting.values()) {
+      resolve()
+    }
+    waiting.clear()
+    if (!closing) {
       writeDiagnostic(
-        `Chrome DevTools setup connection error: ${error.message}\n`
+        "Chrome DevTools setup connection closed; clipboard and downloads may fail for the rest of the run.\n"
       )
-    })
-    await once(socket, "open")
-    socket.on("close", () => {
-      for (const resolve of waiting.values()) {
-        resolve()
-      }
-      waiting.clear()
-      if (closing) {
-        return
-      }
-      writeDiagnostic(
-        "Chrome DevTools setup connection closed; reconnecting.\n"
-      )
-      connect()
-        .then((next) => {
-          control = next
-          void send()
-          for (const contextId of browserContexts) {
-            void send(contextId)
-          }
-        })
-        .catch((error: Error) => {
-          writeDiagnostic(
-            `Chrome DevTools setup connection lost; clipboard and downloads may fail: ${error.message}\n`
-          )
-        })
-    })
-    return socket
-  }
+    }
+  })
 
   const send = (browserContextId?: string) =>
     Promise.all(
@@ -213,9 +195,6 @@ async function openContextSetupConnection(
 
   /** Sets a context up; resolves once acknowledged, or after a short timeout. */
   const setUp = async (browserContextId?: string) => {
-    if (browserContextId) {
-      browserContexts.add(browserContextId)
-    }
     const timeout = new AbortController()
     await Promise.race([
       send(browserContextId),
@@ -226,7 +205,6 @@ async function openContextSetupConnection(
     timeout.abort()
   }
 
-  let control = await connect()
   await setUp()
 
   return {
@@ -325,9 +303,11 @@ function forwardClient(
     if (createdContext) {
       // Hold the reply until the context is set up, so the client never uses
       // it without clipboard access or the downloads directory.
-      forwarding = forwarding.then(() =>
-        onBrowserContextCreated(createdContext)
-      )
+      // Pause reads meanwhile, so held frames cannot pile up.
+      upstream.pause()
+      forwarding = forwarding
+        .then(() => onBrowserContextCreated(createdContext))
+        .finally(() => upstream.resume())
     }
     forwarding = forwarding.then(() => {
       if (client.readyState === WebSocket.OPEN) {

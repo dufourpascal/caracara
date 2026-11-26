@@ -34,6 +34,7 @@ import {
   mergeRunnerUsage,
   mergeBlockedRetryExecution,
   parseClaudeJsonResult,
+  selectRetryableBlockedResults,
   redactRunnerExecution,
   redactSecretValues,
   terminateChildProcess,
@@ -73,12 +74,7 @@ function processGroupExistsForTest(pid: number) {
 
 describe("child command termination", () => {
   it("builds a forced Windows process-tree termination command", () => {
-    expect(buildWindowsTaskkillArgs(1234)).toEqual([
-      "/PID",
-      "1234",
-      "/T",
-      "/F",
-    ])
+    expect(buildWindowsTaskkillArgs(1234)).toEqual(["/PID", "1234", "/T", "/F"])
   })
 
   it.skipIf(process.platform === "win32")(
@@ -263,6 +259,17 @@ describe("Codex configuration", () => {
           node_repl: {
             enabled: false,
           },
+        },
+        project_doc_max_bytes: 0,
+        features: {
+          memories: false,
+          apps: false,
+          plugins: false,
+          multi_agent: false,
+          multi_agent_v2: false,
+          computer_use: false,
+          browser_use: false,
+          in_app_browser: false,
         },
       },
     })
@@ -665,6 +672,68 @@ describe("Codex configuration", () => {
     })
   })
 
+  it("retries environment failures and the checks they block", () => {
+    const result = (
+      checkId: string,
+      verdict: "passed" | "failed" | "blocked",
+      blockedReason:
+        | "blocked_by_check"
+        | "setup_incomplete"
+        | "environment_failure"
+        | "tool_limit"
+        | null
+    ) => ({ checkId, verdict, evidence: "Seen.", blockedReason })
+    const results = [
+      result("a", "passed", null),
+      result("b", "failed", null),
+      result("c", "blocked", "environment_failure"),
+      result("d", "blocked", "tool_limit"),
+      result("e", "blocked", "setup_incomplete"),
+      result("f", "blocked", "blocked_by_check"),
+    ]
+
+    expect(
+      selectRetryableBlockedResults(results).map((entry) => entry.checkId)
+    ).toEqual(["c", "f"])
+    // Without an environment failure, nothing can clear on a retry.
+    expect(
+      selectRetryableBlockedResults(
+        results.filter((entry) => entry.checkId !== "c")
+      )
+    ).toEqual([])
+  })
+
+  it("tells the agent how to wait without burning timeouts", () => {
+    for (const prompt of [
+      buildRunnerPrompt({
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+        projectPrompt: "",
+        scenario,
+      }),
+      buildBlockedRetryPrompt({
+        environment: "preview",
+        targetUrl: "https://preview.example.com/",
+        projectPrompt: "",
+        scenario,
+        blockedResults: [
+          {
+            checkId: scenario.evaluationChecks[0]!.id,
+            verdict: "blocked",
+            evidence: "The page crashed.",
+            blockedReason: "environment_failure",
+          },
+        ],
+      }),
+    ]) {
+      expect(prompt).toContain("wait_for matches exact, case-sensitive text")
+      expect(prompt).toContain("Keep wait_for timeouts at 10 seconds or less")
+      expect(prompt).toContain(
+        "Element uids are valid only for the latest snapshot"
+      )
+    }
+  })
+
   it("rejects blocked runner results without a structured reason", () => {
     expect(() =>
       validateRunnerExecution(scenario, {
@@ -812,7 +881,10 @@ describe("run-scoped downloads", () => {
     try {
       const userDataDir = join(root, "chrome-profile")
       const downloadsDirectory = join(root, "downloads")
-      await writeChromiumDownloadPreferences({ userDataDir, downloadsDirectory })
+      await writeChromiumDownloadPreferences({
+        userDataDir,
+        downloadsDirectory,
+      })
       const preferences = JSON.parse(
         await readFile(join(userDataDir, "Default", "Preferences"), "utf8")
       )
@@ -886,7 +958,9 @@ describe("run-scoped downloads", () => {
       "/tmp/run/downloads",
       "[RUN_DOWNLOADS_DIR]"
     )
-    expect(redacted.executionSummary).toBe("Saved [RUN_DOWNLOADS_DIR]/report.csv")
+    expect(redacted.executionSummary).toBe(
+      "Saved [RUN_DOWNLOADS_DIR]/report.csv"
+    )
     expect(redacted.checkResults[0]?.evidence).toBe(
       "Found [RUN_DOWNLOADS_DIR]/report.csv"
     )
@@ -924,8 +998,12 @@ describe("late screenshot evidence", () => {
     expect(annotated.checkResults[0]?.evidence).toBe(
       `Progress said Getting things ready twice. ${LATE_SCREENSHOT_NOTE}`
     )
-    expect(annotated.checkResults[1]?.evidence.length).toBeLessThanOrEqual(2_000)
-    expect(annotated.checkResults[1]?.evidence.endsWith(LATE_SCREENSHOT_NOTE)).toBe(true)
+    expect(annotated.checkResults[1]?.evidence.length).toBeLessThanOrEqual(
+      2_000
+    )
+    expect(
+      annotated.checkResults[1]?.evidence.endsWith(LATE_SCREENSHOT_NOTE)
+    ).toBe(true)
     expect(annotated.checkResults[2]?.evidence).toBe("Captured in time.")
   })
 })

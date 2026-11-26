@@ -4,6 +4,8 @@ import type {
   Fixture,
 } from "@workspace/contracts"
 
+import { BROWSER_WAITING_GUIDANCE } from "./browser-guidance.js"
+
 /** The "Protected fixtures" section of the evaluation and blocked-retry prompts. */
 export function buildProtectedFixturesSection(
   requirements: EffectiveFixtureRequirement[] | undefined,
@@ -130,6 +132,7 @@ export function buildFixtureTaskPrompt(input: {
       : []),
     "",
     "Use the Chrome DevTools browser tools to work with the actual frontend.",
+    ...BROWSER_WAITING_GUIDANCE,
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
     'Use verdict "passed" when browser evidence confirms the expectation, "failed" when the observed state contradicts it, and "blocked" when you could not reach or inspect it.',
     'For "blocked", set blockedReason to exactly one of: "blocked_by_check", "setup_incomplete", "environment_failure", or "tool_limit". Set blockedReason to null for passed and failed checks.',

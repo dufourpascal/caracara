@@ -454,5 +454,8 @@ describe("fixture prompts", () => {
     expect(verify).toContain("This is inspect-only. Change nothing")
     expect(verify).toContain(`- Signs in [${HEALTH_ID}]`)
     expect(verify).not.toContain("Maintenance permission")
+    for (const prompt of [converge, verify]) {
+      expect(prompt).toContain("Keep wait_for timeouts at 10 seconds or less")
+    }
   })
 })

@@ -266,6 +266,7 @@ describe("Codex configuration", () => {
           apps: false,
           plugins: false,
           multi_agent: false,
+          multi_agent_v2: false,
           computer_use: false,
           browser_use: false,
           in_app_browser: false,
@@ -671,7 +672,7 @@ describe("Codex configuration", () => {
     })
   })
 
-  it("retries only checks blocked by an environment failure", () => {
+  it("retries environment failures and the checks they block", () => {
     const result = (
       checkId: string,
       verdict: "passed" | "failed" | "blocked",
@@ -693,7 +694,13 @@ describe("Codex configuration", () => {
 
     expect(
       selectRetryableBlockedResults(results).map((entry) => entry.checkId)
-    ).toEqual(["c"])
+    ).toEqual(["c", "f"])
+    // Without an environment failure, nothing can clear on a retry.
+    expect(
+      selectRetryableBlockedResults(
+        results.filter((entry) => entry.checkId !== "c")
+      )
+    ).toEqual([])
   })
 
   it("tells the agent how to wait without burning timeouts", () => {

@@ -50,10 +50,14 @@ export function rewriteCdpClientMessage(data: string) {
   return JSON.stringify({ ...message, params: { ...params, newWindow: true } })
 }
 
-/** Clipboard access the agent needs to check "copy link" round trips. */
+/**
+ * Clipboard access the agent needs to check "copy link" round trips. Set one
+ * permission at a time: Browser.grantPermissions would deny every permission
+ * it does not list (notifications, geolocation, wake lock and more).
+ */
 export const GRANTED_BROWSER_PERMISSIONS = [
-  "clipboardReadWrite",
-  "clipboardSanitizedWrite",
+  { name: "clipboard-read" },
+  { name: "clipboard-write", allowWithoutSanitization: true },
 ]
 
 export type CdpProxyOptions = {
@@ -85,10 +89,10 @@ export function buildBrowserContextSetup(
           },
         ]
       : []),
-    {
-      method: "Browser.grantPermissions",
-      params: { permissions: GRANTED_BROWSER_PERMISSIONS, ...context },
-    },
+    ...GRANTED_BROWSER_PERMISSIONS.map((permission) => ({
+      method: "Browser.setPermission",
+      params: { permission, setting: "granted", ...context },
+    })),
   ]
 }
 
@@ -111,10 +115,16 @@ function readCreatedBrowserContext(
   return typeof contextId === "string" ? contextId : undefined
 }
 
+/**
+ * Relays one client connection. Returns a function that sends the context
+ * setup again: Chromium drops a context's permission overrides when the
+ * DevTools session that set them goes away, even if another one set them too.
+ */
 function forwardClient(
   client: WebSocket,
   upstreamWsEndpoint: string,
-  options: CdpProxyOptions
+  options: CdpProxyOptions,
+  onClose: () => void
 ) {
   const upstream = new WebSocket(upstreamWsEndpoint, {
     maxPayload: maxCdpPayloadBytes,
@@ -125,10 +135,17 @@ function forwardClient(
   let nextProxyId = -1
   // Client ids of Target.createBrowserContext calls whose reply is pending.
   const browserContextRequests = new Set<number>()
+  // Browser contexts this client created; they close with its session.
+  const browserContexts = new Set<string>()
+  let closed = false
 
   const closeBoth = () => {
     client.terminate()
     upstream.terminate()
+    if (!closed) {
+      closed = true
+      onClose()
+    }
   }
   const sendUpstream = (data: RawData | string, isBinary: boolean) => {
     if (upstream.readyState === WebSocket.OPEN) {
@@ -203,6 +220,7 @@ function forwardClient(
       client.send(data, { binary: isBinary })
     }
     if (createdContext) {
+      browserContexts.add(createdContext)
       sendSetup(createdContext)
     }
   })
@@ -210,6 +228,16 @@ function forwardClient(
   client.on("error", closeBoth)
   upstream.on("close", closeBoth)
   upstream.on("error", closeBoth)
+
+  return () => {
+    if (closed || upstream.readyState !== WebSocket.OPEN) {
+      return
+    }
+    sendSetup()
+    for (const contextId of browserContexts) {
+      sendSetup(contextId)
+    }
+  }
 }
 
 /**
@@ -237,8 +265,20 @@ export async function startCdpWindowProxy(
     verifyClient: ({ req }: { req: IncomingMessage }) =>
       req.headers.origin === undefined,
   })
+  const reapplySetups = new Set<() => void>()
   server.on("connection", (client) => {
-    forwardClient(client, upstreamWsEndpoint, options)
+    const reapplySetup = forwardClient(
+      client,
+      upstreamWsEndpoint,
+      options,
+      () => {
+        reapplySetups.delete(reapplySetup)
+        for (const reapply of reapplySetups) {
+          reapply()
+        }
+      }
+    )
+    reapplySetups.add(reapplySetup)
   })
   await once(server, "listening")
   // Keep a listener so a later accept failure cannot crash the run; the

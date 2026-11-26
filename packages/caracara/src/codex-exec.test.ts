@@ -301,6 +301,7 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
       "features.apps=false",
       "features.plugins=false",
       "features.multi_agent=false",
+      "features.multi_agent_v2=false",
       "features.computer_use=false",
       "features.browser_use=false",
       "features.in_app_browser=false",

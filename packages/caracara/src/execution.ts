@@ -234,21 +234,23 @@ export function validateBlockedRetryExecution(
 }
 
 /**
- * Blocked reasons worth one retry in the same browser. Only an environment
- * failure (a crashed page, a network error) can clear on a second attempt: a
- * tool limit stays, a missed state does not come back, and a blocking check
- * already has its verdict.
+ * The blocked results to retry once; the others keep their first verdict.
+ * Only an environment failure (a crashed page, a network error) can clear on a
+ * second attempt: a tool limit stays and a missed state does not come back.
+ * Checks blocked by another check join that retry, since the blocking check
+ * may be the one that clears.
  */
-export const RETRYABLE_BLOCKED_REASONS: readonly BlockedReason[] = [
-  "environment_failure",
-]
-
-/** The blocked results to retry once; the others keep their first verdict. */
 export function selectRetryableBlockedResults(results: CheckResult[]) {
-  return results.filter(
+  const blocked = results.filter((result) => result.verdict === "blocked")
+  if (
+    !blocked.some((result) => result.blockedReason === "environment_failure")
+  ) {
+    return []
+  }
+  return blocked.filter(
     (result) =>
-      result.verdict === "blocked" &&
-      RETRYABLE_BLOCKED_REASONS.includes(result.blockedReason as BlockedReason)
+      result.blockedReason === "environment_failure" ||
+      result.blockedReason === "blocked_by_check"
   )
 }
 
@@ -1057,6 +1059,7 @@ export function buildCodexClientOptions(input: {
         apps: false,
         plugins: false,
         multi_agent: false,
+        multi_agent_v2: false,
         computer_use: false,
         browser_use: false,
         in_app_browser: false,

@@ -50,6 +50,19 @@ describe("rewriteCdpClientMessage", () => {
   })
 })
 
+/** The clipboard setup the proxy sends, with the ids it is expected to use. */
+function clipboardSetup(ids: [number, number], browserContextId?: string) {
+  return GRANTED_BROWSER_PERMISSIONS.map((permission, index) => ({
+    id: ids[index],
+    method: "Browser.setPermission",
+    params: {
+      permission,
+      setting: "granted",
+      ...(browserContextId ? { browserContextId } : {}),
+    },
+  }))
+}
+
 describe("startCdpWindowProxy", () => {
   const cleanups: (() => Promise<void> | void)[] = []
 
@@ -154,11 +167,7 @@ describe("startCdpWindowProxy", () => {
 
     expect(browser.requestUrls).toEqual(["/devtools/browser/abc"])
     expect(browser.received).toEqual([
-      {
-        id: -1,
-        method: "Browser.grantPermissions",
-        params: { permissions: GRANTED_BROWSER_PERMISSIONS },
-      },
+      ...clipboardSetup([-1, -2]),
       {
         id: 1,
         method: "Target.createTarget",
@@ -191,11 +200,7 @@ describe("startCdpWindowProxy", () => {
     expect(browser.received).toEqual([
       // The screenshot was queued before the browser accepted, so it took the
       // first proxy id; the setup still goes out first.
-      {
-        id: -2,
-        method: "Browser.grantPermissions",
-        params: { permissions: GRANTED_BROWSER_PERMISSIONS },
-      },
+      ...clipboardSetup([-2, -3]),
       { id: -1, method: "Page.bringToFront", sessionId: "S1" },
       {
         id: 3,
@@ -221,12 +226,12 @@ describe("startCdpWindowProxy", () => {
     client.send(
       JSON.stringify({ id: 7, method: "Target.createBrowserContext" })
     )
-    await expect.poll(() => browser.received.length).toBe(4)
+    await expect.poll(() => browser.received.length).toBe(6)
 
-    expect(browser.received.slice(1)).toEqual([
+    expect(browser.received.slice(2)).toEqual([
       { id: 7, method: "Target.createBrowserContext" },
       {
-        id: -2,
+        id: -3,
         method: "Browser.setDownloadBehavior",
         params: {
           behavior: "allow",
@@ -234,17 +239,45 @@ describe("startCdpWindowProxy", () => {
           browserContextId: "CTX1",
         },
       },
-      {
-        id: -3,
-        method: "Browser.grantPermissions",
-        params: {
-          permissions: GRANTED_BROWSER_PERMISSIONS,
-          browserContextId: "CTX1",
-        },
-      },
+      ...clipboardSetup([-4, -5], "CTX1"),
     ])
     // The client sees only the reply to its own command.
     expect(replies).toEqual([{ id: 7, result: { browserContextId: "CTX1" } }])
+  })
+
+  it("sets the clipboard up again when another connection closes", async () => {
+    const browser = await startBrowser()
+    const proxy = await startProxy(browser.endpoint, {
+      downloadsDirectory: "/tmp/run/downloads",
+    })
+    const first = await connect(proxy.wsEndpoint)
+    const second = await connect(proxy.wsEndpoint)
+    await expect.poll(() => browser.received.length).toBe(4)
+
+    second.client.send(
+      JSON.stringify({ id: 1, method: "Target.createBrowserContext" })
+    )
+    await expect.poll(() => browser.received.length).toBe(8)
+    const before = browser.received.length
+    first.client.close()
+
+    // Chromium drops the overrides of a session that detaches, so the open
+    // connection sends its default and context setup again.
+    await expect.poll(() => browser.received.length).toBe(before + 5)
+    expect(
+      browser.received
+        .slice(before)
+        .map((message) => [
+          message.method,
+          (message.params as { browserContextId?: string }).browserContextId,
+        ])
+    ).toEqual([
+      ["Browser.setPermission", undefined],
+      ["Browser.setPermission", undefined],
+      ["Browser.setDownloadBehavior", "CTX1"],
+      ["Browser.setPermission", "CTX1"],
+      ["Browser.setPermission", "CTX1"],
+    ])
   })
 
   it("passes large binary frames through unchanged", async () => {

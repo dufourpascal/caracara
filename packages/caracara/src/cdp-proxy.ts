@@ -50,7 +50,72 @@ export function rewriteCdpClientMessage(data: string) {
   return JSON.stringify({ ...message, params: { ...params, newWindow: true } })
 }
 
-function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
+/** Clipboard access the agent needs to check "copy link" round trips. */
+export const GRANTED_BROWSER_PERMISSIONS = [
+  "clipboardReadWrite",
+  "clipboardSanitizedWrite",
+]
+
+export type CdpProxyOptions = {
+  /** Where every browser context saves downloads, including isolated ones. */
+  downloadsDirectory?: string
+}
+
+/**
+ * Commands that give a browser context the run's downloads directory and
+ * clipboard access. The default context gets its downloads directory from the
+ * profile preferences; an isolated context (chrome-devtools new_page with
+ * isolatedContext) ignores those and denies the clipboard unless granted.
+ */
+export function buildBrowserContextSetup(
+  options: CdpProxyOptions,
+  browserContextId?: string
+) {
+  const context = browserContextId ? { browserContextId } : {}
+  return [
+    ...(browserContextId && options.downloadsDirectory
+      ? [
+          {
+            method: "Browser.setDownloadBehavior",
+            params: {
+              behavior: "allow",
+              downloadPath: options.downloadsDirectory,
+              ...context,
+            },
+          },
+        ]
+      : []),
+    {
+      method: "Browser.grantPermissions",
+      params: { permissions: GRANTED_BROWSER_PERMISSIONS, ...context },
+    },
+  ]
+}
+
+/** The browserContextId of a Target.createBrowserContext reply, if this is one we wait for. */
+function readCreatedBrowserContext(
+  data: RawData,
+  waitingIds: Set<number>
+): string | undefined {
+  if (waitingIds.size === 0 || !Buffer.isBuffer(data)) {
+    return undefined
+  }
+  const match = /^\{"id":(\d+)/.exec(data.subarray(0, 24).toString())
+  const id = match ? Number(match[1]) : undefined
+  if (id === undefined || !waitingIds.delete(id)) {
+    return undefined
+  }
+  const result = parseCdpMessage(data.toString()) as
+    { result?: { browserContextId?: unknown } } | undefined
+  const contextId = result?.result?.browserContextId
+  return typeof contextId === "string" ? contextId : undefined
+}
+
+function forwardClient(
+  client: WebSocket,
+  upstreamWsEndpoint: string,
+  options: CdpProxyOptions
+) {
   const upstream = new WebSocket(upstreamWsEndpoint, {
     maxPayload: maxCdpPayloadBytes,
     perMessageDeflate: false,
@@ -58,6 +123,8 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
   const pending: { data: RawData; isBinary: boolean }[] = []
   // Negative ids never collide with the client's, which count up from 1.
   let nextProxyId = -1
+  // Client ids of Target.createBrowserContext calls whose reply is pending.
+  const browserContextRequests = new Set<number>()
 
   const closeBoth = () => {
     client.terminate()
@@ -83,6 +150,12 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
     const text = rewriteCdpClientMessage(data.toString())
     const message = parseCdpMessage(text)
     if (
+      message?.method === "Target.createBrowserContext" &&
+      typeof message.id === "number"
+    ) {
+      browserContextRequests.add(message.id)
+    }
+    if (
       message?.method === "Page.captureScreenshot" &&
       typeof message.sessionId === "string"
     ) {
@@ -101,7 +174,14 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
     }
     sendUpstream(text, false)
   })
+  const sendSetup = (browserContextId?: string) => {
+    for (const command of buildBrowserContextSetup(options, browserContextId)) {
+      sendUpstream(JSON.stringify({ id: nextProxyId--, ...command }), false)
+    }
+  }
   upstream.on("open", () => {
+    // Before the client's own commands, so the clipboard is granted from the start.
+    sendSetup()
     for (const { data, isBinary } of pending.splice(0)) {
       upstream.send(data, { binary: isBinary })
     }
@@ -116,8 +196,14 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
     ) {
       return
     }
+    const createdContext = isBinary
+      ? undefined
+      : readCreatedBrowserContext(data, browserContextRequests)
     if (client.readyState === WebSocket.OPEN) {
       client.send(data, { binary: isBinary })
+    }
+    if (createdContext) {
+      sendSetup(createdContext)
     }
   })
   client.on("close", closeBoth)
@@ -129,14 +215,18 @@ function forwardClient(client: WebSocket, upstreamWsEndpoint: string) {
 /**
  * Starts a loopback CDP proxy in front of a browser WebSocket endpoint. Frames
  * pass through unchanged except that Target.createTarget opens a new window
- * (see rewriteCdpClientMessage) and a screenshot first brings its page to
- * the front.
+ * (see rewriteCdpClientMessage), a screenshot first brings its page to
+ * the front, and every browser context gets the run's downloads directory and
+ * clipboard access (see buildBrowserContextSetup).
  *
  * Like Chromium itself, the proxy only accepts the browser's unguessable path
  * and refuses connections that carry an Origin, so a web page in the browser
  * cannot connect to it.
  */
-export async function startCdpWindowProxy(upstreamWsEndpoint: string) {
+export async function startCdpWindowProxy(
+  upstreamWsEndpoint: string,
+  options: CdpProxyOptions = {}
+) {
   const { pathname } = new URL(upstreamWsEndpoint)
   const server = new WebSocketServer({
     host: "127.0.0.1",
@@ -148,7 +238,7 @@ export async function startCdpWindowProxy(upstreamWsEndpoint: string) {
       req.headers.origin === undefined,
   })
   server.on("connection", (client) => {
-    forwardClient(client, upstreamWsEndpoint)
+    forwardClient(client, upstreamWsEndpoint, options)
   })
   await once(server, "listening")
   // Keep a listener so a later accept failure cannot crash the run; the

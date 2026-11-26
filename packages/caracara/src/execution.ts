@@ -29,6 +29,7 @@ import {
   type CodexUsage,
 } from "./codex-exec.js"
 import { startCdpWindowProxy } from "./cdp-proxy.js"
+import { BROWSER_WAITING_GUIDANCE } from "./browser-guidance.js"
 import type { ModelReasoningEffort } from "./config.js"
 import { writeDiagnostic } from "./diagnostics.js"
 import { buildProtectedFixturesSection } from "./fixture-prompts.js"
@@ -230,6 +231,25 @@ export function validateBlockedRetryExecution(
   execution: RunnerExecution
 ) {
   return validateExecution(blockedCheckIds, execution)
+}
+
+/**
+ * Blocked reasons worth one retry in the same browser. Only an environment
+ * failure (a crashed page, a network error) can clear on a second attempt: a
+ * tool limit stays, a missed state does not come back, and a blocking check
+ * already has its verdict.
+ */
+export const RETRYABLE_BLOCKED_REASONS: readonly BlockedReason[] = [
+  "environment_failure",
+]
+
+/** The blocked results to retry once; the others keep their first verdict. */
+export function selectRetryableBlockedResults(results: CheckResult[]) {
+  return results.filter(
+    (result) =>
+      result.verdict === "blocked" &&
+      RETRYABLE_BLOCKED_REASONS.includes(result.blockedReason as BlockedReason)
+  )
 }
 
 export function mergeBlockedRetryExecution(
@@ -491,6 +511,7 @@ export function buildRunnerPrompt(input: {
       ? [buildDownloadsInstruction(input.downloadsDirectory)]
       : []),
     "Where a canvas or image viewer has no element to target, click by viewport coordinates with click_at, taking the coordinates from a screenshot or the element's bounding box.",
+    ...BROWSER_WAITING_GUIDANCE,
     "Before interacting, review every evaluation check and plan the browser states and actions needed to observe each one. Preserve or revisit relevant states so later checks are not skipped.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry per check ID.",
     'Use verdict "passed" when browser evidence confirms the expectation, "failed" when observed behavior contradicts it, and "blocked" when you could not reach or inspect it.',
@@ -563,6 +584,7 @@ export function buildBlockedRetryPrompt(input: {
     ...(input.downloadsDirectory
       ? [buildDownloadsInstruction(input.downloadsDirectory)]
       : []),
+    ...BROWSER_WAITING_GUIDANCE,
     "Do not repeat destructive state-changing actions and do not rerun checks that already passed or failed.",
     "Return JSON with a concise executionSummary and exactly one checkResults entry for each listed check ID.",
     'Use only "passed", "failed", or "blocked". Set blockedReason to null for passed and failed; for blocked, set it to "blocked_by_check", "setup_incomplete", "environment_failure", or "tool_limit".',
@@ -1026,6 +1048,19 @@ export function buildCodexClientOptions(input: {
           enabled: false,
         },
       },
+      // A browser evaluation needs none of the workspace's AGENTS.md, memories,
+      // apps or plugins: they add tokens to every turn and tools the agent must
+      // not use. The user-level AGENTS.md still loads.
+      project_doc_max_bytes: 0,
+      features: {
+        memories: false,
+        apps: false,
+        plugins: false,
+        multi_agent: false,
+        computer_use: false,
+        browser_use: false,
+        in_app_browser: false,
+      },
       ...(input.modelReasoningEffort === "none"
         ? { model_reasoning_effort: "none" }
         : {}),
@@ -1288,7 +1323,9 @@ async function launchSharedChromium(input: {
       }),
       browserStartupError,
     ])
-    const proxy = await startCdpWindowProxy(`ws://127.0.0.1:${port}${wsPath}`)
+    const proxy = await startCdpWindowProxy(`ws://127.0.0.1:${port}${wsPath}`, {
+      downloadsDirectory,
+    })
 
     return {
       wsEndpoint: proxy.wsEndpoint,
@@ -1408,8 +1445,8 @@ class CodexRunner implements RunnerAdapter {
               scenarioInput.scenario,
               JSON.parse(turn.finalResponse) as RunnerExecution
             )
-            const blockedResults = validated.checkResults.filter(
-              (result) => result.verdict === "blocked"
+            const blockedResults = selectRetryableBlockedResults(
+              validated.checkResults
             )
             if (blockedResults.length > 0) {
               const blockedCheckIds = blockedResults.map(
@@ -1672,8 +1709,8 @@ class ClaudeRunner implements RunnerAdapter {
               scenarioInput.scenario,
               parsed.execution
             )
-            const blockedResults = validated.checkResults.filter(
-              (result) => result.verdict === "blocked"
+            const blockedResults = selectRetryableBlockedResults(
+              validated.checkResults
             )
             if (blockedResults.length > 0) {
               const blockedCheckIds = blockedResults.map(

@@ -4,7 +4,11 @@ import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, describe, expect, it } from "vitest"
 import { WebSocket, WebSocketServer } from "ws"
 
-import { rewriteCdpClientMessage, startCdpWindowProxy } from "./cdp-proxy.js"
+import {
+  GRANTED_BROWSER_PERMISSIONS,
+  rewriteCdpClientMessage,
+  startCdpWindowProxy,
+} from "./cdp-proxy.js"
 
 describe("rewriteCdpClientMessage", () => {
   it("opens new targets in their own window", () => {
@@ -88,7 +92,13 @@ describe("startCdpWindowProxy", () => {
                   error: { code: -32000, message: "Not a page" },
                   sessionId: message.sessionId,
                 }
-              : { id: message.id, result: {} }
+              : {
+                  id: message.id,
+                  result:
+                    message.method === "Target.createBrowserContext"
+                      ? { browserContextId: "CTX1" }
+                      : {},
+                }
           )
         )
       })
@@ -102,8 +112,11 @@ describe("startCdpWindowProxy", () => {
     }
   }
 
-  async function startProxy(endpoint: string) {
-    const proxy = await startCdpWindowProxy(endpoint)
+  async function startProxy(
+    endpoint: string,
+    options?: Parameters<typeof startCdpWindowProxy>[1]
+  ) {
+    const proxy = await startCdpWindowProxy(endpoint, options)
     cleanups.push(() => proxy.close())
     return proxy
   }
@@ -142,6 +155,11 @@ describe("startCdpWindowProxy", () => {
     expect(browser.requestUrls).toEqual(["/devtools/browser/abc"])
     expect(browser.received).toEqual([
       {
+        id: -1,
+        method: "Browser.grantPermissions",
+        params: { permissions: GRANTED_BROWSER_PERMISSIONS },
+      },
+      {
         id: 1,
         method: "Target.createTarget",
         params: { url: "about:blank", newWindow: true },
@@ -171,6 +189,13 @@ describe("startCdpWindowProxy", () => {
     await expect.poll(() => replies.length).toBe(2)
 
     expect(browser.received).toEqual([
+      // The screenshot was queued before the browser accepted, so it took the
+      // first proxy id; the setup still goes out first.
+      {
+        id: -2,
+        method: "Browser.grantPermissions",
+        params: { permissions: GRANTED_BROWSER_PERMISSIONS },
+      },
       { id: -1, method: "Page.bringToFront", sessionId: "S1" },
       {
         id: 3,
@@ -184,6 +209,42 @@ describe("startCdpWindowProxy", () => {
       { id: 3, result: {} },
       { id: 4, result: {} },
     ])
+  })
+
+  it("gives a new browser context the downloads directory and clipboard access", async () => {
+    const browser = await startBrowser()
+    const proxy = await startProxy(browser.endpoint, {
+      downloadsDirectory: "/tmp/run/downloads",
+    })
+    const { client, replies } = await connect(proxy.wsEndpoint)
+
+    client.send(
+      JSON.stringify({ id: 7, method: "Target.createBrowserContext" })
+    )
+    await expect.poll(() => browser.received.length).toBe(4)
+
+    expect(browser.received.slice(1)).toEqual([
+      { id: 7, method: "Target.createBrowserContext" },
+      {
+        id: -2,
+        method: "Browser.setDownloadBehavior",
+        params: {
+          behavior: "allow",
+          downloadPath: "/tmp/run/downloads",
+          browserContextId: "CTX1",
+        },
+      },
+      {
+        id: -3,
+        method: "Browser.grantPermissions",
+        params: {
+          permissions: GRANTED_BROWSER_PERMISSIONS,
+          browserContextId: "CTX1",
+        },
+      },
+    ])
+    // The client sees only the reply to its own command.
+    expect(replies).toEqual([{ id: 7, result: { browserContextId: "CTX1" } }])
   })
 
   it("passes large binary frames through unchanged", async () => {

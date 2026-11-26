@@ -295,6 +295,16 @@ describe.skipIf(process.platform === "win32")("CodexClient", () => {
     'mcp_servers.chrome-devtools.default_tools_approval_mode="approve"',
     "--config",
     "mcp_servers.node_repl.enabled=false",
+    ...[
+      "project_doc_max_bytes=0",
+      "features.memories=false",
+      "features.apps=false",
+      "features.plugins=false",
+      "features.multi_agent=false",
+      "features.computer_use=false",
+      "features.browser_use=false",
+      "features.in_app_browser=false",
+    ].flatMap((override) => ["--config", override]),
   ]
 
   function createClient(mode = "ok", modelReasoningEffort?: "none" | "high") {

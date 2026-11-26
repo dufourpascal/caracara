@@ -116,15 +116,52 @@ function readCreatedBrowserContext(
 }
 
 /**
- * Relays one client connection. Returns a function that sends the context
- * setup again: Chromium drops a context's permission overrides when the
- * DevTools session that set them goes away, even if another one set them too.
+ * Holds the browser context setup for the whole run. Chromium drops a
+ * context's permission and download overrides when the DevTools connection
+ * that set them closes, and every scenario's MCP server connects and leaves
+ * again, so the proxy sets them on a connection of its own.
  */
+async function openContextSetupConnection(
+  upstreamWsEndpoint: string,
+  options: CdpProxyOptions
+) {
+  const control = new WebSocket(upstreamWsEndpoint, {
+    maxPayload: maxCdpPayloadBytes,
+    perMessageDeflate: false,
+  })
+  let nextId = 1
+  // Replies (errors included, such as for a context that is gone) need no action.
+  control.on("message", () => undefined)
+  control.on("error", (error) => {
+    writeDiagnostic(
+      `Chrome DevTools setup connection error: ${error.message}\n`
+    )
+  })
+  await once(control, "open")
+
+  const setUp = (browserContextId?: string) => {
+    if (control.readyState !== WebSocket.OPEN) {
+      return
+    }
+    for (const command of buildBrowserContextSetup(options, browserContextId)) {
+      control.send(JSON.stringify({ id: nextId++, ...command }))
+    }
+  }
+  setUp()
+
+  return {
+    setUp,
+    close() {
+      control.terminate()
+    },
+  }
+}
+
+/** Relays one client connection; reports each browser context it creates. */
 function forwardClient(
   client: WebSocket,
   upstreamWsEndpoint: string,
-  options: CdpProxyOptions,
-  onClose: () => void
+  onBrowserContextCreated: (browserContextId: string) => void
 ) {
   const upstream = new WebSocket(upstreamWsEndpoint, {
     maxPayload: maxCdpPayloadBytes,
@@ -135,17 +172,10 @@ function forwardClient(
   let nextProxyId = -1
   // Client ids of Target.createBrowserContext calls whose reply is pending.
   const browserContextRequests = new Set<number>()
-  // Browser contexts this client created; they close with its session.
-  const browserContexts = new Set<string>()
-  let closed = false
 
   const closeBoth = () => {
     client.terminate()
     upstream.terminate()
-    if (!closed) {
-      closed = true
-      onClose()
-    }
   }
   const sendUpstream = (data: RawData | string, isBinary: boolean) => {
     if (upstream.readyState === WebSocket.OPEN) {
@@ -191,14 +221,7 @@ function forwardClient(
     }
     sendUpstream(text, false)
   })
-  const sendSetup = (browserContextId?: string) => {
-    for (const command of buildBrowserContextSetup(options, browserContextId)) {
-      sendUpstream(JSON.stringify({ id: nextProxyId--, ...command }), false)
-    }
-  }
   upstream.on("open", () => {
-    // Before the client's own commands, so the clipboard is granted from the start.
-    sendSetup()
     for (const { data, isBinary } of pending.splice(0)) {
       upstream.send(data, { binary: isBinary })
     }
@@ -216,28 +239,18 @@ function forwardClient(
     const createdContext = isBinary
       ? undefined
       : readCreatedBrowserContext(data, browserContextRequests)
+    if (createdContext) {
+      // Before the reply, so the context is set up before the client uses it.
+      onBrowserContextCreated(createdContext)
+    }
     if (client.readyState === WebSocket.OPEN) {
       client.send(data, { binary: isBinary })
-    }
-    if (createdContext) {
-      browserContexts.add(createdContext)
-      sendSetup(createdContext)
     }
   })
   client.on("close", closeBoth)
   client.on("error", closeBoth)
   upstream.on("close", closeBoth)
   upstream.on("error", closeBoth)
-
-  return () => {
-    if (closed || upstream.readyState !== WebSocket.OPEN) {
-      return
-    }
-    sendSetup()
-    for (const contextId of browserContexts) {
-      sendSetup(contextId)
-    }
-  }
 }
 
 /**
@@ -265,22 +278,17 @@ export async function startCdpWindowProxy(
     verifyClient: ({ req }: { req: IncomingMessage }) =>
       req.headers.origin === undefined,
   })
-  const reapplySetups = new Set<() => void>()
-  server.on("connection", (client) => {
-    const reapplySetup = forwardClient(
-      client,
-      upstreamWsEndpoint,
-      options,
-      () => {
-        reapplySetups.delete(reapplySetup)
-        for (const reapply of reapplySetups) {
-          reapply()
-        }
-      }
-    )
-    reapplySetups.add(reapplySetup)
-  })
   await once(server, "listening")
+  let contextSetup: Awaited<ReturnType<typeof openContextSetupConnection>>
+  try {
+    contextSetup = await openContextSetupConnection(upstreamWsEndpoint, options)
+  } catch (error) {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    throw error
+  }
+  server.on("connection", (client) => {
+    forwardClient(client, upstreamWsEndpoint, contextSetup.setUp)
+  })
   // Keep a listener so a later accept failure cannot crash the run; the
   // affected connection fails and the MCP server reports it.
   server.on("error", (error) => {
@@ -292,6 +300,7 @@ export async function startCdpWindowProxy(
   return {
     wsEndpoint: `ws://127.0.0.1:${port}${pathname}`,
     async close() {
+      contextSetup.close()
       for (const client of server.clients) {
         client.terminate()
       }

@@ -1,5 +1,7 @@
 import { once } from "node:events"
+import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
+import type { Duplex } from "node:stream"
 import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, describe, expect, it } from "vitest"
 import { WebSocket, WebSocketServer } from "ws"
@@ -74,7 +76,9 @@ describe("startCdpWindowProxy", () => {
 
   // A fake browser that records each command and answers it, after an
   // optional handshake delay.
-  async function startBrowser(input: { handshakeDelayMs?: number } = {}) {
+  async function startBrowser(
+    input: { handshakeDelayMs?: number; setupReplyDelayMs?: number } = {}
+  ) {
     const server = new WebSocketServer({
       host: "127.0.0.1",
       port: 0,
@@ -95,9 +99,13 @@ describe("startCdpWindowProxy", () => {
       bySocket.push(received)
       sockets.push(socket)
       requestUrls.push(request.url ?? "")
-      socket.on("message", (data) => {
+      const isSetupSocket = sockets.length === 1
+      socket.on("message", async (data) => {
         const message = JSON.parse(data.toString())
         received.push(message)
+        if (isSetupSocket && input.setupReplyDelayMs) {
+          await delay(input.setupReplyDelayMs)
+        }
         // Answer the proxy's own commands with an error, as Chromium does for
         // a session that isn't a page.
         socket.send(
@@ -279,6 +287,79 @@ describe("startCdpWindowProxy", () => {
     await expect.poll(() => browser.sockets.length).toBe(3)
     expect(browser.sockets[0]!.readyState).toBe(WebSocket.OPEN)
     expect(browser.setup).toHaveLength(5)
+  })
+
+  it("holds a new context's reply until its setup is acknowledged", async () => {
+    const browser = await startBrowser({ setupReplyDelayMs: 300 })
+    const proxy = await startProxy(browser.endpoint, {
+      downloadsDirectory: "/tmp/run/downloads",
+    })
+    const { client, replies } = await connect(proxy.wsEndpoint)
+
+    client.send(
+      JSON.stringify({ id: 1, method: "Target.createBrowserContext" })
+    )
+    client.send(JSON.stringify({ id: 2, method: "Target.getTargets" }))
+    await expect.poll(() => browser.setup.length).toBe(5)
+    await delay(100)
+    // The browser answered both, but the context reply waits for its setup,
+    // and the later reply keeps its order behind it.
+    expect(replies).toEqual([])
+    await expect.poll(() => replies.length).toBe(2)
+    expect(replies.map((reply) => reply.id)).toEqual([1, 2])
+  })
+
+  it("reconnects the setup connection and sets every context up again", async () => {
+    const browser = await startBrowser()
+    const proxy = await startProxy(browser.endpoint, {
+      downloadsDirectory: "/tmp/run/downloads",
+    })
+    const { client } = await connect(proxy.wsEndpoint)
+    client.send(
+      JSON.stringify({ id: 1, method: "Target.createBrowserContext" })
+    )
+    await expect.poll(() => browser.setup.length).toBe(5)
+
+    browser.sockets[0]!.terminate()
+    await expect.poll(() => browser.sockets.length).toBe(3)
+    const resent = browser.bySocket[2]!
+    await expect.poll(() => resent.length).toBe(5)
+    expect(
+      resent.map((message) => [
+        message.method,
+        (message.params as { browserContextId?: string }).browserContextId,
+      ])
+    ).toEqual([
+      ["Browser.setPermission", undefined],
+      ["Browser.setPermission", undefined],
+      ["Browser.setDownloadBehavior", "CTX1"],
+      ["Browser.setPermission", "CTX1"],
+      ["Browser.setPermission", "CTX1"],
+    ])
+  })
+
+  it("fails to start when the browser never finishes the handshake", async () => {
+    // Accepts the TCP connection and never answers the upgrade request.
+    const server = createServer()
+    const stalled: Duplex[] = []
+    server.on("upgrade", (_request, socket) => {
+      stalled.push(socket)
+    })
+    server.listen(0, "127.0.0.1")
+    await once(server, "listening")
+    cleanups.push(() => {
+      for (const socket of stalled) {
+        socket.destroy()
+      }
+      return new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+    const { port } = server.address() as AddressInfo
+
+    await expect(
+      startCdpWindowProxy(`ws://127.0.0.1:${port}/devtools/browser/abc`, {
+        setupConnectTimeoutMs: 200,
+      })
+    ).rejects.toThrow(/handshake has timed out/)
   })
 
   it("passes large binary frames through unchanged", async () => {

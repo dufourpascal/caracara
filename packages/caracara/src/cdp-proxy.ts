@@ -1,4 +1,5 @@
 import { once } from "node:events"
+import { setTimeout as delay } from "node:timers/promises"
 import type { IncomingMessage } from "node:http"
 import type { AddressInfo } from "node:net"
 import { WebSocket, WebSocketServer, type RawData } from "ws"
@@ -63,6 +64,8 @@ export const GRANTED_BROWSER_PERMISSIONS = [
 export type CdpProxyOptions = {
   /** Where every browser context saves downloads, including isolated ones. */
   downloadsDirectory?: string
+  /** How long the setup connection may take to open (default 10 s). */
+  setupConnectTimeoutMs?: number
 }
 
 /**
@@ -101,11 +104,10 @@ function readCreatedBrowserContext(
   data: RawData,
   waitingIds: Set<number>
 ): string | undefined {
-  if (waitingIds.size === 0 || !Buffer.isBuffer(data)) {
+  if (waitingIds.size === 0) {
     return undefined
   }
-  const match = /^\{"id":(\d+)/.exec(data.subarray(0, 24).toString())
-  const id = match ? Number(match[1]) : undefined
+  const id = readReplyId(data)
   if (id === undefined || !waitingIds.delete(id)) {
     return undefined
   }
@@ -115,43 +117,122 @@ function readCreatedBrowserContext(
   return typeof contextId === "string" ? contextId : undefined
 }
 
+/** How long the setup connection may take to open. */
+const setupConnectTimeoutMs = 10_000
+/** How long a new context's reply waits for its setup to be acknowledged. */
+const setupReplyTimeoutMs = 2_000
+
+/** The positive id of a CDP reply, read from the start of the frame. */
+function readReplyId(data: RawData): number | undefined {
+  if (!Buffer.isBuffer(data)) {
+    return undefined
+  }
+  const match = /^\{"id":(\d+)/.exec(data.subarray(0, 24).toString())
+  return match ? Number(match[1]) : undefined
+}
+
 /**
  * Holds the browser context setup for the whole run. Chromium drops a
  * context's permission and download overrides when the DevTools connection
  * that set them closes, and every scenario's MCP server connects and leaves
- * again, so the proxy sets them on a connection of its own.
+ * again, so the proxy sets them on a connection of its own. If that
+ * connection drops, it reconnects and sets every known context up again.
  */
 async function openContextSetupConnection(
   upstreamWsEndpoint: string,
   options: CdpProxyOptions
 ) {
-  const control = new WebSocket(upstreamWsEndpoint, {
-    maxPayload: maxCdpPayloadBytes,
-    perMessageDeflate: false,
-  })
   let nextId = 1
-  // Replies (errors included, such as for a context that is gone) need no action.
-  control.on("message", () => undefined)
-  control.on("error", (error) => {
-    writeDiagnostic(
-      `Chrome DevTools setup connection error: ${error.message}\n`
-    )
-  })
-  await once(control, "open")
+  const waiting = new Map<number, () => void>()
+  const browserContexts = new Set<string>()
+  let closing = false
 
-  const setUp = (browserContextId?: string) => {
-    if (control.readyState !== WebSocket.OPEN) {
-      return
-    }
-    for (const command of buildBrowserContextSetup(options, browserContextId)) {
-      control.send(JSON.stringify({ id: nextId++, ...command }))
-    }
+  const connect = async (): Promise<WebSocket> => {
+    const socket = new WebSocket(upstreamWsEndpoint, {
+      maxPayload: maxCdpPayloadBytes,
+      perMessageDeflate: false,
+      handshakeTimeout: options.setupConnectTimeoutMs ?? setupConnectTimeoutMs,
+    })
+    // A reply (an error too, such as for a context that is gone) ends the wait.
+    socket.on("message", (data) => {
+      const id = readReplyId(data)
+      if (id !== undefined) {
+        waiting.get(id)?.()
+        waiting.delete(id)
+      }
+    })
+    socket.on("error", (error) => {
+      writeDiagnostic(
+        `Chrome DevTools setup connection error: ${error.message}\n`
+      )
+    })
+    await once(socket, "open")
+    socket.on("close", () => {
+      for (const resolve of waiting.values()) {
+        resolve()
+      }
+      waiting.clear()
+      if (closing) {
+        return
+      }
+      writeDiagnostic(
+        "Chrome DevTools setup connection closed; reconnecting.\n"
+      )
+      connect()
+        .then((next) => {
+          control = next
+          void send()
+          for (const contextId of browserContexts) {
+            void send(contextId)
+          }
+        })
+        .catch((error: Error) => {
+          writeDiagnostic(
+            `Chrome DevTools setup connection lost; clipboard and downloads may fail: ${error.message}\n`
+          )
+        })
+    })
+    return socket
   }
-  setUp()
+
+  const send = (browserContextId?: string) =>
+    Promise.all(
+      buildBrowserContextSetup(options, browserContextId).map(
+        (command) =>
+          new Promise<void>((resolve) => {
+            if (control.readyState !== WebSocket.OPEN) {
+              resolve()
+              return
+            }
+            const id = nextId++
+            waiting.set(id, resolve)
+            control.send(JSON.stringify({ id, ...command }))
+          })
+      )
+    )
+
+  /** Sets a context up; resolves once acknowledged, or after a short timeout. */
+  const setUp = async (browserContextId?: string) => {
+    if (browserContextId) {
+      browserContexts.add(browserContextId)
+    }
+    const timeout = new AbortController()
+    await Promise.race([
+      send(browserContextId),
+      delay(setupReplyTimeoutMs, undefined, { signal: timeout.signal }).catch(
+        () => undefined
+      ),
+    ])
+    timeout.abort()
+  }
+
+  let control = await connect()
+  await setUp()
 
   return {
     setUp,
     close() {
+      closing = true
       control.terminate()
     },
   }
@@ -161,7 +242,7 @@ async function openContextSetupConnection(
 function forwardClient(
   client: WebSocket,
   upstreamWsEndpoint: string,
-  onBrowserContextCreated: (browserContextId: string) => void
+  onBrowserContextCreated: (browserContextId: string) => Promise<void>
 ) {
   const upstream = new WebSocket(upstreamWsEndpoint, {
     maxPayload: maxCdpPayloadBytes,
@@ -172,6 +253,8 @@ function forwardClient(
   let nextProxyId = -1
   // Client ids of Target.createBrowserContext calls whose reply is pending.
   const browserContextRequests = new Set<number>()
+  // Frames to the client, in order; a new context's reply waits for its setup.
+  let forwarding = Promise.resolve()
 
   const closeBoth = () => {
     client.terminate()
@@ -240,12 +323,17 @@ function forwardClient(
       ? undefined
       : readCreatedBrowserContext(data, browserContextRequests)
     if (createdContext) {
-      // Before the reply, so the context is set up before the client uses it.
-      onBrowserContextCreated(createdContext)
+      // Hold the reply until the context is set up, so the client never uses
+      // it without clipboard access or the downloads directory.
+      forwarding = forwarding.then(() =>
+        onBrowserContextCreated(createdContext)
+      )
     }
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(data, { binary: isBinary })
-    }
+    forwarding = forwarding.then(() => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(data, { binary: isBinary })
+      }
+    })
   })
   client.on("close", closeBoth)
   client.on("error", closeBoth)
